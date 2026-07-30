@@ -1,80 +1,38 @@
 # CLAUDE.md
 
-本文档为 Claude Code (claude.ai/code) 提供本仓库的开发指导。
+## 项目定位
 
-## 项目概述
+这是一个中文个人学习作品集，主要面向作者未来回顾，也保持公开分享的可读性。内容从 Markdown 学习碎片逐步整理为专题，并用 NumPy 源码、Notebook 和测试验证结论。页面层使用 FastAPI + Jinja2，首期保持只读。
 
-这是一个个人 AI/ML 动手实验仓库，专注于使用 **纯 NumPy 从零实现 Transformer 组件**，并配套 **Streamlit 交互式可视化教学平台**。作者：lemon-neko，MIT 协议。
+首个专题是 Transformer。不要重新引入独立静态站或把专题拆回多个平铺的教学功能页。
 
-核心模块 (`src/`) 为纯 NumPy 实现，含手动反向传播；PyTorch 仅用于对比验证。Streamlit 应用 (`app/`) 提供 6 个教学页面：Self-Attention 详解、注意力热力图探索、玩具语言模型游乐场、Transformer 块结构可视化、梯度流分析等。
+## 内容架构
 
-## 主要目录
+- `content/notes/`：带 YAML front matter 的日常学习记录
+- `content/topics/`：整理后的长篇专题
+- `app/content.py`：记录解析、校验、排序和筛选
+- `app/main.py`：FastAPI 应用工厂与页面路由
+- `app/templates/`：Jinja2 页面与 HTMX partial
+- `app/static/`：响应式样式和本地前端依赖
+- `src/`：纯 NumPy 核心算法
 
-| 目录 | 用途 |
-|------|------|
-| `src/` | 从零实现的 ML 核心模块（attention、layers） |
-| `app/` | Streamlit Web 应用（main.py 入口、pages/、components/） |
-| `tests/` | pytest 单元测试 |
-| `notebooks/` | Jupyter 教程（主文件：`01-self-attention-from-scratch.ipynb`） |
-| `examples/` | 独立可运行脚本 |
-| `notes/` | 学习笔记 |
-| `experiments/` | 实验配置（config.yaml、run.sh、results/） |
-| `data/` | 小型示例数据 |
-| `tools/` | 开发与部署脚本 |
-| `docs/` | 详细文档 |
-
-## 核心源码架构
-
-**`src/attention.py`** — Self-Attention 实现（4 个版本）：
-1. `SelfAttentionNumpy` — 单头纯 NumPy 实现，用于教学
-2. 模块级函数：`split_heads`、`merge_heads`、`scaled_dot_product_attention`、`multi_head_attention_numpy`
-3. `scaled_dot_product_attention_backward` — 手动反向传播梯度推导
-4. `SelfAttentionFromScratch` — 完整 Transformer Block 类（MHA + 残差连接 + LayerNorm + FFN + Dropout）
-
-**`src/layers.py`** — 基础神经网络构建块：
-- `layer_norm` — Layer Normalization（支持可学习的 gamma/beta）
-- `feed_forward` — 逐位置前馈网络（ReLU 激活，可选 dropout）
-- `positional_encoding` — 正弦位置编码
-- `causal_mask` / `padding_mask` — Decoder 因果掩码与 padding 掩码生成
+记录字段为 `id`、`title`、`date`、`status`、`summary`、`tags` 和 `topic`。`status` 省略时默认为 `draft`；只有 `published` 会出现在公开索引。内容错误必须生成非致命诊断，不能阻塞其他文件。
 
 ## 开发命令
 
 ```bash
-# 安装依赖
-pip install -r requirements.txt          # 运行时：numpy, torch, streamlit, plotly
-pip install -r requirements-dev.txt      # 开发：pytest, ruff, jupyter
-
-# 运行测试
+pip install -r requirements.txt
+uvicorn app.main:app --reload
 pytest tests/ -v
-
-# Ruff 代码检查
 ruff check src/ app/ tests/
-
-# 启动 Streamlit 应用
-streamlit run app/main.py
-
-# 运行 src 模块（作为脚本）
 python -m src.attention
-python -m src.layers                     # 若存在 __main__
-
-# 运行独立脚本
-python notebooks/debug_self_attention.py
 ```
 
-## CI（GitHub Actions）
+## 编码与产品原则
 
-配置文件：`.github/workflows/ci.yml`。在推送到 `main` 分支或创建 PR 时自动触发，使用 Ubuntu + Python 3.10/3.11：
-- **test job**: `pytest tests/ -v --tb=short`（仅 CPU）
-- **lint job**: `ruff check src/ app/ tests/`
-- **examples job**: `python -m src.attention` + `import src.layers` 检查
-
-## 编码规范
-
-- `src/` 全部使用纯 NumPy；PyTorch 仅在 `if __name__ == "__main__"` 条件块中导入用于验证
-- 大量使用带 LaTeX 数学公式（$$\dots$$）的 docstring
-- 全程使用类型注解（Tuple、Optional 等）
-- 模块顶部使用 `from __future__ import annotations`
-- 类将权重存储为 `np.ndarray` 属性，使用 Xavier 缩放初始化
-- `SelfAttentionFromScratch` 是最完整的类：支持训练模式的 dropout，维护 `W_Q/K/V/O` 和 FFN 的 `W_1/b_1/W_2/b_2`
-- 测试使用 pytest 类（`TestClass`）加描述性方法名
-- `app/main.py` 中有 `sys.path` 注入逻辑，兼容 Streamlit Cloud 部署
+- `src/` 使用 NumPy；PyTorch 仅用于对照验证。
+- 页面采用阅读优先的克制深色视觉，使用单一暖色强调。
+- 新的学习内容优先进入 Markdown，不要硬编码到首页。
+- HTMX 只用于渐进增强；无 JavaScript 时普通 GET 筛选必须仍可用。
+- 首期不增加训练或实验 API，算法能力保留在 `src/`、Notebook 和示例中。
+- 不增加数据库、身份验证、网页编辑器、评论或外部同步，除非产品范围明确改变。

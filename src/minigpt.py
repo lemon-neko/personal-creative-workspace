@@ -90,7 +90,11 @@ class DecoderBlock:
         q = x @ self.W_q
         k = x @ self.W_k
         v = x @ self.W_v
-        to_heads = lambda value: value.reshape(batch, time, self.num_heads, self.head_size).transpose(0, 2, 1, 3)
+        def to_heads(value: np.ndarray) -> np.ndarray:
+            return value.reshape(
+                batch, time, self.num_heads, self.head_size
+            ).transpose(0, 2, 1, 3)
+
         qh, kh, vh = map(to_heads, (q, k, v))
         scores = qh @ kh.transpose(0, 1, 3, 2) / np.sqrt(self.head_size)
         causal = np.tril(np.ones((time, time), dtype=bool))
@@ -130,7 +134,11 @@ class DecoderBlock:
         scale = np.sqrt(self.head_size)
         d_q = (d_scores @ kh) / scale
         d_k = (d_scores.transpose(0, 1, 3, 2) @ qh) / scale
-        from_heads = lambda value: value.transpose(0, 2, 1, 3).reshape(batch, time, self.d_model)
+        def from_heads(value: np.ndarray) -> np.ndarray:
+            return value.transpose(0, 2, 1, 3).reshape(
+                batch, time, self.d_model
+            )
+
         d_q, d_k, d_v = map(from_heads, (d_q, d_k, d_v))
         flattened_x = x.reshape(-1, self.d_model)
         for name, value in (("W_q", d_q), ("W_k", d_k), ("W_v", d_v)):

@@ -1,0 +1,24 @@
+<section id="notes-results" class="notes-results" aria-live="polite">
+    <p class="result-count">共 {{ notes|length }} 条已发布记录</p>
+    {% if notes %}
+    <div class="timeline">
+        {% for note in notes %}
+        <article class="timeline-item">
+            <time datetime="{{ note.date.isoformat() }}">{{ note.date.isoformat() }}</time>
+            <div>
+                <h2><a href="{{ url_for('note_detail', note_id=note.id) }}">{{ note.title }}</a></h2>
+                <p>{{ note.summary }}</p>
+                <div class="tag-row">
+                    {% for tag in note.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
+                </div>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <strong>没有匹配的记录</strong>
+        <p>换一个标签或专题试试。</p>
+    </div>
+    {% endif %}
+</section>

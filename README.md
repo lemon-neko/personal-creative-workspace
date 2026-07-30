@@ -1,163 +1,93 @@
-# 羽白 AI Coding
+# 羽白学习手记
 
-> 从零实现与 AI 学习笔记的个人实验仓库（lemon-neko 的练手与笔记集）。
+> 面向未来自己的 AI / 编程学习作品集：记录问题，用代码验证，再整理成可以复用的专题。
 
-这是一个以"手写实现 + 交互式可视化 + 可运行示例"为核心的实验性仓库，目标是把每次学习、实现、复现与小实验都记录成可运行的 artefact，便于回顾、分享和教学。
+这个仓库同时保存学习内容和对应的可运行实现。日常思考先写成 Markdown，确认值得保留后发布到学习记录；围绕同一问题积累的记录会进一步整理成专题。
 
----
+首个专题是「从零理解 Transformer」，包含 Self-Attention、Transformer Block、字符级 MiniGPT 和梯度分析。网站保持只读，源码、Notebook 与测试负责保存可运行的验证过程。
 
-## 🌟 亮点：可视化教学平台
-
-### Streamlit Web 应用
+## 本地运行
 
 ```bash
-pip install -r requirements.txt
-streamlit run app/main.py
+python -m pip install -r requirements.txt
+uvicorn app.main:app --reload
 ```
 
-### 静态 HTML 教学站
+然后访问 `http://127.0.0.1:8000`。站点包含：
 
-基于 Streamlit 页面重构的纯前端教学平台，支持独立部署（Vercel）：
+- **首页**：平台定位、当前专题和最近发布记录
+- **学习记录**：按日期排列，可按标签或专题筛选
+- **Transformer 专题**：注意力、MiniGPT 与梯度的结构化总结
+- **关于**：内容工作流与 Markdown 格式说明
 
-```bash
-cd ai-teaching-platform
-# 直接打开 index.html 或在本地起一个静态服务器
+## 写一条学习记录
+
+在 `content/notes/` 新建 Markdown 文件：
+
+```markdown
+---
+id: unique-note-id
+title: 记录标题
+date: 2026-07-30
+status: draft
+summary: 一句话说明这次记录解决了什么问题
+tags:
+  - Transformer
+  - NumPy
+topic: transformer
+---
+
+正文从这里开始。
 ```
 
----
+字段约定：
 
-## 核心模块一览
+| 字段 | 说明 |
+|---|---|
+| `id` | 仓库内唯一、稳定的记录标识 |
+| `title` | 记录标题 |
+| `date` | `YYYY-MM-DD` 格式日期 |
+| `status` | `draft` 或 `published`；省略时默认为 `draft` |
+| `summary` | 用于首页和时间线的一句话摘要 |
+| `tags` | 用于筛选的文本列表 |
+| `topic` | 关联专题的稳定标识 |
 
-| 模块 | 说明 |
-|------|------|
-| **Self-Attention 详解** | 8 步交互式教程，对应 notebook 的完整流程 |
-| **注意力热力图** | 可调 temperature/init 的注意力权重可视化 |
-| **模型游乐场** | 配置超参数，训练玩具字符级语言模型 |
-| **Transformer 块** | 完整 Encoder/Decoder Block 结构与张量形状 |
-| **梯度流分析** | 手动反向传播与梯度范数可视化 |
-| **项目概览** | 学习路线、核心公式、指标卡片 |
-
----
-
-## 主要目标
-
-- **手写实现（from-scratch）**：Self-Attention、Transformer、优化器等，深入理解模型工作原理
-- **交互式可视化**：Streamlit Web 应用 + 静态 HTML 教学站，实时调节参数观察模型行为
-- **可运行示例（notebooks/examples）**：包含 `.py` 脚本与交互式 `.ipynb`
-- **单元测试**：pytest 覆盖核心模块，CI 自动验证
-
----
+只有 `published` 内容会出现在站点。字段错误的文件会进入页面底部的内容诊断，不会阻止其他记录加载。
 
 ## 仓库结构
 
-```
-羽白-AI-Coding/
-├── src/                  ← 从零实现的 ML 核心模块
-│   ├── attention.py      ← Self-Attention（NumPy + 反向传播）
-│   └── layers.py         ← LayerNorm, FFN, 位置编码
-├── app/                  ← Streamlit 可视化教学应用
-│   ├── main.py           ← 入口（首页 + 导航）
-│   ├── pages/            ← 6 个教学页面
-│   ├── components/       ← 可复用可视化组件
-│   └── styles.py         ← CSS 设计令牌与主题
-├── ai-teaching-platform/ ← 静态 HTML 教学站（Vercel 部署）
-│   ├── index.html        ← 首页
-│   ├── pages/            ← 各教学页面 HTML
-│   ├── assets/           ← 图片资源
-│   ├── colors_and_type.css ← 样式表
-│   └── vercel.json       ← Vercel 部署配置
-├── notebooks/            ← Jupyter 教程笔记本
-├── tests/                ← pytest 单元测试
-├── examples/             ← 独立可运行脚本（待补充）
-├── data/                 ← 小型示例数据（待补充）
-├── notes/                ← 学习笔记（待补充）
-├── experiments/          ← 实验配置与结果（待补充）
-├── tools/                ← 开发与部署脚本（待补充）
-├── docs/                 ← 详细文档（待补充）
-├── assets/               ← 通用静态资源（待补充）
-├── requirements.txt      ← 运行时依赖
-├── requirements-dev.txt  ← 开发依赖
-└── .github/workflows/    ← CI
+```text
+lemon-neko-scratch-ai/
+├── app/
+│   ├── main.py                 # FastAPI 应用、页面路由
+│   ├── content.py              # Markdown 解析、校验、筛选、渲染
+│   ├── templates/              # Jinja2 页面与 HTMX partial
+│   └── static/                 # CSS、页面脚本与本地 HTMX
+├── content/
+│   ├── notes/                  # 日常学习记录
+│   └── topics/                 # 整理后的专题文章
+├── src/                        # NumPy 核心实现
+├── notebooks/                  # 推导与实验 Notebook
+├── examples/                   # 可独立运行的示例
+└── tests/                      # 模型与内容层测试
 ```
 
----
-
-## 快速开始
-
-### 1. 安装依赖
+## 开发与验证
 
 ```bash
-# 核心依赖
-pip install -r requirements.txt          # numpy, streamlit, plotly
-pip install -r requirements-dev.txt      # pytest, ruff（开发用）
-```
-
-### 2. 运行 Streamlit 应用
-
-```bash
-streamlit run app/main.py
-```
-
-### 3. 运行静态 HTML 教学站
-
-```bash
-# 直接浏览器打开
-open ai-teaching-platform/index.html
-
-# 或启动本地服务器
-python -m http.server -d ai-teaching-platform 8000
-```
-
-### 4. 运行单元测试
-
-```bash
+python -m pip install -r requirements.txt -r requirements-dev.txt
 pytest tests/ -v
-```
-
-### 5. 运行独立脚本
-
-```bash
+ruff check src/ app/ tests/
 python -m src.attention
-python notebooks/debug_self_attention.py
+python examples/train_minigpt.py
 ```
 
----
+核心原则：
 
-## 贡献说明
+- `src/` 保持 NumPy from-scratch 实现；PyTorch 仅作为可选对照。
+- 学习文字、代码、测试和实验在同一仓库中接受版本管理。
+- 页面使用 FastAPI + Jinja2 服务端渲染，HTMX 只增强学习记录筛选。
+- 首期页面只读，不提供训练、实验 API 或进程内模型状态。
+- 首期不引入数据库、登录、网页编辑器、评论或外部同步。
 
-- 新示例放 `examples/`，同时提供 `.py`（用于自动化运行/CI）与 `.ipynb`（教学演示）
-- 可复用组件放 `src/`，避免在示例中复制代码
-- 笔记放 `notes/`
-- 实验放 `experiments/<name>/`，至少包含 `config.yaml`、`run.sh` 与 `results/README.md`
-- 提交前请确保示例脚本在 CPU 环境下可运行
-
----
-
-## 开发与 CI
-
-仓库已包含 GitHub Actions workflow（`.github/workflows/ci.yml`），在推送/PR 时自动：
-- 运行 `pytest` 单元测试（Python 3.10/3.11，仅 CPU）
-- 使用 `ruff` 检查代码风格
-- 运行 `src/` 模块的 `__main__` 测试
-
----
-
-## 技术栈
-
-| 类别 | 技术 |
-|------|------|
-| **核心实现** | 纯 NumPy（手动反向传播） |
-| **验证对照** | PyTorch（条件导入，仅用于对比） |
-| **交互式可视化** | Streamlit + Plotly |
-| **静态教学站** | 原生 HTML/CSS/JS + Vercel |
-| **测试** | pytest |
-| **代码风格** | ruff |
-| **CI/CD** | GitHub Actions |
-
----
-
-## 联系与声明
-
-作者：lemon-neko
-
-MIT 许可证。
+作者：lemon-neko · MIT License

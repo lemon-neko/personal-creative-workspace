@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}{{ note.title }} · 羽白学习手记{% endblock %}
+{% block description %}{{ note.summary }}{% endblock %}
+
+{% block content %}
+<article class="reading-page">
+    <header class="article-header">
+        <a class="back-link" href="{{ url_for('notes') }}">← 返回学习记录</a>
+        <time datetime="{{ note.date.isoformat() }}">{{ note.date.isoformat() }}</time>
+        <h1>{{ note.title }}</h1>
+        <p>{{ note.summary }}</p>
+        <div class="tag-row">
+            {% for tag in note.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
+        </div>
+    </header>
+    <div class="prose">{{ note_html | safe }}</div>
+</article>
+{% endblock %}

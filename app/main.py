@@ -1,149 +1,180 @@
-"""
-Streamlit 主入口
-=================
+"""FastAPI application for the personal learning portfolio."""
 
-启动方式：
-    streamlit run app/main.py
+from __future__ import annotations
 
-页面导航通过 app/pages/ 目录下的 Python 文件自动注册.
-"""
+from pathlib import Path
+from typing import Optional
 
-import os
-import sys
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
-import streamlit as st
-
-# 确保 src/ 和 app/ 下的模块可以被导入
-# 本地开发时 sys.path 已有仓库根，Cloud 上需要显式添加
-_repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
-
-from styles import STYLESHEET  # noqa: E402
-
-st.set_page_config(
-    page_title="AI 教学平台",
-    page_icon="🐱",
-    layout="wide",
+from app.content import (
+    ContentCollection,
+    StudyNote,
+    load_markdown,
+    load_notes,
+    render_markdown,
 )
 
-st.markdown(f"<style>{STYLESHEET}</style>", unsafe_allow_html=True)
+
+APP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = APP_DIR.parent
+TEMPLATES = Jinja2Templates(directory=APP_DIR / "templates")
 
 
-# ---- Navigation Helper ----
-
-def render_nav_bar(active_page: str = "首页"):
-    """生成顶部导航栏 HTML，支持动态高亮当前页面。
-
-    Parameters
-    ----------
-    active_page : str
-        当前页面的名称，需要与 tabs 列表中的 name 一致。
-        其他页面各自传入自己的页面名即可实现导航高亮。
-    """
-    tabs = [
-        ("首页", "/"),
-        ("项目概览", "/01_项目概览"),
-        ("Self-Attention", "/02_SelfAttention"),
-        ("注意力热力图", "/03_注意力热力图"),
-        ("模型游乐场", "/04_模型游乐场"),
-        ("Transformer 块", "/05_Transformer块"),
-        ("梯度流分析", "/06_梯度流分析"),
-    ]
-    tabs_html = ""
-    for name, href in tabs:
-        active_class = "nav-active" if name == active_page else ""
-        tabs_html += f'<a href="{href}" class="top-nav-tab {active_class}">{name}</a>'
-
-    return f"""
-    <div class="top-nav-bar">
-        <div class="top-nav-brand">
-            <span class="brand-icon">🐱</span>
-            <span>AI 教学平台</span>
-        </div>
-        <div class="top-nav-tabs">
-            {tabs_html}
-        </div>
-    </div>
-    """
+def _content(request: Request) -> ContentCollection:
+    return load_notes(request.app.state.content_root / "notes")
 
 
-# ---- Render Navigation ----
-st.markdown(render_nav_bar(active_page="首页"), unsafe_allow_html=True)
+def _published_note(collection: ContentCollection, note_id: str) -> StudyNote | None:
+    return next((note for note in collection.published if note.id == note_id), None)
 
-# ---- Welcome Banner ----
-st.markdown("""
-<div class="welcome-banner">
-    <h1>从零实现 Transformer，用可视化理解 AI</h1>
-    <p>纯 NumPy 手写注意力机制、Transformer 块、反向传播，搭配交互式可视化教学平台。<br>调参数、看图表、跑训练 —— 动手学 AI。</p>
-</div>
-""", unsafe_allow_html=True)
 
-# ---- Metric Cards (6 indicators) ----
-st.markdown("""
-<div class="metric-glow-row">
-    <div class="metric-glow">
-        <div class="metric-value">6</div>
-        <div class="metric-label">教学模块</div>
-    </div>
-    <div class="metric-glow">
-        <div class="metric-value">30+</div>
-        <div class="metric-label">交互式组件</div>
-    </div>
-    <div class="metric-glow">
-        <div class="metric-value">NumPy</div>
-        <div class="metric-label">纯手写实现</div>
-    </div>
-    <div class="metric-glow">
-        <div class="metric-value">MIT</div>
-        <div class="metric-label">开源许可</div>
-    </div>
-    <div class="metric-glow">
-        <div class="metric-value">Plotly</div>
-        <div class="metric-label">可视化</div>
-    </div>
-    <div class="metric-glow">
-        <div class="metric-value">PyTorch</div>
-        <div class="metric-label">验证对照</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+def _filter_context(
+    collection: ContentCollection,
+    *,
+    tag: str | None,
+    topic: str | None,
+) -> dict:
+    published = collection.published
+    tags = sorted({note_tag for note in published for note_tag in note.tags})
+    topics = sorted({note.topic for note in published})
+    return {
+        "notes": collection.filter(tag=tag, topic=topic),
+        "tags": tags,
+        "topics": topics,
+        "selected_tag": tag or "",
+        "selected_topic": topic or "",
+    }
 
-# ---- Page Navigation Cards (5 teaching pages) ----
-st.markdown("""
-<div class="page-nav-grid">
-    <a href="/02_SelfAttention" class="page-nav-card">
-        <div class="page-nav-icon">🧠</div>
-        <div class="page-nav-title">Self-Attention 详解</div>
-        <div class="page-nav-desc">理解注意力机制的核心公式和计算过程</div>
-    </a>
-    <a href="/03_注意力热力图" class="page-nav-card">
-        <div class="page-nav-icon">🌡️</div>
-        <div class="page-nav-title">注意力热力图</div>
-        <div class="page-nav-desc">可视化注意力权重，观察不同头的关注模式</div>
-    </a>
-    <a href="/04_模型游乐场" class="page-nav-card">
-        <div class="page-nav-icon">🎮</div>
-        <div class="page-nav-title">模型游乐场</div>
-        <div class="page-nav-desc">配置超参数，训练一个字符级语言模型</div>
-    </a>
-    <a href="/05_Transformer块" class="page-nav-card">
-        <div class="page-nav-icon">🏗️</div>
-        <div class="page-nav-title">Transformer 块</div>
-        <div class="page-nav-desc">理解编码器/解码器的完整结构</div>
-    </a>
-    <a href="/06_梯度流分析" class="page-nav-card">
-        <div class="page-nav-icon">📊</div>
-        <div class="page-nav-title">梯度流分析</div>
-        <div class="page-nav-desc">掌握手动反向传播的数学推导</div>
-    </a>
-</div>
-""", unsafe_allow_html=True)
 
-# ---- Footer ----
-st.markdown("""
-<div class="app-footer">
-    基于 "Attention Is All You Need" 论文 · 纯 NumPy 实现 + PyTorch 验证<br>
-    作者：lemon-neko · MIT 许可证
-</div>
-""", unsafe_allow_html=True)
+def create_app(content_root: Path | None = None) -> FastAPI:
+    """Create an app, optionally pointing tests at an isolated content directory."""
+
+    portfolio = FastAPI(
+        title="羽白学习手记",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    portfolio.state.content_root = content_root or REPO_ROOT / "content"
+    portfolio.mount(
+        "/static",
+        StaticFiles(directory=APP_DIR / "static"),
+        name="static",
+    )
+
+    @portfolio.get("/", response_class=HTMLResponse, name="home")
+    async def home(request: Request) -> HTMLResponse:
+        collection = _content(request)
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="home.html",
+            context={
+                "active_page": "home",
+                "recent_notes": collection.published[:3],
+                "diagnostics": collection.diagnostics,
+            },
+        )
+
+    @portfolio.get("/notes", response_class=HTMLResponse, name="notes")
+    async def notes(
+        request: Request,
+        tag: Optional[str] = Query(default=None),
+        topic: Optional[str] = Query(default=None),
+    ) -> HTMLResponse:
+        collection = _content(request)
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="notes.html",
+            context={
+                "active_page": "notes",
+                "diagnostics": collection.diagnostics,
+                **_filter_context(collection, tag=tag, topic=topic),
+            },
+        )
+
+    @portfolio.get(
+        "/partials/notes",
+        response_class=HTMLResponse,
+        name="notes_partial",
+    )
+    async def notes_partial(
+        request: Request,
+        tag: Optional[str] = Query(default=None),
+        topic: Optional[str] = Query(default=None),
+    ) -> HTMLResponse:
+        collection = _content(request)
+        response = TEMPLATES.TemplateResponse(
+            request=request,
+            name="partials/note_list.html",
+            context=_filter_context(collection, tag=tag, topic=topic),
+        )
+        query = request.url.query
+        response.headers["HX-Push-Url"] = f"/notes{f'?{query}' if query else ''}"
+        return response
+
+    @portfolio.get(
+        "/notes/{note_id}",
+        response_class=HTMLResponse,
+        name="note_detail",
+    )
+    async def note_detail(request: Request, note_id: str) -> HTMLResponse:
+        collection = _content(request)
+        note = _published_note(collection, note_id)
+        if note is None:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="404.html",
+                context={"active_page": "notes"},
+                status_code=404,
+            )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="note_detail.html",
+            context={
+                "active_page": "notes",
+                "note": note,
+                "note_html": render_markdown(note.body),
+            },
+        )
+
+    @portfolio.get(
+        "/topics/transformer",
+        response_class=HTMLResponse,
+        name="transformer_topic",
+    )
+    async def transformer_topic(request: Request) -> HTMLResponse:
+        topic_path = request.app.state.content_root / "topics" / "transformer.md"
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="topic.html",
+            context={
+                "active_page": "topics",
+                "topic_html": render_markdown(load_markdown(topic_path)),
+            },
+        )
+
+    @portfolio.get("/about", response_class=HTMLResponse, name="about")
+    async def about(request: Request) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="about.html",
+            context={"active_page": "about"},
+        )
+
+    @portfolio.exception_handler(404)
+    async def not_found(request: Request, _error: Exception) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="404.html",
+            context={"active_page": ""},
+            status_code=404,
+        )
+
+    return portfolio
+
+
+app = create_app()
