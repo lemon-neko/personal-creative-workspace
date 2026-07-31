@@ -1,0 +1,239 @@
+.publish-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 32px;
+  padding-bottom: 34px;
+  border-bottom: 1px solid var(--border);
+}
+
+.publish-header > div {
+  max-width: 720px;
+}
+
+.publish-header .back-link {
+  display: inline-block;
+  margin-bottom: 28px;
+}
+
+.publish-header h1 {
+  margin: 0;
+  font-size: clamp(40px, 6vw, 58px);
+  line-height: 1.14;
+  letter-spacing: -0.045em;
+}
+
+.publish-header > div > p:last-child {
+  margin: 18px 0 0;
+  color: var(--text-soft);
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.platform-badge {
+  flex: 0 0 auto;
+  padding: 7px 11px;
+  border: 1px solid #665737;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: #ead39f;
+  font-size: 11px;
+}
+
+.publish-layout {
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+  margin-top: 28px;
+}
+
+.publish-controls {
+  position: sticky;
+  top: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.publish-card,
+.publish-guide {
+  padding: 19px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.control-label {
+  margin: 0 0 10px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+}
+
+.publish-card h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+.source-meta {
+  margin: 17px 0 0;
+}
+
+.source-meta div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.source-meta dt {
+  color: var(--text-muted);
+}
+
+.source-meta dd {
+  margin: 0;
+  color: var(--text-soft);
+  text-align: right;
+}
+
+.source-meta code {
+  font-family: var(--font-mono);
+}
+
+.warning-card {
+  border-color: rgba(214, 180, 106, 0.24);
+  background: rgba(214, 180, 106, 0.055);
+}
+
+.warning-card ul,
+.publish-guide ol {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.warning-card li + li,
+.publish-guide li + li {
+  margin-top: 6px;
+}
+
+.action-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.action-card button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.publish-status {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.publish-status.success {
+  color: #a8d0af;
+}
+
+.publish-status.error {
+  color: var(--danger);
+}
+
+.publish-stage {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #20242a;
+}
+
+.preview-toolbar {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 17px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.wechat-canvas {
+  overflow-x: auto;
+  padding: 34px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    #191c21;
+  background-size: 24px 24px;
+}
+
+#publish-preview {
+  width: min(100%, 677px);
+  min-height: 720px;
+  margin-inline: auto;
+  padding: 42px 38px;
+  background: #fff;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.24);
+}
+
+@media (max-width: 900px) {
+  .publish-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .publish-controls {
+    position: static;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .action-card,
+  .publish-guide {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .publish-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .publish-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .action-card,
+  .publish-guide {
+    grid-column: auto;
+  }
+
+  .wechat-canvas {
+    padding: 14px;
+  }
+
+  #publish-preview {
+    min-height: 520px;
+    padding: 30px 22px;
+  }
+
+  .preview-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    padding-block: 11px;
+  }
+
+}

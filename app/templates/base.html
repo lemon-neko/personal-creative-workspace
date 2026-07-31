@@ -15,6 +15,7 @@
     <script defer src="{{ url_for('static', path='/vendor/mathjax/tex-svg.js') }}"></script>
     <script defer src="{{ url_for('static', path='/vendor/htmx.min.js') }}"></script>
     <script defer src="{{ url_for('static', path='/app.js') }}"></script>
+    {% block extra_head %}{% endblock %}
 </head>
 <body>
     <header class="site-header">
@@ -22,6 +23,7 @@
             <a class="brand" href="{{ url_for('home') }}"><span aria-hidden="true">🍋</span>羽白学习手记</a>
             <div class="nav-links">
                 <a class="{{ 'active' if active_page == 'home' else '' }}" href="{{ url_for('home') }}">首页</a>
+                <a class="{{ 'active' if active_page == 'workspace' else '' }}" href="{{ url_for('workspace') }}">碎片工作台</a>
                 <a class="{{ 'active' if active_page == 'notes' else '' }}" href="{{ url_for('notes') }}">学习记录</a>
                 <a class="{{ 'active' if active_page == 'topics' else '' }}" href="{{ url_for('transformer_topic') }}">专题</a>
                 <a class="{{ 'active' if active_page == 'about' else '' }}" href="{{ url_for('about') }}">关于</a>
@@ -39,5 +41,6 @@
             <span>lemon-neko · MIT License</span>
         </div>
     </footer>
+    {% block extra_scripts %}{% endblock %}
 </body>
 </html>

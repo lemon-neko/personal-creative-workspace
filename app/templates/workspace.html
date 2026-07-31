@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}碎片工作台 · 羽白学习手记{% endblock %}
+{% block description %}快速记录学习碎片，并将一周的内容自动整理为可编辑的 Markdown 草稿。{% endblock %}
+
+{% block content %}
+<header class="workspace-header">
+    <div>
+        <p class="eyebrow">CAPTURE · REVIEW</p>
+        <h1>碎片工作台</h1>
+        <p>先降低记录成本，再让系统定期收拢线索。所有内容只写入本地 Markdown，并且默认保持草稿状态。</p>
+    </div>
+    <div class="workspace-status" aria-label="本周状态">
+        <div>
+            <strong>{{ week_notes|length }}</strong>
+            <span>本周记录</span>
+        </div>
+        <div>
+            <strong>{{ fragments|length }}</strong>
+            <span>最近碎片</span>
+        </div>
+        <div>
+            <strong>{{ "运行中" if settings.enabled else "未启用" }}</strong>
+            <span>自动汇总</span>
+        </div>
+    </div>
+</header>
+
+{% if notice %}
+<div class="workspace-message success" role="status">{{ notice }}</div>
+{% endif %}
+{% if error %}
+<div class="workspace-message error" role="alert">{{ error }}</div>
+{% endif %}
+
+<div class="workspace-grid">
+    <section class="workspace-panel capture-panel" id="capture">
+        <div class="panel-heading">
+            <div>
+                <p class="eyebrow">QUICK CAPTURE</p>
+                <h2>记录一个碎片</h2>
+            </div>
+            <span class="draft-badge">保存为 draft</span>
+        </div>
+        <p class="panel-copy">一条记录只需要说明“我刚刚理解了什么”。摘要、日期和文件名由系统自动补齐。</p>
+
+        <form class="capture-form" action="{{ url_for('save_fragment') }}" method="post">
+            <label class="field field-wide">
+                <span>标题</span>
+                <input
+                    name="title"
+                    type="text"
+                    maxlength="120"
+                    value="{{ form_data.get('title', '') }}"
+                    placeholder="例如：为什么残差连接能改善梯度传播？"
+                    required
+                    autofocus
+                >
+            </label>
+            <label class="field field-wide">
+                <span>内容 <small>支持 Markdown</small></span>
+                <textarea
+                    name="body"
+                    rows="9"
+                    maxlength="20000"
+                    placeholder="记下问题、观察、代码线索或尚未验证的猜想……"
+                    required
+                >{{ form_data.get('body', '') }}</textarea>
+            </label>
+            <label class="field">
+                <span>标签</span>
+                <input
+                    name="tags"
+                    type="text"
+                    value="{{ form_data.get('tags', '') }}"
+                    placeholder="Transformer, 梯度"
+                >
+                <small>使用逗号分隔</small>
+            </label>
+            <label class="field">
+                <span>专题标识</span>
+                <input
+                    name="topic"
+                    type="text"
+                    maxlength="80"
+                    value="{{ form_data.get('topic', 'inbox') }}"
+                    placeholder="transformer"
+                >
+                <small>暂不确定时保留 inbox</small>
+            </label>
+            <div class="form-action field-wide">
+                <span>写入 <code>content/notes/</code></span>
+                <button class="primary-button" type="submit">保存碎片</button>
+            </div>
+        </form>
+    </section>
+
+    <aside class="workspace-panel automation-panel">
+        <div class="panel-heading">
+            <div>
+                <p class="eyebrow">WEEKLY REVIEW</p>
+                <h2>自动汇总</h2>
+            </div>
+            <span class="status-dot {{ 'enabled' if settings.enabled else '' }}" aria-hidden="true"></span>
+        </div>
+        <p class="panel-copy">
+            系统按自然周聚合草稿和已发布记录，生成结构化周总结。它不会替你发布，也不会改动原始碎片。
+        </p>
+
+        <form class="schedule-form" action="{{ url_for('save_schedule') }}" method="post">
+            <label class="switch-row">
+                <span>
+                    <strong>启用本地定时汇总</strong>
+                    <small>仅在 FastAPI 服务运行时执行</small>
+                </span>
+                <input name="enabled" type="checkbox" {{ 'checked' if settings.enabled else '' }}>
+            </label>
+            <div class="schedule-fields">
+                <label class="field">
+                    <span>每周</span>
+                    <select name="weekday">
+                        {% for weekday in weekdays %}
+                        <option value="{{ loop.index0 }}" {{ 'selected' if settings.weekday == loop.index0 else '' }}>
+                            {{ weekday }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="field">
+                    <span>时间</span>
+                    <input name="time" type="time" value="{{ settings.time_label }}" required>
+                </label>
+            </div>
+            <button class="secondary-button full-button" type="submit">保存定时设置</button>
+        </form>
+
+        <div class="next-run">
+            <span>下次运行</span>
+            {% if next_run %}
+            <strong>{{ next_run.strftime("%m 月 %d 日 %H:%M") }}</strong>
+            {% else %}
+            <strong>启用后计算</strong>
+            {% endif %}
+        </div>
+
+        <form action="{{ url_for('generate_summary') }}" method="post">
+            <button class="primary-button full-button" type="submit">立即生成本周汇总</button>
+        </form>
+        <p class="automation-note">当前生成的是结构化草稿；后续可在这个步骤接入 AI 进行观点提炼。</p>
+    </aside>
+</div>
+
+<section class="workspace-section">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">RECENT FRAGMENTS</p>
+            <h2>最近记录的碎片</h2>
+        </div>
+        <span>{{ fragments|length }} 条</span>
+    </div>
+
+    {% if fragments %}
+    <div class="fragment-list">
+        {% for fragment in fragments %}
+        <article class="fragment-row">
+            <time datetime="{{ fragment.date.isoformat() }}">{{ fragment.date.strftime("%m.%d") }}</time>
+            <div>
+                <h3>{{ fragment.title }}</h3>
+                <p>{{ fragment.summary }}</p>
+                <div class="tag-row">
+                    {% for tag in fragment.tags %}
+                    <span>{{ tag }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="fragment-actions">
+                <span class="draft-badge">{{ fragment.status }}</span>
+                <a
+                    class="publish-link"
+                    href="{{ url_for('publish_source', source_type='note', source_id=fragment.id) }}"
+                >转为公众号</a>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-workspace">
+        <span aria-hidden="true">✦</span>
+        <h3>这里还没有碎片</h3>
+        <p>从上面的输入框记录第一条内容，它会以 Markdown 草稿保存。</p>
+    </div>
+    {% endif %}
+</section>
+
+<section class="workspace-section summary-preview">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">LATEST DIGEST</p>
+            <h2>最近一份周总结</h2>
+        </div>
+        {% if latest_summary %}
+        <div class="section-actions">
+            <span>{{ latest_summary.date.isoformat() }} · draft</span>
+            <a
+                class="publish-link"
+                href="{{ url_for('publish_source', source_type='note', source_id=latest_summary.id) }}"
+            >转为公众号</a>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if latest_summary %}
+    <article class="prose summary-prose">
+        <h1>{{ latest_summary.title }}</h1>
+        {{ latest_summary_html|safe }}
+    </article>
+    {% else %}
+    <div class="empty-workspace compact">
+        <h3>尚未生成周总结</h3>
+        <p>积累几条碎片后，点击“立即生成本周汇总”即可预览结构化草稿。</p>
+    </div>
+    {% endif %}
+</section>
+
+{% if diagnostics %}
+<details class="diagnostics">
+    <summary>内容诊断 · {{ diagnostics|length }} 个文件未加载</summary>
+    {% for diagnostic in diagnostics %}
+    <p><code>{{ diagnostic.source.name }}</code> · {{ diagnostic.message }}</p>
+    {% endfor %}
+</details>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}公众号预览 · {{ source.title }}{% endblock %}
+{% block description %}将学习内容转换为适合微信公众号编辑器的富文本。{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', path='/publishing.css') }}">
+<script defer src="{{ url_for('static', path='/publishing.js') }}"></script>
+{% endblock %}
+
+{% block content %}
+<header class="publish-header">
+    <div>
+        <a class="back-link" href="{{ url_for('workspace') }}">← 返回碎片工作台</a>
+        <p class="eyebrow">PUBLISH ADAPTER · WECHAT</p>
+        <h1>公众号富文本预览</h1>
+        <p>忠实保留原文，只调整为适合公众号编辑器的排版。复制后请在公众号后台完成最终检查和发布。</p>
+    </div>
+    <span class="platform-badge">微信公众号 · 复制模式</span>
+</header>
+
+<div class="publish-layout">
+    <aside class="publish-controls">
+        <section class="publish-card">
+            <p class="control-label">内容来源</p>
+            <h2>{{ source.title }}</h2>
+            <dl class="source-meta">
+                <div>
+                    <dt>类型</dt>
+                    <dd>{{ "学习记录" if source.source_type == "note" else "专题" }}</dd>
+                </div>
+                <div>
+                    <dt>标识</dt>
+                    <dd><code>{{ source.source_id }}</code></dd>
+                </div>
+                <div>
+                    <dt>适配器</dt>
+                    <dd><code>{{ rendered.platform }}</code></dd>
+                </div>
+            </dl>
+        </section>
+
+        {% if rendered.warnings %}
+        <section class="publish-card warning-card">
+            <p class="control-label">转换提醒</p>
+            <ul>
+                {% for warning in rendered.warnings %}
+                <li>{{ warning }}</li>
+                {% endfor %}
+            </ul>
+        </section>
+        {% endif %}
+
+        <section class="publish-card action-card">
+            <button id="copy-rich-text" class="primary-button full-button" type="button">
+                一键复制富文本
+            </button>
+            <button id="download-html" class="secondary-button full-button" type="button">
+                下载 HTML
+            </button>
+            <p id="publish-status" class="publish-status" aria-live="polite">
+                尚未复制。所有处理都在当前浏览器内完成。
+            </p>
+            <noscript>
+                <p class="publish-status error">需要启用 JavaScript 才能复制公式图片或下载 HTML。</p>
+            </noscript>
+        </section>
+
+        <section class="publish-guide">
+            <p class="control-label">发布步骤</p>
+            <ol>
+                <li>检查右侧标题、代码和公式。</li>
+                <li>点击“一键复制富文本”。</li>
+                <li>粘贴到公众号编辑器。</li>
+                <li>检查图片后再人工发布。</li>
+            </ol>
+        </section>
+    </aside>
+
+    <section class="publish-stage" aria-label="公众号文章预览">
+        <div class="preview-toolbar">
+            <span>文章正文预览</span>
+            <span>677 px · 技术笔记主题</span>
+        </div>
+        <div class="wechat-canvas">
+            <div
+                id="publish-preview"
+                data-export-title="{{ rendered.title }}"
+            >{{ rendered.html|safe }}</div>
+        </div>
+    </section>
+</div>
+
+<textarea id="publish-plain-text" hidden>{{ rendered.plain_text }}</textarea>
+{% endblock %}

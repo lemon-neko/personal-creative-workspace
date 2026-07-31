@@ -13,6 +13,10 @@
         <div class="tag-row">
             {% for tag in note.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
         </div>
+        <a
+            class="publish-link article-publish-link"
+            href="{{ url_for('publish_source', source_type='note', source_id=note.id) }}"
+        >转换为公众号富文本 →</a>
     </header>
     <div class="prose">{{ note_html | safe }}</div>
 </article>

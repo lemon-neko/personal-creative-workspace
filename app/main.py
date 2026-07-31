@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Form, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -16,6 +18,19 @@ from app.content import (
     load_markdown,
     load_notes,
     render_markdown,
+)
+from app.publishing import WECHAT_RENDERER, resolve_publishing_source
+from app.workspace import (
+    FRAGMENT_TAG,
+    SUMMARY_TOPIC,
+    WEEKDAYS,
+    current_week_notes,
+    load_workspace_settings,
+    next_summary_run,
+    run_summary_scheduler,
+    save_fragment,
+    save_weekly_summary,
+    save_workspace_settings,
 )
 
 
@@ -50,14 +65,73 @@ def _filter_context(
     }
 
 
-def create_app(content_root: Path | None = None) -> FastAPI:
+def _workspace_context(
+    request: Request,
+    *,
+    saved: str | None = None,
+    error: str | None = None,
+    form_data: dict | None = None,
+) -> dict:
+    collection = _content(request)
+    settings = load_workspace_settings(request.app.state.content_root)
+    next_run = next_summary_run(settings)
+    fragments = tuple(
+        note for note in collection.notes if FRAGMENT_TAG in note.tags
+    )
+    summaries = tuple(
+        note for note in collection.notes if note.topic == SUMMARY_TOPIC
+    )
+    notices = {
+        "fragment": "碎片已保存为 Markdown 草稿。",
+        "summary": "本周汇总草稿已生成。",
+        "existing": "本周汇总已经存在，没有重复生成。",
+        "schedule": "定时汇总设置已保存。",
+    }
+    latest_summary = summaries[0] if summaries else None
+    return {
+        "active_page": "workspace",
+        "diagnostics": collection.diagnostics,
+        "fragments": fragments[:8],
+        "week_notes": current_week_notes(request.app.state.content_root),
+        "latest_summary": latest_summary,
+        "latest_summary_html": (
+            render_markdown(latest_summary.body) if latest_summary else ""
+        ),
+        "settings": settings,
+        "weekdays": WEEKDAYS,
+        "next_run": next_run,
+        "notice": notices.get(saved or ""),
+        "error": error,
+        "form_data": form_data or {},
+    }
+
+
+def create_app(
+    content_root: Path | None = None,
+    *,
+    enable_scheduler: bool = True,
+) -> FastAPI:
     """Create an app, optionally pointing tests at an isolated content directory."""
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        task = None
+        if enable_scheduler:
+            task = asyncio.create_task(
+                run_summary_scheduler(application.state.content_root),
+            )
+        yield
+        if task is not None:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     portfolio = FastAPI(
         title="羽白学习手记",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
     portfolio.state.content_root = content_root or REPO_ROOT / "content"
     portfolio.mount(
@@ -115,6 +189,129 @@ def create_app(content_root: Path | None = None) -> FastAPI:
         query = request.url.query
         response.headers["HX-Push-Url"] = f"/notes{f'?{query}' if query else ''}"
         return response
+
+    @portfolio.get("/workspace", response_class=HTMLResponse, name="workspace")
+    async def workspace(
+        request: Request,
+        saved: Optional[str] = Query(default=None),
+    ) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="workspace.html",
+            context=_workspace_context(request, saved=saved),
+        )
+
+    @portfolio.post("/workspace/fragments", name="save_fragment")
+    async def capture_fragment(
+        request: Request,
+        title: str = Form(...),
+        body: str = Form(...),
+        tags: str = Form(default=""),
+        topic: str = Form(default="inbox"),
+    ) -> HTMLResponse:
+        try:
+            save_fragment(
+                request.app.state.content_root,
+                title=title,
+                body=body,
+                tags=tags,
+                topic=topic,
+            )
+        except ValueError as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="workspace.html",
+                context=_workspace_context(
+                    request,
+                    error=str(error),
+                    form_data={
+                        "title": title,
+                        "body": body,
+                        "tags": tags,
+                        "topic": topic,
+                    },
+                ),
+                status_code=422,
+            )
+        return RedirectResponse(
+            request.url_for("workspace").include_query_params(saved="fragment"),
+            status_code=303,
+        )
+
+    @portfolio.post("/workspace/summary", name="generate_summary")
+    async def generate_summary(request: Request) -> HTMLResponse:
+        try:
+            _, created = save_weekly_summary(request.app.state.content_root)
+        except ValueError as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="workspace.html",
+                context=_workspace_context(request, error=str(error)),
+                status_code=422,
+            )
+        saved = "summary" if created else "existing"
+        return RedirectResponse(
+            request.url_for("workspace").include_query_params(saved=saved),
+            status_code=303,
+        )
+
+    @portfolio.post("/workspace/schedule", name="save_schedule")
+    async def update_schedule(
+        request: Request,
+        enabled: Optional[str] = Form(default=None),
+        weekday: int = Form(...),
+        time_value: str = Form(..., alias="time"),
+    ) -> HTMLResponse:
+        try:
+            save_workspace_settings(
+                request.app.state.content_root,
+                enabled=enabled == "on",
+                weekday=weekday,
+                time_value=time_value,
+            )
+        except ValueError as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="workspace.html",
+                context=_workspace_context(request, error=str(error)),
+                status_code=422,
+            )
+        return RedirectResponse(
+            request.url_for("workspace").include_query_params(saved="schedule"),
+            status_code=303,
+        )
+
+    @portfolio.get(
+        "/workspace/publish/{source_type}/{source_id}",
+        response_class=HTMLResponse,
+        name="publish_source",
+    )
+    async def publish_source(
+        request: Request,
+        source_type: str,
+        source_id: str,
+    ) -> HTMLResponse:
+        source = resolve_publishing_source(
+            request.app.state.content_root,
+            source_type,
+            source_id,
+        )
+        if source is None:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="404.html",
+                context={"active_page": "workspace"},
+                status_code=404,
+            )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="publish.html",
+            context={
+                "active_page": "workspace",
+                "source": source,
+                "rendered": WECHAT_RENDERER.render(source),
+            },
+        )
 
     @portfolio.get(
         "/notes/{note_id}",

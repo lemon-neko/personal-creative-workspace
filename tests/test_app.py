@@ -17,6 +17,7 @@ def client() -> TestClient:
     ("path", "marker"),
     [
         ("/", "把学过的东西"),
+        ("/workspace", "碎片工作台"),
         ("/notes", "学习记录"),
         ("/notes/attention-temperature", "Temperature 如何改变注意力分布"),
         ("/topics/transformer", "从零理解 Transformer"),
@@ -33,12 +34,18 @@ def test_static_assets_are_local_and_available(client: TestClient) -> None:
     styles = client.get("/static/styles.css")
     htmx = client.get("/static/vendor/htmx.min.js")
     mathjax = client.get("/static/vendor/mathjax/tex-svg.js")
+    publishing_styles = client.get("/static/publishing.css")
+    publishing_script = client.get("/static/publishing.js")
     assert styles.status_code == 200
     assert "--accent" in styles.text
     assert htmx.status_code == 200
     assert "var htmx=" in htmx.text
     assert mathjax.status_code == 200
     assert "MathJax" in mathjax.text
+    assert publishing_styles.status_code == 200
+    assert ".publish-layout" in publishing_styles.text
+    assert publishing_script.status_code == 200
+    assert "ClipboardItem" in publishing_script.text
 
 
 def test_home_and_notes_hide_drafts(client: TestClient) -> None:
