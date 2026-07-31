@@ -28,8 +28,10 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run tests (CPU only)
-        run: |
-          pytest tests/ -v --tb=short
+        run: pytest -q
+
+      - name: Import FastAPI application
+        run: python -c "from app.main import app; print(app.title)"
 
   lint:
     runs-on: ubuntu-latest
@@ -45,25 +47,4 @@ jobs:
         run: pip install ruff
 
       - name: Lint source and tests
-        run: |
-          ruff check src/ app/ tests/
-
-  examples:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Run src/attention.py __main__
-        run: python -m src.attention
-
-      - name: Run src/layers.py __main__ (if exists)
-        run: python -c "import src.layers; print('layers OK')"
+        run: ruff check app tests

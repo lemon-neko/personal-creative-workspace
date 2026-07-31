@@ -1,1 +1,1 @@
-"""Streamlit personal learning portfolio."""
+"""Local-first personal creative workspace."""
