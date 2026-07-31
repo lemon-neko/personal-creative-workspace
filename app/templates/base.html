@@ -3,8 +3,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="{% block description %}记录 AI 与编程学习中的问题、实验和阶段性结论。{% endblock %}">
-    <title>{% block title %}羽白学习手记{% endblock %}</title>
+    <meta name="description" content="{% block description %}记录突然冒出来的想法，也给它们慢慢长大的空间。{% endblock %}">
+    <title>{% block title %}羽白的幻想栈{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
     <script>
         window.MathJax = {
@@ -20,13 +20,17 @@
 <body>
     <header class="site-header">
         <nav class="nav-shell" aria-label="主导航">
-            <a class="brand" href="{{ url_for('home') }}"><span aria-hidden="true">🍋</span>羽白学习手记</a>
+            <a class="brand" href="{{ url_for('workspace') }}">
+                <span class="brand-mark" aria-hidden="true">◌</span>
+                <span>羽白的幻想栈</span>
+            </a>
             <div class="nav-links">
-                <a class="{{ 'active' if active_page == 'home' else '' }}" href="{{ url_for('home') }}">首页</a>
-                <a class="{{ 'active' if active_page == 'workspace' else '' }}" href="{{ url_for('workspace') }}">碎片工作台</a>
-                <a class="{{ 'active' if active_page == 'notes' else '' }}" href="{{ url_for('notes') }}">学习记录</a>
-                <a class="{{ 'active' if active_page == 'topics' else '' }}" href="{{ url_for('transformer_topic') }}">专题</a>
-                <a class="{{ 'active' if active_page == 'about' else '' }}" href="{{ url_for('about') }}">关于</a>
+                <a class="{{ 'active' if active_page == 'workspace' else '' }}" href="{{ url_for('workspace') }}">随手记</a>
+                <a class="{{ 'active' if active_page == 'ideas' else '' }}" href="{{ url_for('ideas') }}">想法库</a>
+                <a class="{{ 'active' if active_page == 'reviews' else '' }}" href="{{ url_for('reviews') }}">周回顾</a>
+                <a class="{{ 'active' if active_page == 'publish' else '' }}" href="{{ url_for('publish_index') }}">发布</a>
+                <a class="{{ 'active' if active_page == 'garden' else '' }}" href="{{ url_for('garden') }}">公开区</a>
+                <a class="{{ 'active' if active_page == 'settings' else '' }}" href="{{ url_for('settings') }}">设置</a>
             </div>
         </nav>
     </header>
@@ -37,8 +41,8 @@
 
     <footer class="site-footer">
         <div class="footer-shell">
-            <span>持续学习，诚实记录。</span>
-            <span>lemon-neko · MIT License</span>
+            <span>把念头接住。至于它要长成什么，之后再说。</span>
+            <span>lemon-neko · local first</span>
         </div>
     </footer>
     {% block extra_scripts %}{% endblock %}

@@ -1,8 +1,6 @@
 {% extends "base.html" %}
 
 {% block title %}公众号预览 · {{ source.title }}{% endblock %}
-{% block description %}将学习内容转换为适合微信公众号编辑器的富文本。{% endblock %}
-
 {% block extra_head %}
 <link rel="stylesheet" href="{{ url_for('static', path='/publishing.css') }}">
 <script defer src="{{ url_for('static', path='/publishing.js') }}"></script>
@@ -11,85 +9,85 @@
 {% block content %}
 <header class="publish-header">
     <div>
-        <a class="back-link" href="{{ url_for('workspace') }}">← 返回碎片工作台</a>
-        <p class="eyebrow">PUBLISH ADAPTER · WECHAT</p>
-        <h1>公众号富文本预览</h1>
-        <p>忠实保留原文，只调整为适合公众号编辑器的排版。复制后请在公众号后台完成最终检查和发布。</p>
+        <a class="back-link" href="{{ url_for('publish_index') }}">← 返回发布列表</a>
+        <p class="eyebrow">WECHAT ADAPTER</p>
+        <h1>{{ source.title }}</h1>
+        <p>先看忠实排版；需要时再让“幻想栈风格”帮你换一种表达。它永远不会直接改原文。</p>
     </div>
-    <span class="platform-badge">微信公众号 · 复制模式</span>
+    <span class="platform-badge">微信公众号 · 人工发布</span>
 </header>
 
-<div class="publish-layout">
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<div class="publish-layout {{ 'has-candidate' if candidate else '' }}">
     <aside class="publish-controls">
         <section class="publish-card">
             <p class="control-label">内容来源</p>
-            <h2>{{ source.title }}</h2>
+            <h2>{{ item.title }}</h2>
             <dl class="source-meta">
-                <div>
-                    <dt>类型</dt>
-                    <dd>{{ "学习记录" if source.source_type == "note" else "专题" }}</dd>
-                </div>
-                <div>
-                    <dt>标识</dt>
-                    <dd><code>{{ source.source_id }}</code></dd>
-                </div>
-                <div>
-                    <dt>适配器</dt>
-                    <dd><code>{{ rendered.platform }}</code></dd>
-                </div>
+                <div><dt>类型</dt><dd>{{ kind_labels[item.kind] }}</dd></div>
+                <div><dt>状态</dt><dd>{{ status_labels[item.status] }}</dd></div>
+                <div><dt>适配器</dt><dd><code>{{ rendered.platform }}</code></dd></div>
             </dl>
         </section>
 
-        {% if rendered.warnings %}
-        <section class="publish-card warning-card">
-            <p class="control-label">转换提醒</p>
-            <ul>
-                {% for warning in rendered.warnings %}
-                <li>{{ warning }}</li>
-                {% endfor %}
-            </ul>
+        <section class="publish-card">
+            <p class="control-label">幻想栈风格润色</p>
+            {% if llm_enabled %}
+            <form action="{{ url_for('polish_item', item_id=item.id) }}" method="post" class="polish-form">
+                <label class="field"><span>表达模式</span><select name="mode">
+                    <option value="auto">自动判断</option>
+                    <option value="essay">观察随想</option>
+                    <option value="explainer">概念拆解</option>
+                </select></label>
+                <button class="secondary-button full-button" type="submit">生成候选稿</button>
+            </form>
+            <p class="publish-hint">候选稿只在当前页面预览，明确保存后才会成为新草稿。</p>
+            {% else %}
+            <p class="publish-hint">尚未配置模型。设置 LLM_BASE_URL、LLM_API_KEY 和 LLM_MODEL 后启用；忠实排版不受影响。</p>
+            {% endif %}
+        </section>
+
+        {% if candidate and candidate.image_suggestions %}
+        <section class="publish-card suggestion-card">
+            <p class="control-label">配图位置建议</p>
+            <ul>{% for suggestion in candidate.image_suggestions %}<li>{{ suggestion }}</li>{% endfor %}</ul>
         </section>
         {% endif %}
 
+        {% if rendered.warnings %}
+        <section class="publish-card warning-card"><p class="control-label">转换提醒</p><ul>{% for warning in rendered.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></section>
+        {% endif %}
+
         <section class="publish-card action-card">
-            <button id="copy-rich-text" class="primary-button full-button" type="button">
-                一键复制富文本
-            </button>
-            <button id="download-html" class="secondary-button full-button" type="button">
-                下载 HTML
-            </button>
-            <p id="publish-status" class="publish-status" aria-live="polite">
-                尚未复制。所有处理都在当前浏览器内完成。
-            </p>
-            <noscript>
-                <p class="publish-status error">需要启用 JavaScript 才能复制公式图片或下载 HTML。</p>
-            </noscript>
+            <button id="copy-rich-text" class="primary-button full-button" type="button">一键复制富文本</button>
+            <button id="download-html" class="secondary-button full-button" type="button">下载 HTML</button>
+            <p id="publish-status" class="publish-status" aria-live="polite">尚未复制。处理只发生在当前浏览器。</p>
         </section>
 
-        <section class="publish-guide">
-            <p class="control-label">发布步骤</p>
-            <ol>
-                <li>检查右侧标题、代码和公式。</li>
-                <li>点击“一键复制富文本”。</li>
-                <li>粘贴到公众号编辑器。</li>
-                <li>检查图片后再人工发布。</li>
-            </ol>
-        </section>
+        {% if candidate %}
+        <form class="publish-card save-candidate" action="{{ url_for('save_polished_article', item_id=item.id) }}" method="post">
+            <input type="hidden" name="title" value="{{ candidate.title }}">
+            <textarea name="markdown" hidden>{{ candidate.markdown }}</textarea>
+            <p class="control-label">候选稿确认</p>
+            <p>保存后会创建关联原文的新文章草稿。</p>
+            <button class="primary-button full-button" type="submit">保存为文章草稿</button>
+        </form>
+        {% endif %}
     </aside>
 
     <section class="publish-stage" aria-label="公众号文章预览">
-        <div class="preview-toolbar">
-            <span>文章正文预览</span>
-            <span>677 px · 技术笔记主题</span>
-        </div>
+        <div class="preview-toolbar"><span>{{ '幻想栈候选稿' if candidate else '忠实排版' }}</span><span>677 px · 清爽青蓝主题</span></div>
+        {% if candidate %}
+        <details class="original-drawer">
+            <summary>对照原文</summary>
+            <article class="prose">{{ original_html|safe }}</article>
+        </details>
+        {% endif %}
         <div class="wechat-canvas">
-            <div
-                id="publish-preview"
-                data-export-title="{{ rendered.title }}"
-            >{{ rendered.html|safe }}</div>
+            <div id="publish-preview" data-export-title="{{ rendered.title }}">{{ rendered.html|safe }}</div>
         </div>
     </section>
 </div>
-
 <textarea id="publish-plain-text" hidden>{{ rendered.plain_text }}</textarea>
 {% endblock %}

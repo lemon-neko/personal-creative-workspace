@@ -1,18 +1,30 @@
-"""Markdown-backed content model for the learning portfolio."""
+"""Markdown-backed content model for the personal idea workspace."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import yaml
 from markdown_it import MarkdownIt
 
 
-VALID_STATUSES = {"draft", "published"}
-REQUIRED_FIELDS = {"id", "title", "date", "summary", "tags", "topic"}
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+VALID_STATUSES = {"draft", "published", "archived"}
+VALID_KINDS = {"thought", "weekly-review", "article"}
+REQUIRED_FIELDS = {
+    "id",
+    "title",
+    "created_at",
+    "updated_at",
+    "status",
+    "kind",
+    "summary",
+    "tags",
+}
 MARKDOWN = (
     MarkdownIt(
         "commonmark",
@@ -28,23 +40,34 @@ MARKDOWN = (
 
 
 @dataclass(frozen=True)
-class StudyNote:
-    """A validated learning note."""
+class ContentItem:
+    """One validated thought, weekly review, or article."""
 
     id: str
     title: str
-    date: date
+    created_at: datetime
+    updated_at: datetime
     status: str
+    kind: str
     summary: str
     tags: tuple[str, ...]
-    topic: str
+    category: str | None
+    parent_id: str | None
     body: str
     source: Path
+
+    @property
+    def date_label(self) -> str:
+        return self.created_at.astimezone(SHANGHAI).strftime("%Y-%m-%d")
+
+    @property
+    def time_label(self) -> str:
+        return self.created_at.astimezone(SHANGHAI).strftime("%H:%M")
 
 
 @dataclass(frozen=True)
 class ContentDiagnostic:
-    """A content error that should be shown without stopping the site."""
+    """A content error that should not block other files."""
 
     source: Path
     message: str
@@ -52,42 +75,67 @@ class ContentDiagnostic:
 
 @dataclass(frozen=True)
 class ContentCollection:
-    """Notes and non-fatal diagnostics from one loading pass."""
+    """Loaded content plus non-fatal diagnostics."""
 
-    notes: tuple[StudyNote, ...]
+    items: tuple[ContentItem, ...]
     diagnostics: tuple[ContentDiagnostic, ...]
 
     @property
-    def published(self) -> tuple[StudyNote, ...]:
-        return tuple(note for note in self.notes if note.status == "published")
+    def published(self) -> tuple[ContentItem, ...]:
+        return tuple(item for item in self.items if item.status == "published")
+
+    def get(self, item_id: str) -> ContentItem | None:
+        return next((item for item in self.items if item.id == item_id), None)
 
     def filter(
         self,
         *,
-        status: str | None = "published",
+        query: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
         tag: str | None = None,
-        topic: str | None = None,
-    ) -> tuple[StudyNote, ...]:
-        notes: Iterable[StudyNote] = self.notes
-        if status is not None:
-            notes = (note for note in notes if note.status == status)
+        category: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> tuple[ContentItem, ...]:
+        items: Iterable[ContentItem] = self.items
+        if query:
+            needle = query.casefold().strip()
+            items = (
+                item
+                for item in items
+                if needle
+                in " ".join(
+                    (item.title, item.summary, item.body, " ".join(item.tags)),
+                ).casefold()
+            )
+        if status:
+            items = (item for item in items if item.status == status)
+        if kind:
+            items = (item for item in items if item.kind == kind)
         if tag:
-            notes = (note for note in notes if tag in note.tags)
-        if topic:
-            notes = (note for note in notes if note.topic == topic)
-        return tuple(notes)
+            items = (item for item in items if tag in item.tags)
+        if category:
+            items = (item for item in items if item.category == category)
+        if date_from:
+            items = (item for item in items if item.date_label >= date_from)
+        if date_to:
+            items = (item for item in items if item.date_label <= date_to)
+        return tuple(items)
 
 
 def _split_front_matter(text: str) -> tuple[str, str]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         raise ValueError("缺少 YAML front matter 起始标记 `---`")
-
     try:
-        end = next(index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---")
+        end = next(
+            index
+            for index, line in enumerate(lines[1:], start=1)
+            if line.strip() == "---"
+        )
     except StopIteration as error:
         raise ValueError("缺少 YAML front matter 结束标记 `---`") from error
-
     return "\n".join(lines[1:end]), "\n".join(lines[end + 1 :]).strip()
 
 
@@ -98,8 +146,32 @@ def _required_text(metadata: dict, field: str) -> str:
     return value.strip()
 
 
-def parse_note(path: Path) -> StudyNote:
-    """Parse and validate one Markdown note."""
+def _optional_text(metadata: dict, field: str) -> str | None:
+    value = metadata.get(field)
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"`{field}` 必须是文本")
+    return value.strip() or None
+
+
+def _parse_datetime(value: object, field: str) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as error:
+            raise ValueError(f"`{field}` 必须使用 ISO 8601 时间格式") from error
+    else:
+        raise TypeError(f"`{field}` 必须使用 ISO 8601 时间格式")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=SHANGHAI)
+    return parsed.astimezone(SHANGHAI)
+
+
+def parse_item(path: Path) -> ContentItem:
+    """Parse and validate one Markdown content item."""
 
     front_matter, body = _split_front_matter(path.read_text(encoding="utf-8"))
     metadata = yaml.safe_load(front_matter)
@@ -110,66 +182,56 @@ def parse_note(path: Path) -> StudyNote:
     if missing:
         raise ValueError(f"缺少必填字段：{', '.join(missing)}")
 
-    raw_status = metadata.get("status", "draft")
-    if raw_status not in VALID_STATUSES:
-        raise ValueError("`status` 只能是 `draft` 或 `published`")
-
-    raw_date = metadata["date"]
-    if isinstance(raw_date, date):
-        parsed_date = raw_date
-    elif isinstance(raw_date, str):
-        try:
-            parsed_date = date.fromisoformat(raw_date)
-        except ValueError as error:
-            raise ValueError("`date` 必须使用 YYYY-MM-DD 格式") from error
-    else:
-        raise TypeError("`date` 必须使用 YYYY-MM-DD 格式")
+    status = metadata["status"]
+    if status not in VALID_STATUSES:
+        raise ValueError("`status` 只能是 `draft`、`published` 或 `archived`")
+    kind = metadata["kind"]
+    if kind not in VALID_KINDS:
+        raise ValueError("`kind` 只能是 `thought`、`weekly-review` 或 `article`")
 
     raw_tags = metadata["tags"]
-    if not isinstance(raw_tags, list) or not all(isinstance(tag, str) and tag.strip() for tag in raw_tags):
+    if not isinstance(raw_tags, list) or not all(
+        isinstance(tag, str) and tag.strip() for tag in raw_tags
+    ):
         raise ValueError("`tags` 必须是文本列表")
-
     if not body:
         raise ValueError("Markdown 正文不能为空")
 
-    return StudyNote(
+    return ContentItem(
         id=_required_text(metadata, "id"),
         title=_required_text(metadata, "title"),
-        date=parsed_date,
-        status=raw_status,
+        created_at=_parse_datetime(metadata["created_at"], "created_at"),
+        updated_at=_parse_datetime(metadata["updated_at"], "updated_at"),
+        status=status,
+        kind=kind,
         summary=_required_text(metadata, "summary"),
         tags=tuple(tag.strip() for tag in raw_tags),
-        topic=_required_text(metadata, "topic"),
+        category=_optional_text(metadata, "category"),
+        parent_id=_optional_text(metadata, "parent_id"),
         body=body,
         source=path,
     )
 
 
-def load_notes(directory: Path) -> ContentCollection:
-    """Load every note, keeping bad files as diagnostics instead of failing."""
+def load_items(directory: Path) -> ContentCollection:
+    """Load content files while isolating invalid files as diagnostics."""
 
-    notes: list[StudyNote] = []
+    items: list[ContentItem] = []
     diagnostics: list[ContentDiagnostic] = []
     seen_ids: dict[str, Path] = {}
-
-    for path in sorted(directory.glob("*.md")) if directory.exists() else []:
+    paths = sorted(directory.glob("*.md")) if directory.exists() else []
+    for path in paths:
         try:
-            note = parse_note(path)
-            if note.id in seen_ids:
-                raise ValueError(f"`id` 与 {seen_ids[note.id].name} 重复：{note.id}")
-            seen_ids[note.id] = path
-            notes.append(note)
+            item = parse_item(path)
+            if item.id in seen_ids:
+                raise ValueError(f"`id` 与 {seen_ids[item.id].name} 重复：{item.id}")
+            seen_ids[item.id] = path
+            items.append(item)
         except (OSError, TypeError, UnicodeError, ValueError, yaml.YAMLError) as error:
             diagnostics.append(ContentDiagnostic(path, str(error)))
 
-    notes.sort(key=lambda note: (note.date, note.id), reverse=True)
-    return ContentCollection(tuple(notes), tuple(diagnostics))
-
-
-def load_markdown(path: Path) -> str:
-    """Read a plain Markdown document used by a topic page."""
-
-    return path.read_text(encoding="utf-8").strip()
+    items.sort(key=lambda item: (item.created_at, item.id), reverse=True)
+    return ContentCollection(tuple(items), tuple(diagnostics))
 
 
 def render_markdown(markdown: str) -> str:

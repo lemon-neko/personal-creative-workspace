@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}{{ item.title }} · 想法库{% endblock %}
+
+{% block content %}
+<div class="detail-topbar">
+    <a class="back-link" href="{{ url_for('ideas') }}">← 返回想法库</a>
+    <div class="detail-actions">
+        <a class="secondary-button" href="{{ url_for('publish_item', item_id=item.id) }}">转换为公众号</a>
+        <form action="{{ url_for('trash_idea', item_id=item.id) }}" method="post">
+            <button class="danger-link" type="submit">移入回收站</button>
+        </form>
+    </div>
+</div>
+
+{% if request.query_params.get('saved') == 'updated' %}<div class="message success">修改已保存。</div>{% endif %}
+{% if request.query_params.get('saved') == 'status' %}<div class="message success">内容状态已更新。</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<div class="editor-layout">
+    <section class="editor-panel">
+        <div class="panel-heading">
+            <div><p class="eyebrow">EDIT</p><h1>整理这条想法</h1></div>
+            <span class="status-badge status-{{ item.status }}">{{ status_labels[item.status] }}</span>
+        </div>
+        <form action="{{ url_for('update_idea', item_id=item.id) }}" method="post" class="edit-form">
+            <label class="field"><span>标题</span><input name="title" maxlength="120" value="{{ item.title }}"></label>
+            <label class="field"><span>正文 <small>Markdown</small></span><textarea name="body" rows="18" maxlength="50000" required>{{ item.body }}</textarea></label>
+            <div class="field-grid">
+                <label class="field"><span>标签</span><input name="tags" value="{{ tags_value }}"></label>
+                <label class="field"><span>分类</span><input name="category" maxlength="40" value="{{ item.category or '' }}"></label>
+            </div>
+            <div class="editor-meta">
+                <span>创建于 {{ item.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+                <span>更新于 {{ item.updated_at.strftime("%Y-%m-%d %H:%M") }}</span>
+            </div>
+            <button class="primary-button" type="submit">保存修改</button>
+        </form>
+    </section>
+
+    <aside class="preview-panel">
+        <p class="eyebrow">PREVIEW</p>
+        <article class="prose">
+            <h1>{{ item.title }}</h1>
+            {{ item_html|safe }}
+        </article>
+    </aside>
+</div>
+
+<section class="status-actions">
+    <div><h2>它现在应该在哪里？</h2><p>公开只影响阅读区，不会自动发布到任何外部平台。</p></div>
+    <div>
+        {% for value, label in status_labels.items() %}
+        <form action="{{ url_for('change_idea_status', item_id=item.id) }}" method="post">
+            <input type="hidden" name="status" value="{{ value }}">
+            <button class="{{ 'active' if item.status == value else '' }}" type="submit">{{ label }}</button>
+        </form>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

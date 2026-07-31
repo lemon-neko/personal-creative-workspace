@@ -1,10 +1,11 @@
-"""File-backed capture and weekly-review workflow for the local workspace."""
+"""File-backed capture, lifecycle, trash, and weekly review workflow."""
 
 from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -12,18 +13,32 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from app.content import StudyNote, load_notes, parse_note
+from app.content import (
+    VALID_KINDS,
+    VALID_STATUSES,
+    ContentItem,
+    load_items,
+    parse_item,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
-SUMMARY_TOPIC = "weekly-review"
-FRAGMENT_TAG = "碎片"
+KIND_LABELS = {
+    "thought": "随手想法",
+    "weekly-review": "周回顾",
+    "article": "文章草稿",
+}
+STATUS_LABELS = {
+    "draft": "草稿",
+    "published": "公开",
+    "archived": "归档",
+}
 
 
 @dataclass(frozen=True)
 class WorkspaceSettings:
-    """Local schedule for the weekly draft generator."""
+    """Local schedule for weekly review drafts."""
 
     enabled: bool = False
     weekday: int = 6
@@ -35,6 +50,14 @@ class WorkspaceSettings:
         return f"{self.hour:02d}:{self.minute:02d}"
 
 
+def items_directory(content_root: Path) -> Path:
+    return content_root / "items"
+
+
+def trash_directory(content_root: Path) -> Path:
+    return content_root / "trash"
+
+
 def _required_text(value: str, label: str, *, maximum: int) -> str:
     cleaned = value.strip()
     if not cleaned:
@@ -44,169 +67,322 @@ def _required_text(value: str, label: str, *, maximum: int) -> str:
     return cleaned
 
 
-def _normalise_tags(raw_tags: str) -> list[str]:
+def _normalise_tags(raw_tags: str | Sequence[str]) -> list[str]:
+    raw_items = (
+        re.split(r"[,，]", raw_tags) if isinstance(raw_tags, str) else raw_tags
+    )
     tags: list[str] = []
-    for item in re.split(r"[,，]", raw_tags):
-        tag = item.strip()
+    for item in raw_items:
+        tag = str(item).strip()
         if tag and tag not in tags:
             tags.append(tag)
-    if FRAGMENT_TAG not in tags:
-        tags.append(FRAGMENT_TAG)
-    return tags[:8]
+    return tags[:12]
 
 
-def _plain_summary(body: str, *, maximum: int = 96) -> str:
-    plain = re.sub(r"[#>*_`~\[\]()!-]+", " ", body)
-    plain = " ".join(plain.split())
-    if len(plain) <= maximum:
-        return plain
-    return f"{plain[: maximum - 1].rstrip()}…"
+def _plain_text(markdown: str) -> str:
+    plain = re.sub(r"!\[[^\]]*]\([^)]+\)", " ", markdown)
+    plain = re.sub(r"\[([^\]]+)]\([^)]+\)", r"\1", plain)
+    plain = re.sub(r"[#>*_`~|]+", " ", plain)
+    return " ".join(plain.split())
 
 
-def _write_note(path: Path, metadata: dict, body: str) -> StudyNote:
+def _derive_title(body: str, maximum: int = 46) -> str:
+    plain = _plain_text(body)
+    first = re.split(r"[。！？!?\n]", plain, maxsplit=1)[0].strip() or "未命名想法"
+    return first if len(first) <= maximum else f"{first[:maximum].rstrip()}…"
+
+
+def _derive_summary(body: str, maximum: int = 110) -> str:
+    plain = _plain_text(body)
+    return plain if len(plain) <= maximum else f"{plain[: maximum - 1].rstrip()}…"
+
+
+def _metadata(item: ContentItem) -> dict:
+    data = {
+        "id": item.id,
+        "title": item.title,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+        "status": item.status,
+        "kind": item.kind,
+        "summary": item.summary,
+        "tags": list(item.tags),
+    }
+    if item.category:
+        data["category"] = item.category
+    if item.parent_id:
+        data["parent_id"] = item.parent_id
+    return data
+
+
+def _write_item(path: Path, item: ContentItem) -> ContentItem:
     front_matter = yaml.safe_dump(
-        metadata,
+        _metadata(item),
         allow_unicode=True,
         sort_keys=False,
     ).strip()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{front_matter}\n---\n\n{body.strip()}\n", encoding="utf-8")
-    return parse_note(path)
+    path.write_text(
+        f"---\n{front_matter}\n---\n\n{item.body.strip()}\n",
+        encoding="utf-8",
+    )
+    return parse_item(path)
 
 
-def save_fragment(
+def _new_id(kind: str, created_at: datetime) -> str:
+    prefix = {
+        "thought": "idea",
+        "weekly-review": "weekly-review",
+        "article": "article",
+    }[kind]
+    return f"{prefix}-{created_at:%Y%m%d-%H%M%S}-{uuid4().hex[:6]}"
+
+
+def create_item(
     content_root: Path,
     *,
-    title: str,
     body: str,
-    tags: str = "",
-    topic: str = "inbox",
-    captured_on: date | None = None,
-) -> StudyNote:
-    """Save one browser-captured fragment as a draft Markdown note."""
+    title: str = "",
+    tags: str | Sequence[str] = "",
+    category: str = "",
+    kind: str = "thought",
+    parent_id: str | None = None,
+    status: str = "draft",
+    now: datetime | None = None,
+) -> ContentItem:
+    """Create one Markdown item; only body is required for quick capture."""
 
-    cleaned_title = _required_text(title, "标题", maximum=120)
-    cleaned_body = _required_text(body, "内容", maximum=20_000)
-    cleaned_topic = topic.strip() or "inbox"
-    if len(cleaned_topic) > 80:
-        raise ValueError("专题标识不能超过 80 个字符")
-
-    note_date = captured_on or datetime.now(SHANGHAI).date()
-    note_id = f"fragment-{note_date:%Y%m%d}-{uuid4().hex[:8]}"
-    path = content_root / "notes" / f"{note_date.isoformat()}-{note_id}.md"
-    return _write_note(
-        path,
-        {
-            "id": note_id,
-            "title": cleaned_title,
-            "date": note_date.isoformat(),
-            "status": "draft",
-            "summary": _plain_summary(cleaned_body),
-            "tags": _normalise_tags(tags),
-            "topic": cleaned_topic,
-        },
-        cleaned_body,
+    if kind not in VALID_KINDS:
+        raise ValueError("内容类型无效")
+    if status not in VALID_STATUSES:
+        raise ValueError("内容状态无效")
+    cleaned_body = _required_text(body, "内容", maximum=50_000)
+    cleaned_title = title.strip() or _derive_title(cleaned_body)
+    if len(cleaned_title) > 120:
+        raise ValueError("标题不能超过 120 个字符")
+    cleaned_category = category.strip()
+    if len(cleaned_category) > 40:
+        raise ValueError("分类不能超过 40 个字符")
+    created_at = now or datetime.now(SHANGHAI)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=SHANGHAI)
+    created_at = created_at.astimezone(SHANGHAI).replace(microsecond=0)
+    item_id = _new_id(kind, created_at)
+    item = ContentItem(
+        id=item_id,
+        title=cleaned_title,
+        created_at=created_at,
+        updated_at=created_at,
+        status=status,
+        kind=kind,
+        summary=_derive_summary(cleaned_body),
+        tags=tuple(_normalise_tags(tags)),
+        category=cleaned_category or None,
+        parent_id=parent_id,
+        body=cleaned_body,
+        source=Path(),
     )
+    path = items_directory(content_root) / f"{created_at:%Y-%m-%d}-{item_id}.md"
+    return _write_item(path, replace(item, source=path))
 
 
-def current_week_notes(
+def update_item(
+    content_root: Path,
+    item_id: str,
+    *,
+    body: str,
+    title: str = "",
+    tags: str | Sequence[str] = "",
+    category: str = "",
+    now: datetime | None = None,
+) -> ContentItem:
+    """Update editable fields while preserving stable identity and creation time."""
+
+    item = load_items(items_directory(content_root)).get(item_id)
+    if item is None:
+        raise KeyError(item_id)
+    cleaned_body = _required_text(body, "内容", maximum=50_000)
+    cleaned_title = title.strip() or _derive_title(cleaned_body)
+    if len(cleaned_title) > 120:
+        raise ValueError("标题不能超过 120 个字符")
+    cleaned_category = category.strip()
+    if len(cleaned_category) > 40:
+        raise ValueError("分类不能超过 40 个字符")
+    updated_at = now or datetime.now(SHANGHAI)
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=SHANGHAI)
+    updated = replace(
+        item,
+        title=cleaned_title,
+        updated_at=updated_at.astimezone(SHANGHAI).replace(microsecond=0),
+        summary=_derive_summary(cleaned_body),
+        tags=tuple(_normalise_tags(tags)),
+        category=cleaned_category or None,
+        body=cleaned_body,
+    )
+    return _write_item(item.source, updated)
+
+
+def set_item_status(content_root: Path, item_id: str, status: str) -> ContentItem:
+    if status not in VALID_STATUSES:
+        raise ValueError("内容状态无效")
+    item = load_items(items_directory(content_root)).get(item_id)
+    if item is None:
+        raise KeyError(item_id)
+    updated = replace(
+        item,
+        status=status,
+        updated_at=datetime.now(SHANGHAI).replace(microsecond=0),
+    )
+    return _write_item(item.source, updated)
+
+
+def move_to_trash(content_root: Path, item_id: str) -> ContentItem:
+    item = load_items(items_directory(content_root)).get(item_id)
+    if item is None:
+        raise KeyError(item_id)
+    destination = trash_directory(content_root) / item.source.name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    item.source.replace(destination)
+    return parse_item(destination)
+
+
+def restore_from_trash(content_root: Path, item_id: str) -> ContentItem:
+    item = load_items(trash_directory(content_root)).get(item_id)
+    if item is None:
+        raise KeyError(item_id)
+    destination = items_directory(content_root) / item.source.name
+    if destination.exists():
+        raise ValueError("想法库中已存在同名内容，无法恢复")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    item.source.replace(destination)
+    return parse_item(destination)
+
+
+def permanently_delete(content_root: Path, item_id: str, confirmation: str) -> None:
+    if confirmation.strip() != "永久删除":
+        raise ValueError("请输入“永久删除”进行确认")
+    item = load_items(trash_directory(content_root)).get(item_id)
+    if item is None:
+        raise KeyError(item_id)
+    item.source.unlink()
+
+
+def current_week_items(
     content_root: Path,
     *,
     as_of: date | None = None,
-) -> tuple[StudyNote, ...]:
-    """Return this week's notes, excluding generated weekly summaries."""
-
+) -> tuple[ContentItem, ...]:
     current = as_of or datetime.now(SHANGHAI).date()
     week_start = current - timedelta(days=current.weekday())
     week_end = week_start + timedelta(days=6)
-    collection = load_notes(content_root / "notes")
     return tuple(
-        note
-        for note in collection.notes
-        if week_start <= note.date <= week_end and note.topic != SUMMARY_TOPIC
+        item
+        for item in load_items(items_directory(content_root)).items
+        if week_start <= item.created_at.date() <= week_end
+        and item.kind != "weekly-review"
     )
 
 
-def _weekly_summary_body(notes: tuple[StudyNote, ...]) -> str:
-    topics: dict[str, list[StudyNote]] = {}
+def deterministic_weekly_review(items: Sequence[ContentItem]) -> str:
+    categories: dict[str, list[ContentItem]] = {}
     tag_counts: dict[str, int] = {}
-    for note in notes:
-        topics.setdefault(note.topic, []).append(note)
-        for tag in note.tags:
-            if tag != FRAGMENT_TAG:
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    for item in items:
+        categories.setdefault(item.category or "未分类", []).append(item)
+        for tag in item.tags:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
     lines = [
-        "## 本周概览",
+        "## 本周 / This Week",
         "",
-        f"本周共记录 **{len(notes)}** 条学习内容，覆盖 **{len(topics)}** 个专题方向。",
+        f"这一周留下了 **{len(items)}** 条记录。先不急着下结论，看看它们在说什么。",
         "",
-        "## 记录清单",
+        "## 线索 / Threads",
         "",
     ]
-    for note in notes:
+    for category, grouped in sorted(categories.items()):
+        lines.append(f"- **{category}**：{'、'.join(item.title for item in grouped)}")
+    if tag_counts:
+        top_tags = sorted(tag_counts, key=lambda tag: (-tag_counts[tag], tag))[:6]
+        lines.extend(["", f"反复出现的词：**{'、'.join(top_tags)}**。"])
+    lines.extend(["", "## 原始记录 / Notes", ""])
+    for item in items:
         lines.extend(
             [
-                f"- **{note.title}** · {note.date.isoformat()} · `{note.status}`",
-                f"  {note.summary}",
+                f"- **{item.title}** · {item.date_label} {item.time_label}",
+                f"  {item.summary}",
             ],
         )
-
-    lines.extend(["", "## 专题线索", ""])
-    for topic, topic_notes in sorted(topics.items()):
-        titles = "、".join(note.title for note in topic_notes)
-        lines.append(f"- **{topic}**：{titles}")
-
-    top_tags = sorted(tag_counts, key=lambda tag: (-tag_counts[tag], tag))[:5]
-    lines.extend(["", "## 下次整理提示", ""])
-    if top_tags:
-        lines.append(f"- 反复出现的标签：{'、'.join(top_tags)}。哪些内容已经可以形成稳定结论？")
     lines.extend(
         [
-            "- 哪一条记录还停留在直觉，需要代码或资料进一步验证？",
-            "- 哪些碎片可以合并进已有专题，哪些应该继续保留为开放问题？",
             "",
-            "> 这是系统生成的结构化草稿。检查、补充观点后，再将 `status` 改为 `published`。",
+            "## 写在最后 / Afterword",
+            "",
+            "- 哪几条想法其实在谈同一件事？",
+            "- 哪个判断只是当时的情绪，哪个值得继续验证？",
+            "- 下周最想沿着哪条线索多走一步？",
+            "",
+            "> 这是系统生成的回顾草稿。原始想法没有被改动。",
         ],
     )
     return "\n".join(lines)
 
 
-def save_weekly_summary(
+def save_weekly_review(
     content_root: Path,
     *,
     as_of: date | None = None,
-) -> tuple[StudyNote, bool]:
-    """Create an idempotent weekly summary draft."""
+    summarizer: Callable[[Sequence[ContentItem]], str] | None = None,
+) -> tuple[ContentItem, bool, bool]:
+    """Create one idempotent weekly review, with safe rule-based fallback."""
 
     current = as_of or datetime.now(SHANGHAI).date()
     iso_year, iso_week, _ = current.isocalendar()
-    note_id = f"weekly-summary-{iso_year}-w{iso_week:02d}"
-    collection = load_notes(content_root / "notes")
-    existing = next((note for note in collection.notes if note.id == note_id), None)
-    if existing is not None:
-        return existing, False
-
-    notes = current_week_notes(content_root, as_of=current)
-    if not notes:
-        raise ValueError("本周还没有可汇总的学习记录")
-
-    tags = sorted({tag for note in notes for tag in note.tags if tag != FRAGMENT_TAG})
-    path = content_root / "notes" / f"{current.isoformat()}-{note_id}.md"
-    note = _write_note(
-        path,
-        {
-            "id": note_id,
-            "title": f"{iso_year} 年第 {iso_week:02d} 周学习汇总",
-            "date": current.isoformat(),
-            "status": "draft",
-            "summary": f"自动整理本周 {len(notes)} 条记录，形成专题线索和后续复盘提示。",
-            "tags": ["周总结", *tags[:5]],
-            "topic": SUMMARY_TOPIC,
-        },
-        _weekly_summary_body(notes),
+    stable_prefix = f"weekly-review-{iso_year}-w{iso_week:02d}"
+    review_title = f"{iso_year} 年第 {iso_week:02d} 周回顾"
+    collection = load_items(items_directory(content_root))
+    existing = next(
+        (
+            item
+            for item in collection.items
+            if item.kind == "weekly-review" and item.title == review_title
+        ),
+        None,
     )
-    return note, True
+    if existing is not None:
+        return existing, False, False
+    items = current_week_items(content_root, as_of=current)
+    if not items:
+        raise ValueError("本周还没有可以回顾的记录")
+
+    body = deterministic_weekly_review(items)
+    used_ai = False
+    if summarizer is not None:
+        try:
+            candidate = summarizer(items).strip()
+            if candidate:
+                body = candidate
+                used_ai = True
+        except Exception:
+            used_ai = False
+
+    noon = datetime.combine(current, datetime.min.time(), tzinfo=SHANGHAI).replace(
+        hour=12,
+    )
+    review = create_item(
+        content_root,
+        title=review_title,
+        body=body,
+        tags=["周回顾"],
+        category="回顾",
+        kind="weekly-review",
+        now=noon,
+    )
+    stable_path = review.source.with_name(
+        f"{current.isoformat()}-{stable_prefix}-{review.id.rsplit('-', 1)[-1]}.md",
+    )
+    review.source.replace(stable_path)
+    return parse_item(stable_path), True, used_ai
 
 
 def _settings_path(content_root: Path) -> Path:
@@ -214,24 +390,23 @@ def _settings_path(content_root: Path) -> Path:
 
 
 def load_workspace_settings(content_root: Path) -> WorkspaceSettings:
-    """Load schedule settings, falling back safely when no file exists."""
-
     path = _settings_path(content_root)
     if not path.exists():
         return WorkspaceSettings()
-
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         return WorkspaceSettings()
     try:
         enabled = bool(data.get("enabled", False))
         weekday = int(data.get("weekday", 6))
-        hour, minute = (int(part) for part in str(data.get("time", "20:00")).split(":", 1))
+        hour, minute = (
+            int(part) for part in str(data.get("time", "20:00")).split(":", 1)
+        )
         if weekday not in range(7) or hour not in range(24) or minute not in range(60):
             raise ValueError
     except (TypeError, ValueError):
         return WorkspaceSettings()
-    return WorkspaceSettings(enabled=enabled, weekday=weekday, hour=hour, minute=minute)
+    return WorkspaceSettings(enabled, weekday, hour, minute)
 
 
 def save_workspace_settings(
@@ -241,25 +416,20 @@ def save_workspace_settings(
     weekday: int,
     time_value: str,
 ) -> WorkspaceSettings:
-    """Validate and persist the local weekly schedule."""
-
     try:
         hour, minute = (int(part) for part in time_value.split(":", 1))
     except (AttributeError, TypeError, ValueError) as error:
         raise ValueError("时间必须使用 HH:MM 格式") from error
-    if weekday not in range(7):
-        raise ValueError("请选择有效的星期")
-    if hour not in range(24) or minute not in range(60):
-        raise ValueError("请选择有效的时间")
-
-    settings = WorkspaceSettings(enabled=enabled, weekday=weekday, hour=hour, minute=minute)
+    if weekday not in range(7) or hour not in range(24) or minute not in range(60):
+        raise ValueError("请选择有效的星期和时间")
+    settings = WorkspaceSettings(enabled, weekday, hour, minute)
     path = _settings_path(content_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(
             {
-                "enabled": settings.enabled,
-                "weekday": settings.weekday,
+                "enabled": enabled,
+                "weekday": weekday,
                 "time": settings.time_label,
                 "timezone": "Asia/Shanghai",
             },
@@ -276,8 +446,6 @@ def next_summary_run(
     *,
     now: datetime | None = None,
 ) -> datetime | None:
-    """Calculate the next scheduled run in Asia/Shanghai."""
-
     if not settings.enabled:
         return None
     current = now or datetime.now(SHANGHAI)
@@ -298,14 +466,15 @@ def next_summary_run(
 async def run_summary_scheduler(
     content_root: Path,
     *,
+    summarizer: Callable[[Sequence[ContentItem]], str] | None = None,
     poll_seconds: float = 60,
 ) -> None:
-    """Generate the week's draft after its configured local run time."""
+    """Generate the current week's draft after the configured local time."""
 
     while True:
         settings = load_workspace_settings(content_root)
         now = datetime.now(SHANGHAI)
-        scheduled_this_week = (
+        scheduled = (
             now - timedelta(days=now.weekday()) + timedelta(days=settings.weekday)
         ).replace(
             hour=settings.hour,
@@ -313,9 +482,14 @@ async def run_summary_scheduler(
             second=0,
             microsecond=0,
         )
-        if settings.enabled and now >= scheduled_this_week:
+        if settings.enabled and now >= scheduled:
             try:
-                save_weekly_summary(content_root, as_of=now.date())
+                await asyncio.to_thread(
+                    save_weekly_review,
+                    content_root,
+                    as_of=now.date(),
+                    summarizer=summarizer,
+                )
             except ValueError:
                 pass
         await asyncio.sleep(poll_seconds)

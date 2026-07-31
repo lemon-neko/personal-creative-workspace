@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}想法库 · 羽白的幻想栈{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <p class="eyebrow">IDEA ARCHIVE</p>
+    <h1>想法库</h1>
+    <p>不是知识库，更像一个允许内容暂时混乱的房间。</p>
+</header>
+
+{% if request.query_params.get('saved') == 'trashed' %}
+<div class="message success">内容已移入回收站，可以随时恢复。</div>
+{% endif %}
+
+<form
+    class="filters"
+    action="{{ url_for('ideas') }}"
+    method="get"
+    hx-get="{{ url_for('ideas_partial') }}"
+    hx-target="#ideas-results"
+    hx-swap="outerHTML"
+    hx-trigger="change from:select, submit"
+>
+    <label class="search-field">
+        <span>搜索</span>
+        <input name="q" value="{{ selected.q }}" placeholder="标题、正文或标签">
+    </label>
+    <label><span>状态</span><select name="status">
+        <option value="">全部状态</option>
+        {% for value, label in status_labels.items() %}<option value="{{ value }}" {{ 'selected' if selected.status == value else '' }}>{{ label }}</option>{% endfor %}
+    </select></label>
+    <label><span>类型</span><select name="kind">
+        <option value="">全部类型</option>
+        {% for value, label in kind_labels.items() %}<option value="{{ value }}" {{ 'selected' if selected.kind == value else '' }}>{{ label }}</option>{% endfor %}
+    </select></label>
+    <label><span>标签</span><select name="tag">
+        <option value="">全部标签</option>
+        {% for value in tags %}<option value="{{ value }}" {{ 'selected' if selected.tag == value else '' }}>{{ value }}</option>{% endfor %}
+    </select></label>
+    <label><span>分类</span><select name="category">
+        <option value="">全部分类</option>
+        {% for value in categories %}<option value="{{ value }}" {{ 'selected' if selected.category == value else '' }}>{{ value }}</option>{% endfor %}
+    </select></label>
+    <details class="date-filter">
+        <summary>日期范围</summary>
+        <div>
+            <label><span>从</span><input type="date" name="date_from" value="{{ selected.date_from }}"></label>
+            <label><span>到</span><input type="date" name="date_to" value="{{ selected.date_to }}"></label>
+        </div>
+    </details>
+    <button class="secondary-button" type="submit">筛选</button>
+    <a class="filter-reset" href="{{ url_for('ideas') }}">清空</a>
+</form>
+
+{% include "partials/idea_list.html" %}
+
+{% if diagnostics %}
+<details class="diagnostics">
+    <summary>内容诊断 · {{ diagnostics|length }} 个文件暂时无法读取</summary>
+    {% for diagnostic in diagnostics %}<p><code>{{ diagnostic.source.name }}</code> · {{ diagnostic.message }}</p>{% endfor %}
+</details>
+{% endif %}
+{% endblock %}

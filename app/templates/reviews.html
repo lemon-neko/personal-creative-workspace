@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}周回顾 · 羽白的幻想栈{% endblock %}
+
+{% block content %}
+<header class="page-header split-header">
+    <div><p class="eyebrow">WEEKLY ECHO</p><h1>周回顾</h1><p>不是替你总结人生，只是把散落的线索摆到同一张桌子上。</p></div>
+    <div class="week-count"><strong>{{ week_items|length }}</strong><span>本周记录</span></div>
+</header>
+
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<div class="review-grid">
+    <section class="paper-panel">
+        <div class="panel-heading"><div><p class="eyebrow">GENERATE</p><h2>生成本周草稿</h2></div><span class="model-state {{ 'online' if llm_enabled else '' }}">{{ 'AI 可用' if llm_enabled else '规则回退' }}</span></div>
+        <p>配置模型时会寻找主题、关联和矛盾；否则生成稳定的记录清单。两种方式都不会改动原始想法。</p>
+        {% if week_items %}
+        <ul class="week-preview">{% for item in week_items[:6] %}<li><time>{{ item.created_at.strftime("%a %H:%M") }}</time><span>{{ item.title }}</span></li>{% endfor %}</ul>
+        {% else %}<div class="empty-note">这周还没有记录。空白也算一种状态。</div>{% endif %}
+        <form action="{{ url_for('generate_review') }}" method="post"><button class="primary-button full-button" type="submit">现在生成</button></form>
+    </section>
+
+    <aside class="paper-panel">
+        <div class="panel-heading"><div><p class="eyebrow">SCHEDULE</p><h2>本地定时</h2></div><span class="status-dot {{ 'online' if settings.enabled else '' }}"></span></div>
+        <form action="{{ url_for('save_review_schedule') }}" method="post" class="schedule-form">
+            <label class="switch-row"><span><strong>启用自动回顾</strong><small>仅在服务运行时执行</small></span><input name="enabled" type="checkbox" {{ 'checked' if settings.enabled else '' }}></label>
+            <div class="field-grid">
+                <label class="field"><span>每周</span><select name="weekday">{% for weekday in weekdays %}<option value="{{ loop.index0 }}" {{ 'selected' if settings.weekday == loop.index0 else '' }}>{{ weekday }}</option>{% endfor %}</select></label>
+                <label class="field"><span>时间</span><input type="time" name="time" value="{{ settings.time_label }}"></label>
+            </div>
+            <button class="secondary-button full-button" type="submit">保存定时设置</button>
+        </form>
+        <div class="next-run"><span>下次运行</span><strong>{{ next_run.strftime("%m 月 %d 日 %H:%M") if next_run else '启用后计算' }}</strong></div>
+    </aside>
+</div>
+
+<section class="workspace-section">
+    <div class="section-heading"><div><p class="eyebrow">HISTORY</p><h2>过去的回声</h2></div></div>
+    {% if review_items %}
+    <div class="archive-list">{% for item in review_items %}<article class="archive-item"><div class="archive-date"><strong>{{ item.created_at.strftime("%m.%d") }}</strong><span>{{ item.created_at.year }}</span></div><div><h2><a href="{{ url_for('idea_detail', item_id=item.id) }}">{{ item.title }}</a></h2><p>{{ item.summary }}</p></div><div class="archive-actions"><a href="{{ url_for('publish_item', item_id=item.id) }}">公众号预览</a></div></article>{% endfor %}</div>
+    {% else %}<div class="empty-state compact"><h3>还没有周回顾</h3><p>先让一周发生，再回来看看。</p></div>{% endif %}
+</section>
+{% endblock %}

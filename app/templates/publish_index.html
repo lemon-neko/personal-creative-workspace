@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}发布 · 羽白的幻想栈{% endblock %}
+
+{% block content %}
+<header class="page-header split-header">
+    <div><p class="eyebrow">PUBLISH DESK</p><h1>发布适配</h1><p>从一个念头出发，变成可以贴进公众号编辑器的文章。</p></div>
+    <span class="model-state {{ 'online' if llm_enabled else '' }}">{{ '幻想栈润色可用' if llm_enabled else '忠实排版模式' }}</span>
+</header>
+
+{% if items %}
+<div class="publish-source-grid">
+    {% for item in items %}
+    <article class="source-card">
+        <div class="meta-line"><span class="kind-badge">{{ kind_labels[item.kind] }}</span><span>{{ item.date_label }}</span></div>
+        <h2>{{ item.title }}</h2>
+        <p>{{ item.summary }}</p>
+        <a href="{{ url_for('publish_item', item_id=item.id) }}">打开发布工作台 →</a>
+    </article>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state"><span class="empty-cat">ฅ՞•ﻌ•՞ฅ</span><h3>还没有可以转换的内容</h3><p>先在随手记里留下一点什么。</p></div>
+{% endif %}
+{% endblock %}

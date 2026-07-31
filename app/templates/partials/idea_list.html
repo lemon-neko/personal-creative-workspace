@@ -1,0 +1,31 @@
+<section id="ideas-results" class="ideas-results" aria-live="polite">
+    <p class="result-count">找到 {{ items|length }} 条内容</p>
+    {% if items %}
+    <div class="archive-list">
+        {% for item in items %}
+        <article class="archive-item">
+            <div class="archive-date">
+                <strong>{{ item.created_at.strftime("%m.%d") }}</strong>
+                <span>{{ item.created_at.strftime("%Y") }}</span>
+            </div>
+            <div>
+                <div class="meta-line">
+                    <span class="kind-badge">{{ kind_labels[item.kind] }}</span>
+                    <span class="status-badge status-{{ item.status }}">{{ status_labels[item.status] }}</span>
+                    {% if item.category %}<span>{{ item.category }}</span>{% endif %}
+                </div>
+                <h2><a href="{{ url_for('idea_detail', item_id=item.id) }}">{{ item.title }}</a></h2>
+                <p>{{ item.summary }}</p>
+                {% if item.tags %}<div class="tag-row">{% for tag in item.tags %}<span># {{ tag }}</span>{% endfor %}</div>{% endif %}
+            </div>
+            <div class="archive-actions">
+                <a href="{{ url_for('publish_item', item_id=item.id) }}">公众号预览</a>
+                <a href="{{ url_for('idea_detail', item_id=item.id) }}">整理 →</a>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state compact"><h3>没有匹配的内容</h3><p>也许它只是用了另一个词。</p></div>
+    {% endif %}
+</section>

@@ -1,4 +1,4 @@
-"""Platform-neutral publishing sources and a WeChat rich-text renderer."""
+"""Publishing sources and the WeChat renderer for 羽白的幻想栈."""
 
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlparse
 
-from app.content import load_markdown, load_notes, render_markdown
+from app.content import load_items, render_markdown
+from app.workspace import items_directory
 
 
-SOURCE_TYPES = {"note", "topic"}
 PLATFORM_WECHAT = "wechat"
-SAFE_TOPIC_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 BLOCK_MATH = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 INLINE_MATH = re.compile(r"\\\((.+?)\\\)", re.DOTALL)
 MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*]\([^)]+\)")
@@ -22,10 +22,10 @@ MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*]\([^)]+\)")
 
 @dataclass(frozen=True)
 class PublishingSource:
-    """One repository content item prepared for a platform renderer."""
+    """One content item prepared for a platform renderer."""
 
-    source_type: str
     source_id: str
+    kind: str
     title: str
     summary: str
     markdown: str
@@ -33,7 +33,7 @@ class PublishingSource:
 
 @dataclass(frozen=True)
 class RenderedArticle:
-    """A rendered platform article plus fallbacks and compatibility notes."""
+    """Rendered platform article plus clipboard fallback and warnings."""
 
     platform: str
     title: str
@@ -43,62 +43,72 @@ class RenderedArticle:
 
 
 class PlatformRenderer(Protocol):
-    """Contract implemented by each future platform adapter."""
-
     platform: str
 
-    def render(self, source: PublishingSource) -> RenderedArticle:
-        """Render a publishing source for one target platform."""
+    def render(self, source: PublishingSource) -> RenderedArticle: ...
 
 
 TAG_STYLES = {
     "h1": (
-        "margin:0 0 24px;color:#1f2329;font-size:28px;line-height:1.35;"
-        "font-weight:750;letter-spacing:-0.02em;text-align:left;"
+        "margin:0 0 30px;color:#24282d;font-size:27px;line-height:1.45;"
+        "font-weight:700;letter-spacing:0.01em;text-align:left;"
     ),
     "h2": (
-        "margin:38px 0 16px;padding-left:12px;border-left:4px solid #b6924e;"
-        "color:#1f2329;font-size:22px;line-height:1.45;font-weight:720;"
+        "margin:44px 0 22px;padding-top:20px;border-top:1px dotted #cfd5d7;"
+        "color:#0794ae;font-size:22px;line-height:1.45;font-weight:750;"
     ),
     "h3": (
-        "margin:28px 0 12px;color:#2f343b;font-size:18px;line-height:1.5;"
-        "font-weight:700;"
+        "margin:32px 0 14px;color:#0794ae;font-size:18px;line-height:1.55;"
+        "font-weight:720;"
     ),
     "p": (
-        "margin:0 0 18px;color:#3f454d;font-size:16px;line-height:1.9;"
-        "letter-spacing:0.02em;text-align:justify;"
+        "margin:0 0 22px;color:#555d63;font-size:16px;line-height:2;"
+        "letter-spacing:0.025em;text-align:justify;"
     ),
-    "ul": "margin:0 0 20px;padding-left:24px;color:#3f454d;",
-    "ol": "margin:0 0 20px;padding-left:24px;color:#3f454d;",
-    "li": "margin:7px 0;font-size:16px;line-height:1.8;",
+    "ul": "margin:0 0 24px;padding-left:24px;color:#555d63;",
+    "ol": "margin:0 0 24px;padding-left:24px;color:#555d63;",
+    "li": "margin:9px 0;font-size:16px;line-height:1.9;",
     "blockquote": (
-        "margin:24px 0;padding:14px 18px;border-left:4px solid #d5b876;"
-        "background:#f7f4ed;color:#666056;font-size:15px;line-height:1.8;"
+        "margin:28px 0;padding:16px 18px;border-left:3px solid #0794ae;"
+        "background:#f5fafb;color:#657278;font-size:15px;line-height:1.9;"
     ),
     "pre": (
-        "margin:22px 0;padding:18px;overflow-x:auto;border-radius:6px;"
-        "background:#1d2127;color:#e8e5dd;font-size:13px;line-height:1.7;"
+        "margin:24px 0;padding:18px;overflow-x:auto;border-radius:4px;"
+        "background:#f3f4f4;color:#3f494e;font-size:13px;line-height:1.75;"
         "white-space:pre-wrap;word-break:break-word;"
     ),
     "code": (
-        "padding:2px 5px;border-radius:3px;background:#f2efe8;color:#9a6c23;"
+        "padding:2px 5px;border-radius:3px;background:#eef5f6;color:#087e94;"
         "font-family:Menlo,Consolas,monospace;font-size:0.88em;"
     ),
-    "a": "color:#9b772f;text-decoration:underline;text-underline-offset:3px;",
-    "strong": "color:#25292f;font-weight:720;",
-    "em": "color:#5c626a;",
-    "hr": "margin:32px 0;border:0;border-top:1px solid #e6e1d7;",
+    "a": "color:#078aa2;text-decoration:underline;text-underline-offset:3px;",
+    "strong": "color:#252a2e;font-weight:750;",
+    "em": "color:#59656a;",
+    "hr": "margin:38px 0;border:0;border-top:1px dotted #cfd5d7;",
     "table": (
-        "width:100%;margin:22px 0;border-collapse:collapse;color:#3f454d;"
-        "font-size:14px;line-height:1.6;"
+        "width:100%;margin:24px 0;border-collapse:collapse;color:#555d63;"
+        "font-size:14px;line-height:1.7;"
     ),
     "th": (
-        "padding:10px;border:1px solid #d9d4ca;background:#f4f1ea;"
-        "color:#2f343b;font-weight:700;text-align:left;"
+        "padding:10px;border:1px solid #dce2e4;background:#f3f8f9;"
+        "color:#2e383c;font-weight:700;text-align:left;"
     ),
-    "td": "padding:10px;border:1px solid #d9d4ca;vertical-align:top;",
-    "img": "max-width:100%;height:auto;margin:18px auto;display:block;",
+    "td": "padding:10px;border:1px solid #dce2e4;vertical-align:top;",
+    "img": (
+        "max-width:100%;height:auto;margin:28px auto 10px;display:block;"
+        "border-radius:2px;"
+    ),
 }
+
+
+def _safe_url(value: str, *, image: bool = False) -> bool:
+    if value.startswith("/"):
+        return True
+    parsed = urlparse(value)
+    allowed = {"http", "https"}
+    if not image:
+        allowed.add("mailto")
+    return parsed.scheme.lower() in allowed
 
 
 class _InlineStyleParser(HTMLParser):
@@ -113,14 +123,14 @@ class _InlineStyleParser(HTMLParser):
         if tag == "pre":
             self._pre_depth += 1
         style = "" if tag == "code" and self._pre_depth else TAG_STYLES.get(tag, "")
-        kept = [
-            (name, value)
-            for name, value in attrs
-            if name in {"href", "src", "alt", "title", "colspan", "rowspan"}
-        ]
-        existing_style = next((value for name, value in attrs if name == "style"), None)
-        if existing_style:
-            style = f"{existing_style.rstrip(';')};{style}"
+        kept: list[tuple[str, str | None]] = []
+        for name, value in attrs:
+            if name in {"alt", "title", "colspan", "rowspan"}:
+                kept.append((name, value))
+            elif name == "href" and value and _safe_url(value):
+                kept.append((name, value))
+            elif name == "src" and value and _safe_url(value, image=True):
+                kept.append((name, value))
         if style:
             kept.append(("style", style))
         rendered_attrs = "".join(
@@ -134,8 +144,7 @@ class _InlineStyleParser(HTMLParser):
         attrs: list[tuple[str, str | None]],
     ) -> None:
         self.handle_starttag(tag, attrs)
-        if self.parts:
-            self.parts[-1] = self.parts[-1][:-1] + " />"
+        self.parts[-1] = self.parts[-1][:-1] + " />"
 
     def handle_endtag(self, tag: str) -> None:
         self.parts.append(f"</{tag}>")
@@ -159,8 +168,6 @@ class _InlineStyleParser(HTMLParser):
 
 
 class _PlainTextParser(HTMLParser):
-    """Extract a compact plain-text clipboard fallback."""
-
     BREAK_TAGS = {"h1", "h2", "h3", "p", "li", "blockquote", "pre", "tr"}
 
     def __init__(self) -> None:
@@ -203,9 +210,8 @@ def _protect_formulas(markdown: str) -> tuple[str, tuple[tuple[str, str, str], .
     formulas: list[tuple[str, str, str]] = []
 
     def protect(match: re.Match[str], display: str) -> str:
-        delimiter = "$$" if display == "block" else "\\("
-        closing = "$$" if display == "block" else "\\)"
-        source = f"{delimiter}{match.group(1).strip()}{closing}"
+        opening, closing = ("$$", "$$") if display == "block" else ("\\(", "\\)")
+        source = f"{opening}{match.group(1).strip()}{closing}"
         placeholder = f"WECHATMATH{len(formulas):04d}TOKEN"
         formulas.append((placeholder, source, display))
         return placeholder
@@ -221,7 +227,7 @@ def _restore_formulas(
 ) -> str:
     for placeholder, source, display in formulas:
         style = (
-            "display:block;margin:20px 0;overflow-x:auto;text-align:center;"
+            "display:block;margin:22px 0;overflow-x:auto;text-align:center;"
             if display == "block"
             else "display:inline-block;vertical-align:middle;"
         )
@@ -234,68 +240,24 @@ def _restore_formulas(
     return html
 
 
-def _topic_source(content_root: Path, source_id: str) -> PublishingSource | None:
-    if not SAFE_TOPIC_ID.fullmatch(source_id):
-        return None
-    topics_root = (content_root / "topics").resolve()
-    path = (topics_root / f"{source_id}.md").resolve()
-    if path.parent != topics_root or not path.is_file():
-        return None
-
-    markdown = load_markdown(path)
-    heading = re.match(r"^#\s+(.+?)\s*$", markdown, re.MULTILINE)
-    title = heading.group(1).strip() if heading else source_id
-    if heading and heading.start() == 0:
-        markdown = markdown[heading.end() :].lstrip()
-    first_paragraph = next(
-        (
-            paragraph.strip()
-            for paragraph in re.split(r"\n\s*\n", markdown)
-            if paragraph.strip() and not paragraph.lstrip().startswith(("#", "-", "$$"))
-        ),
-        "",
-    )
-    if first_paragraph:
-        paragraph_start = markdown.find(first_paragraph)
-        markdown = (
-            f"{markdown[:paragraph_start]}{markdown[paragraph_start + len(first_paragraph):]}"
-        ).strip()
-    return PublishingSource(
-        source_type="topic",
-        source_id=source_id,
-        title=title,
-        summary=first_paragraph,
-        markdown=markdown,
-    )
-
-
 def resolve_publishing_source(
     content_root: Path,
-    source_type: str,
     source_id: str,
 ) -> PublishingSource | None:
-    """Resolve only known repository notes or safe topic filenames."""
-
-    if source_type not in SOURCE_TYPES:
-        return None
-    if source_type == "topic":
-        return _topic_source(content_root, source_id)
-
-    collection = load_notes(content_root / "notes")
-    note = next((item for item in collection.notes if item.id == source_id), None)
-    if note is None:
+    item = load_items(items_directory(content_root)).get(source_id)
+    if item is None:
         return None
     return PublishingSource(
-        source_type="note",
-        source_id=note.id,
-        title=note.title,
-        summary=note.summary,
-        markdown=note.body,
+        source_id=item.id,
+        kind=item.kind,
+        title=item.title,
+        summary=item.summary,
+        markdown=item.body,
     )
 
 
 class WeChatRenderer:
-    """Render trusted repository Markdown for WeChat's rich-text editor."""
+    """Render Markdown in the derived 羽白的幻想栈 visual language."""
 
     platform = PLATFORM_WECHAT
 
@@ -305,29 +267,32 @@ class WeChatRenderer:
             _inline_styles(render_markdown(protected_markdown)),
             formulas,
         )
-        lead = ""
-        if source.summary:
-            lead = (
-                '<p style="margin:0 0 26px;padding:14px 16px;border-radius:6px;'
-                "background:#f7f4ed;color:#6a6255;font-size:15px;line-height:1.8;\">"
-                f"{escape(source.summary)}</p>"
-            )
+        lead = (
+            '<p style="margin:0 0 30px;color:#788287;font-size:14px;line-height:1.9;'
+            f'text-align:center;">{escape(source.summary)}</p>'
+            if source.summary
+            else ""
+        )
+        signature = (
+            '<section style="margin:42px 0 0;padding-top:24px;border-top:1px dotted '
+            '#cfd5d7;text-align:center;">'
+            '<p style="margin:0 0 8px;color:#555d63;font-size:15px;line-height:1.8;">'
+            "羽白 | AI Engineer · Builder · Observer</p>"
+            '<p style="margin:0;color:#8a9498;font-size:13px;line-height:1.8;'
+            'font-style:italic;">用技术观察世界，也记录成长的痕迹。</p></section>'
+        )
         article_html = (
-            '<section data-platform="wechat" '
-            'style="max-width:677px;margin:0 auto;padding:8px 0;color:#3f454d;'
-            'font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\','
-            "'Microsoft YaHei',sans-serif;\">"
+            '<section data-platform="wechat" style="max-width:677px;margin:0 auto;'
+            "padding:10px 0;color:#555d63;font-family:-apple-system,BlinkMacSystemFont,"
+            "'PingFang SC','Microsoft YaHei',sans-serif;\">"
             f'<h1 style="{TAG_STYLES["h1"]}">{escape(source.title)}</h1>'
-            f"{lead}{body_html}"
-            '<p style="margin:34px 0 0;padding-top:18px;border-top:1px solid #e6e1d7;'
-            'color:#999187;font-size:12px;line-height:1.7;text-align:center;">'
-            "持续学习，诚实记录。</p></section>"
+            f"{lead}{body_html}{signature}</section>"
         )
         warnings: list[str] = []
         if BLOCK_MATH.search(source.markdown) or INLINE_MATH.search(source.markdown):
-            warnings.append("包含公式：复制或下载时会尝试转换为 PNG，请粘贴后检查清晰度。")
+            warnings.append("包含公式：复制时会尝试转换为 PNG，请粘贴后检查清晰度。")
         if MARKDOWN_IMAGE.search(source.markdown):
-            warnings.append("包含图片：请粘贴后确认图片已由目标平台重新托管。")
+            warnings.append("包含图片：请粘贴后确认图片已由公众号重新托管。")
         return RenderedArticle(
             platform=self.platform,
             title=source.title,

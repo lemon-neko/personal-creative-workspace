@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}回收站 · 羽白的幻想栈{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <a class="back-link" href="{{ url_for('settings') }}">← 返回设置</a>
+    <p class="eyebrow">RECYCLE BIN</p>
+    <h1>回收站</h1>
+    <p>移进来的内容仍然只是本地 Markdown。永久删除后，Git 历史仍可恢复旧版本。</p>
+</header>
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+{% if items %}
+<div class="trash-list">
+    {% for item in items %}
+    <article class="trash-item">
+        <div><span>{{ item.date_label }} · {{ kind_labels[item.kind] }}</span><h2>{{ item.title }}</h2><p>{{ item.summary }}</p></div>
+        <div class="trash-actions">
+            <form action="{{ url_for('restore_item', item_id=item.id) }}" method="post"><button class="secondary-button" type="submit">恢复</button></form>
+            <form action="{{ url_for('delete_item', item_id=item.id) }}" method="post" class="delete-form">
+                <input name="confirmation" placeholder="输入：永久删除" aria-label="永久删除确认">
+                <button class="danger-button" type="submit">永久删除</button>
+            </form>
+        </div>
+    </article>
+    {% endfor %}
+</div>
+{% else %}<div class="empty-state compact"><h3>回收站是空的</h3><p>这里没有需要告别的内容。</p></div>{% endif %}
+{% endblock %}

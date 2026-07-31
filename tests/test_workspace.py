@@ -4,58 +4,132 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi.testclient import TestClient
+import pytest
 
-from app.content import load_notes
-from app.main import create_app
+from app.content import load_items
 from app.workspace import (
     WorkspaceSettings,
+    create_item,
+    items_directory,
     load_workspace_settings,
+    move_to_trash,
     next_summary_run,
-    save_fragment,
-    save_weekly_summary,
+    permanently_delete,
+    restore_from_trash,
+    save_weekly_review,
     save_workspace_settings,
+    set_item_status,
+    trash_directory,
+    update_item,
 )
 
 
-def test_save_fragment_creates_valid_draft_markdown(tmp_path: Path) -> None:
-    note = save_fragment(
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def test_body_only_capture_derives_title_summary_and_draft(tmp_path: Path) -> None:
+    item = create_item(
         tmp_path,
-        title="理解 KV Cache",
-        body="KV Cache 保存已经计算过的键和值，避免生成时重复计算。",
-        tags="Transformer，推理",
-        topic="transformer",
-        captured_on=date(2026, 7, 30),
+        body="今天忽然觉得，很多效率问题其实是方向问题。\n\n还需要继续想。",
+        tags="观察，工作, 观察",
+        now=datetime(2026, 7, 31, 9, 12, tzinfo=SHANGHAI),
     )
 
-    assert note.status == "draft"
-    assert note.topic == "transformer"
-    assert note.tags == ("Transformer", "推理", "碎片")
-    assert note.source.exists()
-    assert load_notes(tmp_path / "notes").notes == (note,)
+    assert item.title == "今天忽然觉得，很多效率问题其实是方向问题"
+    assert item.status == "draft"
+    assert item.kind == "thought"
+    assert item.tags == ("观察", "工作")
+    assert item.created_at.isoformat() == "2026-07-31T09:12:00+08:00"
+    assert load_items(items_directory(tmp_path)).get(item.id) == item
 
 
-def test_weekly_summary_is_structured_and_idempotent(tmp_path: Path) -> None:
-    for title in ("注意力温度", "残差路径"):
-        save_fragment(
+def test_create_rejects_empty_body_and_invalid_metadata(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="内容不能为空"):
+        create_item(tmp_path, body=" ")
+    with pytest.raises(ValueError, match="内容类型无效"):
+        create_item(tmp_path, body="正文", kind="topic")
+
+
+def test_edit_status_trash_restore_and_permanent_delete(tmp_path: Path) -> None:
+    item = create_item(tmp_path, body="原始正文。", title="原始标题")
+    edited = update_item(
+        tmp_path,
+        item.id,
+        body="修改后的正文。",
+        title="修改后的标题",
+        tags="成长",
+        category="写作",
+    )
+    published = set_item_status(tmp_path, item.id, "published")
+
+    assert edited.title == "修改后的标题"
+    assert published.status == "published"
+
+    trashed = move_to_trash(tmp_path, item.id)
+    assert load_items(items_directory(tmp_path)).get(item.id) is None
+    assert load_items(trash_directory(tmp_path)).get(item.id) == trashed
+
+    restored = restore_from_trash(tmp_path, item.id)
+    assert restored.id == item.id
+    move_to_trash(tmp_path, item.id)
+    with pytest.raises(ValueError, match="永久删除"):
+        permanently_delete(tmp_path, item.id, "删除")
+    permanently_delete(tmp_path, item.id, "永久删除")
+    assert load_items(trash_directory(tmp_path)).get(item.id) is None
+
+
+def test_weekly_review_ai_success_fallback_and_idempotency(tmp_path: Path) -> None:
+    for hour, body in ((9, "想到写作。"), (16, "想到散步。")):
+        create_item(
             tmp_path,
-            title=title,
-            body=f"{title}的学习记录。",
-            tags="Transformer",
-            topic="transformer",
-            captured_on=date(2026, 7, 30),
+            body=body,
+            now=datetime(2026, 7, 30, hour, 0, tzinfo=SHANGHAI),
         )
 
-    summary, created = save_weekly_summary(tmp_path, as_of=date(2026, 7, 31))
-    duplicate, created_again = save_weekly_summary(tmp_path, as_of=date(2026, 7, 31))
+    def broken(_items):
+        raise RuntimeError("offline")
+
+    review, created, used_ai = save_weekly_review(
+        tmp_path,
+        as_of=date(2026, 7, 31),
+        summarizer=broken,
+    )
+    duplicate, created_again, _ = save_weekly_review(
+        tmp_path,
+        as_of=date(2026, 7, 31),
+        summarizer=lambda _items: "# 不应运行",
+    )
 
     assert created is True
+    assert used_ai is False
+    assert review.kind == "weekly-review"
+    assert review.status == "draft"
+    assert "本周 / This Week" in review.body
+    assert "想到写作" in review.body
     assert created_again is False
-    assert duplicate.source == summary.source
-    assert summary.status == "draft"
-    assert summary.topic == "weekly-review"
-    assert "本周共记录 **2** 条" in summary.body
-    assert "注意力温度" in summary.body
+    assert duplicate.id == review.id
+
+
+def test_weekly_review_uses_ai_candidate(tmp_path: Path) -> None:
+    create_item(
+        tmp_path,
+        body="一条记录。",
+        now=datetime(2026, 7, 31, 10, 0, tzinfo=SHANGHAI),
+    )
+
+    review, _, used_ai = save_weekly_review(
+        tmp_path,
+        as_of=date(2026, 7, 31),
+        summarizer=lambda _items: "## 本周 / This Week\n\nAI 整理。",
+    )
+
+    assert used_ai is True
+    assert "AI 整理" in review.body
+
+
+def test_empty_week_cannot_generate_review(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="本周还没有"):
+        save_weekly_review(tmp_path, as_of=date(2026, 7, 31))
 
 
 def test_workspace_settings_and_next_run(tmp_path: Path) -> None:
@@ -68,84 +142,9 @@ def test_workspace_settings_and_next_run(tmp_path: Path) -> None:
     loaded = load_workspace_settings(tmp_path)
     next_run = next_summary_run(
         settings,
-        now=datetime(2026, 7, 30, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        now=datetime(2026, 7, 30, 10, 0, tzinfo=SHANGHAI),
     )
 
     assert loaded == settings
-    assert next_run == datetime(
-        2026,
-        8,
-        2,
-        20,
-        30,
-        tzinfo=ZoneInfo("Asia/Shanghai"),
-    )
-
-
-def test_disabled_schedule_has_no_next_run() -> None:
+    assert next_run == datetime(2026, 8, 2, 20, 30, tzinfo=SHANGHAI)
     assert next_summary_run(WorkspaceSettings()) is None
-
-
-def test_workspace_page_captures_fragment_and_keeps_it_private(tmp_path: Path) -> None:
-    client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
-
-    page = client.get("/workspace")
-    saved = client.post(
-        "/workspace/fragments",
-        data={
-            "title": "浏览器记录的碎片",
-            "body": "这条内容由工作台写入 Markdown。",
-            "tags": "FastAPI, 工作流",
-            "topic": "platform",
-        },
-        follow_redirects=True,
-    )
-
-    assert page.status_code == 200
-    assert "碎片工作台" in page.text
-    assert saved.status_code == 200
-    assert "碎片已保存为 Markdown 草稿" in saved.text
-    assert "浏览器记录的碎片" in saved.text
-    assert "浏览器记录的碎片" not in client.get("/notes").text
-
-
-def test_workspace_can_generate_summary_and_save_schedule(tmp_path: Path) -> None:
-    client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
-    client.post(
-        "/workspace/fragments",
-        data={
-            "title": "一条本周记录",
-            "body": "准备进入本周汇总。",
-            "tags": "复盘",
-            "topic": "workflow",
-        },
-    )
-
-    summary = client.post("/workspace/summary", follow_redirects=True)
-    schedule = client.post(
-        "/workspace/schedule",
-        data={"enabled": "on", "weekday": "4", "time": "21:15"},
-        follow_redirects=True,
-    )
-
-    assert summary.status_code == 200
-    assert "本周汇总草稿已生成" in summary.text
-    assert "本周概览" in summary.text
-    assert schedule.status_code == 200
-    assert "定时汇总设置已保存" in schedule.text
-    assert "运行中" in schedule.text
-
-
-def test_workspace_rejects_empty_capture_and_empty_summary(tmp_path: Path) -> None:
-    client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
-
-    capture = client.post(
-        "/workspace/fragments",
-        data={"title": " ", "body": " ", "tags": "", "topic": ""},
-    )
-    summary = client.post("/workspace/summary")
-
-    assert capture.status_code == 422
-    assert "标题不能为空" in capture.text
-    assert summary.status_code == 422
-    assert "本周还没有可汇总的学习记录" in summary.text

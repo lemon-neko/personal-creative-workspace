@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}页面未找到 · 羽白学习手记{% endblock %}
+{% block title %}没有找到 · 羽白的幻想栈{% endblock %}
 
 {% block content %}
 <section class="not-found">
-    <p class="eyebrow">404 · NOT FOUND</p>
-    <h1>这一页还没有被记录。</h1>
-    <p>它可能不存在、已经移动，或仍是一篇未发布的草稿。</p>
-    <a class="button-link" href="{{ url_for('home') }}">返回首页</a>
+    <span aria-hidden="true">?</span>
+    <p class="eyebrow">404 · LOST THOUGHT</p>
+    <h1>这条念头<br>可能拐弯了。</h1>
+    <p>它不存在、还没有公开，或者已经被放进回收站。</p>
+    <a class="primary-button inline-button" href="{{ url_for('workspace') }}">回到工作台</a>
 </section>
 {% endblock %}
