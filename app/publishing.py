@@ -50,53 +50,56 @@ class PlatformRenderer(Protocol):
 
 TAG_STYLES = {
     "h1": (
-        "margin:0 0 30px;color:#24282d;font-size:27px;line-height:1.45;"
-        "font-weight:700;letter-spacing:0.01em;text-align:left;"
+        "margin:40px 0 18px;color:#263033;font-size:22px;line-height:1.55;"
+        "font-weight:750;letter-spacing:0.01em;text-align:left;"
     ),
     "h2": (
-        "margin:44px 0 22px;padding-top:20px;border-top:1px dotted #cfd5d7;"
-        "color:#0794ae;font-size:22px;line-height:1.45;font-weight:750;"
+        "margin:42px 0 18px;padding-top:17px;border-top:1px dotted #d6e0e2;"
+        "color:#159fb5;font-size:20px;line-height:1.55;font-weight:750;"
     ),
     "h3": (
-        "margin:32px 0 14px;color:#0794ae;font-size:18px;line-height:1.55;"
+        "margin:30px 0 13px;color:#128ca1;font-size:17px;line-height:1.6;"
         "font-weight:720;"
     ),
     "p": (
-        "margin:0 0 22px;color:#555d63;font-size:16px;line-height:2;"
-        "letter-spacing:0.025em;text-align:justify;"
+        "margin:0 0 20px;color:#41494d;font-size:16px;line-height:1.9;"
+        "letter-spacing:0.02em;text-align:justify;text-justify:inter-ideograph;"
     ),
-    "ul": "margin:0 0 24px;padding-left:24px;color:#555d63;",
-    "ol": "margin:0 0 24px;padding-left:24px;color:#555d63;",
-    "li": "margin:9px 0;font-size:16px;line-height:1.9;",
+    "ul": "margin:0 0 22px;padding-left:24px;color:#41494d;",
+    "ol": "margin:0 0 22px;padding-left:24px;color:#41494d;",
+    "li": "margin:8px 0;font-size:16px;line-height:1.9;letter-spacing:0.02em;",
     "blockquote": (
-        "margin:28px 0;padding:16px 18px;border-left:3px solid #0794ae;"
-        "background:#f5fafb;color:#657278;font-size:15px;line-height:1.9;"
+        "margin:26px 0;padding:16px 18px;border-left:3px solid #159fb5;"
+        "background:#f2f9fa;color:#59666b;font-size:15px;line-height:1.9;"
     ),
     "pre": (
-        "margin:24px 0;padding:18px;overflow-x:auto;border-radius:4px;"
-        "background:#f3f4f4;color:#3f494e;font-size:13px;line-height:1.75;"
+        "margin:24px 0;padding:17px 18px;overflow-x:auto;border-radius:4px;"
+        "background:#f3f5f5;color:#354044;font-size:13px;line-height:1.75;"
         "white-space:pre-wrap;word-break:break-word;"
     ),
     "code": (
-        "padding:2px 5px;border-radius:3px;background:#eef5f6;color:#087e94;"
+        "padding:2px 5px;border-radius:3px;background:#eaf5f6;color:#087e94;"
         "font-family:Menlo,Consolas,monospace;font-size:0.88em;"
     ),
-    "a": "color:#078aa2;text-decoration:underline;text-underline-offset:3px;",
-    "strong": "color:#252a2e;font-weight:750;",
-    "em": "color:#59656a;",
-    "hr": "margin:38px 0;border:0;border-top:1px dotted #cfd5d7;",
+    "a": "color:#128ca1;text-decoration:underline;text-underline-offset:3px;",
+    "strong": "color:#263033;font-weight:750;",
+    "em": "color:#556166;",
+    "hr": "margin:36px 0;border:0;border-top:1px dotted #d6e0e2;",
     "table": (
-        "width:100%;margin:24px 0;border-collapse:collapse;color:#555d63;"
-        "font-size:14px;line-height:1.7;"
+        "width:100%;margin:24px 0;border-collapse:collapse;table-layout:fixed;"
+        "color:#41494d;font-size:14px;line-height:1.7;word-break:break-word;"
     ),
     "th": (
-        "padding:10px;border:1px solid #dce2e4;background:#f3f8f9;"
-        "color:#2e383c;font-weight:700;text-align:left;"
+        "box-sizing:border-box;padding:9px 10px;border:1px solid #d9e2e4;"
+        "background:#f1f8f9;color:#2e383c;font-weight:700;text-align:left;"
     ),
-    "td": "padding:10px;border:1px solid #dce2e4;vertical-align:top;",
+    "td": (
+        "box-sizing:border-box;padding:9px 10px;border:1px solid #d9e2e4;"
+        "vertical-align:top;word-break:break-word;"
+    ),
     "img": (
-        "max-width:100%;height:auto;margin:28px auto 10px;display:block;"
-        "border-radius:2px;"
+        "width:auto;max-width:100%;height:auto;margin:26px auto 12px;"
+        "display:block;border-radius:4px;"
     ),
 }
 
@@ -267,32 +270,27 @@ class WeChatRenderer:
             _inline_styles(render_markdown(protected_markdown)),
             formulas,
         )
-        lead = (
-            '<p style="margin:0 0 30px;color:#788287;font-size:14px;line-height:1.9;'
-            f'text-align:center;">{escape(source.summary)}</p>'
-            if source.summary
-            else ""
-        )
         signature = (
             '<section style="margin:42px 0 0;padding-top:24px;border-top:1px dotted '
-            '#cfd5d7;text-align:center;">'
-            '<p style="margin:0 0 8px;color:#555d63;font-size:15px;line-height:1.8;">'
+            '#d6e0e2;text-align:center;">'
+            '<p style="margin:0 0 8px;color:#41494d;font-size:15px;line-height:1.8;">'
             "羽白 | AI Engineer · Builder · Observer</p>"
             '<p style="margin:0;color:#8a9498;font-size:13px;line-height:1.8;'
             'font-style:italic;">用技术观察世界，也记录成长的痕迹。</p></section>'
         )
         article_html = (
-            '<section data-platform="wechat" style="max-width:677px;margin:0 auto;'
-            "padding:10px 0;color:#555d63;font-family:-apple-system,BlinkMacSystemFont,"
-            "'PingFang SC','Microsoft YaHei',sans-serif;\">"
-            f'<h1 style="{TAG_STYLES["h1"]}">{escape(source.title)}</h1>'
-            f"{lead}{body_html}{signature}</section>"
+            '<section data-platform="wechat" style="box-sizing:border-box;width:100%;'
+            "margin:0;padding:0 4px;color:#41494d;font-family:-apple-system,"
+            "BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;"
+            f'word-break:normal;">{body_html}{signature}</section>'
         )
         warnings: list[str] = []
         if BLOCK_MATH.search(source.markdown) or INLINE_MATH.search(source.markdown):
             warnings.append("包含公式：复制时会尝试转换为 PNG，请粘贴后检查清晰度。")
         if MARKDOWN_IMAGE.search(source.markdown):
-            warnings.append("包含图片：请粘贴后确认图片已由公众号重新托管。")
+            warnings.append(
+                "包含图片：复制时会尝试内嵌，请粘贴后确认公众号已重新托管。",
+            )
         return RenderedArticle(
             platform=self.platform,
             title=source.title,

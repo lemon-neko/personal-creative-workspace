@@ -28,9 +28,16 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run tests (CPU only)
+        env:
+          WORKSPACE_DATA_DIR: /tmp/pcw-ci-${{ matrix.python-version }}
         run: pytest -q
 
+      - name: Guard private data and deployment boundary
+        run: python tools/security_guards.py
+
       - name: Import FastAPI application
+        env:
+          WORKSPACE_DATA_DIR: /tmp/pcw-import-${{ matrix.python-version }}
         run: python -c "from app.main import app; print(app.title)"
 
   lint:
@@ -47,4 +54,4 @@ jobs:
         run: pip install ruff
 
       - name: Lint source and tests
-        run: ruff check app tests
+        run: ruff check app tests tools

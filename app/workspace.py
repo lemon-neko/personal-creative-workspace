@@ -7,16 +7,21 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
+from functools import wraps
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import yaml
 
+from app.atomic import atomic_write_text, content_lock
 from app.content import (
     VALID_KINDS,
+    VALID_RELATION_TYPES,
     VALID_STATUSES,
     ContentItem,
+    KnowledgeRelation,
     load_items,
     parse_item,
 )
@@ -31,9 +36,20 @@ KIND_LABELS = {
 }
 STATUS_LABELS = {
     "draft": "草稿",
-    "published": "公开",
+    "published": "已成稿",
     "archived": "归档",
 }
+
+
+def locked_content_mutation(function):
+    """Hold the shared content lock for an entire read-modify-write operation."""
+
+    @wraps(function)
+    def wrapped(content_root: Path, *args: Any, **kwargs: Any):
+        with content_lock(content_root):
+            return function(content_root, *args, **kwargs)
+
+    return wrapped
 
 
 @dataclass(frozen=True)
@@ -51,7 +67,23 @@ class WorkspaceSettings:
 
 
 def items_directory(content_root: Path) -> Path:
-    return content_root / "items"
+    """Return the aggregate authored-content root.
+
+    ``load_items(items_directory(root))`` remains the compatibility entrypoint,
+    while new writes are routed by content kind below.
+    """
+
+    return content_root
+
+
+def content_directory(content_root: Path, kind: str) -> Path:
+    if kind == "thought":
+        return content_root / "sources" / "thoughts"
+    if kind == "article":
+        return content_root / "outputs" / "articles"
+    if kind == "weekly-review":
+        return content_root / "outputs" / "reviews"
+    raise ValueError("内容类型无效")
 
 
 def trash_directory(content_root: Path) -> Path:
@@ -112,6 +144,21 @@ def _metadata(item: ContentItem) -> dict:
         data["category"] = item.category
     if item.parent_id:
         data["parent_id"] = item.parent_id
+    if item.subjects:
+        data["subjects"] = list(item.subjects)
+    if item.concepts:
+        data["concepts"] = list(item.concepts)
+    if item.relations:
+        data["relations"] = [
+            {
+                "target_id": relation.target_id,
+                "type": relation.relation,
+                **({"note": relation.note} if relation.note else {}),
+            }
+            for relation in item.relations
+        ]
+    if item.knowledge_updated_at:
+        data["knowledge_updated_at"] = item.knowledge_updated_at.isoformat()
     return data
 
 
@@ -121,12 +168,26 @@ def _write_item(path: Path, item: ContentItem) -> ContentItem:
         allow_unicode=True,
         sort_keys=False,
     ).strip()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"---\n{front_matter}\n---\n\n{item.body.strip()}\n",
-        encoding="utf-8",
-    )
+    rendered = f"---\n{front_matter}\n---\n\n{item.body.strip()}\n"
+    with content_lock(_content_root_for(path)):
+        atomic_write_text(path, rendered)
     return parse_item(path)
+
+
+def _content_root_for(path: Path) -> Path:
+    """Resolve the lifecycle root for an authored Markdown destination."""
+
+    for parent in (path.parent, *path.parents):
+        if parent.name == "content":
+            return parent
+    parent = path.parent
+    if parent.name in {"archive", "trash", "items"}:
+        return parent.parent
+    if parent.name == "thoughts" and parent.parent.name == "sources":
+        return parent.parent.parent
+    if parent.name in {"articles", "reviews"} and parent.parent.name == "outputs":
+        return parent.parent.parent
+    return parent
 
 
 def _new_id(kind: str, created_at: datetime) -> str:
@@ -138,6 +199,7 @@ def _new_id(kind: str, created_at: datetime) -> str:
     return f"{prefix}-{created_at:%Y%m%d-%H%M%S}-{uuid4().hex[:6]}"
 
 
+@locked_content_mutation
 def create_item(
     content_root: Path,
     *,
@@ -149,6 +211,7 @@ def create_item(
     parent_id: str | None = None,
     status: str = "draft",
     now: datetime | None = None,
+    item_id: str | None = None,
 ) -> ContentItem:
     """Create one Markdown item; only body is required for quick capture."""
 
@@ -167,9 +230,11 @@ def create_item(
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=SHANGHAI)
     created_at = created_at.astimezone(SHANGHAI).replace(microsecond=0)
-    item_id = _new_id(kind, created_at)
+    resolved_item_id = item_id or _new_id(kind, created_at)
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,79}", resolved_item_id):
+        raise ValueError("内容 ID 无效")
     item = ContentItem(
-        id=item_id,
+        id=resolved_item_id,
         title=cleaned_title,
         created_at=created_at,
         updated_at=created_at,
@@ -182,10 +247,18 @@ def create_item(
         body=cleaned_body,
         source=Path(),
     )
-    path = items_directory(content_root) / f"{created_at:%Y-%m-%d}-{item_id}.md"
+    destination = (
+        content_root / "archive"
+        if status == "archived"
+        else content_directory(content_root, kind)
+    )
+    path = destination / f"{created_at:%Y-%m-%d}-{resolved_item_id}.md"
+    if path.exists():
+        raise ValueError("内容 ID 已存在")
     return _write_item(path, replace(item, source=path))
 
 
+@locked_content_mutation
 def update_item(
     content_root: Path,
     item_id: str,
@@ -223,6 +296,7 @@ def update_item(
     return _write_item(item.source, updated)
 
 
+@locked_content_mutation
 def set_item_status(content_root: Path, item_id: str, status: str) -> ContentItem:
     if status not in VALID_STATUSES:
         raise ValueError("内容状态无效")
@@ -234,9 +308,79 @@ def set_item_status(content_root: Path, item_id: str, status: str) -> ContentIte
         status=status,
         updated_at=datetime.now(SHANGHAI).replace(microsecond=0),
     )
+    destination = (
+        content_root / "archive" / item.source.name
+        if status == "archived"
+        else content_directory(content_root, item.kind) / item.source.name
+    )
+    if destination != item.source and destination.exists():
+        raise ValueError("目标生命周期目录中已存在同名内容")
+    written = _write_item(destination, replace(updated, source=destination))
+    if destination != item.source:
+        item.source.unlink()
+    return written
+
+
+@locked_content_mutation
+def update_knowledge_metadata(
+    content_root: Path,
+    item_id: str,
+    *,
+    subjects: str | Sequence[str],
+    concepts: str | Sequence[str],
+    relations: Sequence[KnowledgeRelation] = (),
+    now: datetime | None = None,
+) -> ContentItem:
+    """Confirm knowledge metadata without changing authored content timestamps."""
+
+    item = load_items(items_directory(content_root)).get(item_id)
+    if item is None:
+        raise KeyError(item_id)
+    cleaned_subjects = _normalise_tags(subjects)
+    cleaned_concepts = _normalise_tags(concepts)
+    if not 1 <= len(cleaned_subjects) <= 3:
+        raise ValueError("学科必须包含 1 至 3 项")
+    if any(len(subject) > 30 for subject in cleaned_subjects):
+        raise ValueError("学科名称不能超过 30 个字符")
+    if len(cleaned_concepts) > 8:
+        raise ValueError("概念最多包含 8 项")
+    if any(len(concept) > 40 for concept in cleaned_concepts):
+        raise ValueError("概念名称不能超过 40 个字符")
+    if len(relations) > 12:
+        raise ValueError("关联最多包含 12 项")
+    known_ids = {
+        candidate.id
+        for candidate in load_items(items_directory(content_root)).items
+        if candidate.kind != "weekly-review" and candidate.status != "archived"
+    }
+    cleaned_relations: list[KnowledgeRelation] = []
+    for relation in relations:
+        if relation.target_id == item_id or relation.target_id not in known_ids:
+            raise ValueError("关联目标不存在或无效")
+        if relation.relation not in VALID_RELATION_TYPES:
+            raise ValueError("关联类型无效")
+        note = relation.note.strip()
+        if len(note) > 160:
+            raise ValueError("关联说明不能超过 160 个字符")
+        cleaned_relations.append(
+            KnowledgeRelation(relation.target_id, relation.relation, note),
+        )
+    confirmed_at = now or datetime.now(SHANGHAI)
+    if confirmed_at.tzinfo is None:
+        confirmed_at = confirmed_at.replace(tzinfo=SHANGHAI)
+    updated = replace(
+        item,
+        subjects=tuple(cleaned_subjects[:3]),
+        concepts=tuple(cleaned_concepts[:8]),
+        relations=tuple(cleaned_relations),
+        knowledge_updated_at=confirmed_at.astimezone(SHANGHAI).replace(
+            microsecond=0,
+        ),
+    )
     return _write_item(item.source, updated)
 
 
+@locked_content_mutation
 def move_to_trash(content_root: Path, item_id: str) -> ContentItem:
     item = load_items(items_directory(content_root)).get(item_id)
     if item is None:
@@ -247,11 +391,17 @@ def move_to_trash(content_root: Path, item_id: str) -> ContentItem:
     return parse_item(destination)
 
 
+@locked_content_mutation
 def restore_from_trash(content_root: Path, item_id: str) -> ContentItem:
     item = load_items(trash_directory(content_root)).get(item_id)
     if item is None:
         raise KeyError(item_id)
-    destination = items_directory(content_root) / item.source.name
+    destination_root = (
+        content_root / "archive"
+        if item.status == "archived"
+        else content_directory(content_root, item.kind)
+    )
+    destination = destination_root / item.source.name
     if destination.exists():
         raise ValueError("想法库中已存在同名内容，无法恢复")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -259,6 +409,7 @@ def restore_from_trash(content_root: Path, item_id: str) -> ContentItem:
     return parse_item(destination)
 
 
+@locked_content_mutation
 def permanently_delete(content_root: Path, item_id: str, confirmation: str) -> None:
     if confirmation.strip() != "永久删除":
         raise ValueError("请输入“永久删除”进行确认")
@@ -285,27 +436,44 @@ def current_week_items(
 
 
 def deterministic_weekly_review(items: Sequence[ContentItem]) -> str:
-    categories: dict[str, list[ContentItem]] = {}
+    subjects: dict[str, list[ContentItem]] = {}
     tag_counts: dict[str, int] = {}
     for item in items:
-        categories.setdefault(item.category or "未分类", []).append(item)
+        for subject in item.subjects or ("未分类",):
+            subjects.setdefault(subject, []).append(item)
         for tag in item.tags:
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
     lines = [
-        "## 本周 / This Week",
+        "## 本周概览",
         "",
-        f"这一周留下了 **{len(items)}** 条记录。先不急着下结论，看看它们在说什么。",
+        f"本周共记录 **{len(items)}** 条内容。以下按学科和原始记录直接汇总。",
         "",
-        "## 线索 / Threads",
+        "## 按学科汇总",
         "",
     ]
-    for category, grouped in sorted(categories.items()):
-        lines.append(f"- **{category}**：{'、'.join(item.title for item in grouped)}")
+    for subject, grouped in sorted(subjects.items()):
+        lines.append(f"- **{subject}**：{'、'.join(item.title for item in grouped)}")
     if tag_counts:
         top_tags = sorted(tag_counts, key=lambda tag: (-tag_counts[tag], tag))[:6]
-        lines.extend(["", f"反复出现的词：**{'、'.join(top_tags)}**。"])
-    lines.extend(["", "## 原始记录 / Notes", ""])
+        lines.extend(["", f"高频标签：**{'、'.join(top_tags)}**。"])
+    lines.extend(
+        [
+            "",
+            "## 关联与分歧",
+            "",
+            "- 检查不同记录是否在讨论同一个问题。",
+            "- 区分相互支持、延伸和彼此矛盾的判断。",
+            "",
+            "## 待探索问题",
+            "",
+            "- 哪条线索值得继续补充材料？",
+            "- 哪个判断仍然缺少事实或经历验证？",
+            "",
+            "## 原始记录",
+            "",
+        ],
+    )
     for item in items:
         lines.extend(
             [
@@ -316,18 +484,13 @@ def deterministic_weekly_review(items: Sequence[ContentItem]) -> str:
     lines.extend(
         [
             "",
-            "## 写在最后 / Afterword",
-            "",
-            "- 哪几条想法其实在谈同一件事？",
-            "- 哪个判断只是当时的情绪，哪个值得继续验证？",
-            "- 下周最想沿着哪条线索多走一步？",
-            "",
-            "> 这是系统生成的回顾草稿。原始想法没有被改动。",
+            "> 这是系统生成的汇总草稿，仅整理现有记录，不修改原始内容。",
         ],
     )
     return "\n".join(lines)
 
 
+@locked_content_mutation
 def save_weekly_review(
     content_root: Path,
     *,
@@ -424,8 +587,8 @@ def save_workspace_settings(
         raise ValueError("请选择有效的星期和时间")
     settings = WorkspaceSettings(enabled, weekday, hour, minute)
     path = _settings_path(content_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    atomic_write_text(
+        path,
         yaml.safe_dump(
             {
                 "enabled": enabled,
@@ -436,7 +599,6 @@ def save_workspace_settings(
             allow_unicode=True,
             sort_keys=False,
         ),
-        encoding="utf-8",
     )
     return settings
 

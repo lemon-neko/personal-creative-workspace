@@ -8,6 +8,7 @@
     <div class="detail-actions">
         <a class="secondary-button" href="{{ url_for('publish_item', item_id=item.id) }}">转换为公众号</a>
         <form action="{{ url_for('trash_idea', item_id=item.id) }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button class="danger-link" type="submit">移入回收站</button>
         </form>
     </div>
@@ -15,6 +16,7 @@
 
 {% if request.query_params.get('saved') == 'updated' %}<div class="message success">修改已保存。</div>{% endif %}
 {% if request.query_params.get('saved') == 'status' %}<div class="message success">内容状态已更新。</div>{% endif %}
+{% if request.query_params.get('saved') == 'knowledge' %}<div class="message success">知识分类与关联已保存。</div>{% endif %}
 {% if error %}<div class="message error">{{ error }}</div>{% endif %}
 
 <div class="editor-layout">
@@ -24,6 +26,7 @@
             <span class="status-badge status-{{ item.status }}">{{ status_labels[item.status] }}</span>
         </div>
         <form action="{{ url_for('update_idea', item_id=item.id) }}" method="post" class="edit-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <label class="field"><span>标题</span><input name="title" maxlength="120" value="{{ item.title }}"></label>
             <label class="field"><span>正文 <small>Markdown</small></span><textarea name="body" rows="18" maxlength="50000" required>{{ item.body }}</textarea></label>
             <div class="field-grid">
@@ -47,11 +50,51 @@
     </aside>
 </div>
 
+{% if item.kind != 'weekly-review' and item.status != 'archived' %}
+<section class="paper-panel knowledge-editor-panel">
+    <div class="panel-heading">
+        <div><p class="eyebrow">KNOWLEDGE</p><h2>整理进知识网络</h2></div>
+        <a class="text-link" href="{{ url_for('knowledge') }}">打开知识星图 →</a>
+    </div>
+    <p>学科用于星图聚类，概念用于连接不同记录。这里的修改不会改动正文。</p>
+    {% if knowledge_error %}<div class="message error">{{ knowledge_error }}</div>{% endif %}
+    <form action="{{ url_for('update_idea_knowledge', item_id=item.id) }}" method="post" class="edit-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <div class="field-grid">
+            <label class="field">
+                <span>学科 <small>1–3 个，逗号分隔</small></span>
+                <input name="subjects" required value="{{ knowledge_form.subjects if knowledge_form else subjects_value }}" placeholder="技术，哲学">
+            </label>
+            <label class="field">
+                <span>核心概念 <small>最多 8 个</small></span>
+                <input name="concepts" value="{{ knowledge_form.concepts if knowledge_form else concepts_value }}" placeholder="记忆系统，动态参数">
+            </label>
+        </div>
+        <label class="field">
+            <span>内容关联 <small>每行：内容 ID | 类型 | 说明</small></span>
+            <textarea name="relations" rows="4" placeholder="idea-... | related | 讨论了相同问题">{{ knowledge_form.relations if knowledge_form else relations_value }}</textarea>
+        </label>
+        {% if knowledge_candidates %}
+        <details class="relation-reference">
+            <summary>查看可以关联的内容 ID</summary>
+            <ul>{% for candidate in knowledge_candidates %}<li><code>{{ candidate.id }}</code><span>{{ candidate.title }}</span></li>{% endfor %}</ul>
+        </details>
+        {% endif %}
+        <div class="editor-meta">
+            <span>{{ '上次整理于 ' ~ item.knowledge_updated_at.strftime('%Y-%m-%d %H:%M') if item.knowledge_updated_at else '尚未整理进知识网络' }}</span>
+            <span>关系类型：related / extends / supports / contrasts</span>
+        </div>
+        <button class="secondary-button inline-button" type="submit">保存知识元数据</button>
+    </form>
+</section>
+{% endif %}
+
 <section class="status-actions">
-    <div><h2>它现在应该在哪里？</h2><p>公开只影响阅读区，不会自动发布到任何外部平台。</p></div>
+    <div><h2>它现在应该在哪里？</h2><p>“已成稿”只是本地整理状态，不会发布到任何外部平台。</p></div>
     <div>
         {% for value, label in status_labels.items() %}
         <form action="{{ url_for('change_idea_status', item_id=item.id) }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <input type="hidden" name="status" value="{{ value }}">
             <button class="{{ 'active' if item.status == value else '' }}" type="submit">{{ label }}</button>
         </form>

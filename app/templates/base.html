@@ -4,8 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="{% block description %}记录突然冒出来的想法，也给它们慢慢长大的空间。{% endblock %}">
-    <title>{% block title %}羽白的幻想栈{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+    <meta name="csrf-token" content="{{ csrf_token(request) }}">
+    <title>{% block title %}羽白工作台{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260809-vault1">
     <script>
         window.MathJax = {
             tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']] },
@@ -14,37 +15,52 @@
     </script>
     <script defer src="{{ url_for('static', path='/vendor/mathjax/tex-svg.js') }}"></script>
     <script defer src="{{ url_for('static', path='/vendor/htmx.min.js') }}"></script>
-    <script defer src="{{ url_for('static', path='/app.js') }}"></script>
+    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260809-vault1"></script>
     {% block extra_head %}{% endblock %}
 </head>
 <body>
-    <header class="site-header">
-        <nav class="nav-shell" aria-label="主导航">
+    <div class="app-shell">
+        <aside class="site-sidebar">
             <a class="brand" href="{{ url_for('workspace') }}">
-                <span class="brand-mark" aria-hidden="true">◌</span>
-                <span>羽白的幻想栈</span>
+                <img class="brand-mark" src="{{ url_for('static', path='/brand/yubai-mark.svg') }}" alt="">
+                <span><strong>羽白工作台</strong><small>CREATIVE WORKSPACE</small></span>
             </a>
-            <div class="nav-links">
-                <a class="{{ 'active' if active_page == 'workspace' else '' }}" href="{{ url_for('workspace') }}">随手记</a>
-                <a class="{{ 'active' if active_page == 'ideas' else '' }}" href="{{ url_for('ideas') }}">想法库</a>
-                <a class="{{ 'active' if active_page == 'reviews' else '' }}" href="{{ url_for('reviews') }}">周回顾</a>
-                <a class="{{ 'active' if active_page == 'publish' else '' }}" href="{{ url_for('publish_index') }}">发布</a>
-                <a class="{{ 'active' if active_page == 'garden' else '' }}" href="{{ url_for('garden') }}">公开区</a>
-                <a class="{{ 'active' if active_page == 'settings' else '' }}" href="{{ url_for('settings') }}">设置</a>
+            <div class="sidebar-links">
+                <nav class="sidebar-nav" aria-label="主要功能">
+                    <small class="nav-group-label">工作</small>
+                    <a class="{{ 'active' if active_page == 'workspace' else '' }}" href="{{ url_for('workspace') }}"><span aria-hidden="true">◌</span>工作台</a>
+                    <a class="{{ 'active' if active_page == 'ideas' else '' }}" href="{{ url_for('ideas') }}"><span aria-hidden="true">≡</span>想法库</a>
+                    <a class="{{ 'active' if active_page == 'knowledge' else '' }}" href="{{ url_for('knowledge') }}"><span aria-hidden="true">✣</span>知识星图</a>
+                    <a class="{{ 'active' if active_page in ['publish','reviews','video'] else '' }}" href="{{ url_for('publish_index') }}"><span aria-hidden="true">↗</span>创作</a>
+                </nav>
+                <nav class="sidebar-nav" aria-label="求职与学习">
+                    <a class="{{ 'active' if active_page == 'career' else '' }}" href="{{ url_for('career') }}"><span aria-hidden="true">◇</span>求职</a>
+                    <a class="{{ 'active' if active_page == 'learning' else '' }}" href="{{ url_for('learning') }}"><span aria-hidden="true">△</span>学习</a>
+                </nav>
+                <nav class="sidebar-nav sidebar-secondary" aria-label="工作台设置">
+                    <small class="nav-group-label">系统</small>
+                    <a class="{{ 'active' if active_page == 'models' else '' }}" href="{{ url_for('models') }}"><span aria-hidden="true">◎</span>模型与成本</a>
+                    <a class="{{ 'active' if active_page == 'search' else '' }}" href="{{ url_for('search') }}"><span aria-hidden="true">⌕</span>全局检索 <kbd>⌘K</kbd></a>
+                    <a class="{{ 'active' if active_page == 'settings' else '' }}" href="{{ url_for('settings') }}"><span aria-hidden="true">·</span>设置</a>
+                    <a class="{{ 'active' if active_page == 'trash' else '' }}" href="{{ url_for('trash') }}"><span aria-hidden="true">×</span>回收站</a>
+                </nav>
             </div>
-        </nav>
-    </header>
+            <p class="local-note"><i></i>本地工作台</p>
+        </aside>
 
-    <main class="page-shell">
-        {% block content %}{% endblock %}
-    </main>
-
-    <footer class="site-footer">
-        <div class="footer-shell">
-            <span>把念头接住。至于它要长成什么，之后再说。</span>
-            <span>lemon-neko · local first</span>
+        <div class="app-main">
+            <main class="page-shell">
+                {% block content %}{% endblock %}
+            </main>
+            <footer class="site-footer">
+                <div class="footer-shell">
+                    <span>把念头接住。至于它要长成什么，之后再说。</span>
+                    <span>lemon-neko · local first</span>
+                </div>
+            </footer>
         </div>
-    </footer>
+    </div>
+    <dialog id="search-palette" class="search-palette"><form action="{{ url_for('search') }}" method="get"><label for="palette-query">搜索整个羽白工作台</label><div><input id="palette-query" name="q" placeholder="想法、知识、职位、技能……" autocomplete="off"><button class="primary-button">搜索</button></div><p>只在本机检索，不调用模型。按 Esc 关闭。</p></form></dialog>
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>

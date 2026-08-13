@@ -57,6 +57,59 @@
       image.src = url;
     });
 
+  const blobToDataUrl = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("图片读取失败"));
+      reader.readAsDataURL(blob);
+    });
+
+  const embedImages = async (root) => {
+    let embeddedImageCount = 0;
+    let imageFallbackCount = 0;
+    const images = Array.from(root.querySelectorAll("img"));
+
+    for (const image of images) {
+      const source = image.getAttribute("src") || "";
+      if (!source || source.startsWith("data:image/")) {
+        continue;
+      }
+
+      try {
+        const imageUrl = new URL(source, window.location.href);
+        if (!["http:", "https:"].includes(imageUrl.protocol)) {
+          throw new Error("图片地址不受支持");
+        }
+        const sameOrigin = imageUrl.origin === window.location.origin;
+        const response = await fetch(imageUrl.href, {
+          cache: "force-cache",
+          credentials: sameOrigin ? "same-origin" : "omit",
+          mode: "cors",
+        });
+        if (!response.ok) {
+          throw new Error(`图片请求失败：${response.status}`);
+        }
+        const blob = await response.blob();
+        if (!blob.type.startsWith("image/")) {
+          throw new Error("返回内容不是图片");
+        }
+        image.setAttribute("src", await blobToDataUrl(blob));
+        image.removeAttribute("srcset");
+        embeddedImageCount += 1;
+      } catch (_error) {
+        try {
+          image.setAttribute("src", new URL(source, window.location.href).href);
+        } catch (_urlError) {
+          // Keep the sanitized renderer value when it cannot be normalized.
+        }
+        imageFallbackCount += 1;
+      }
+    }
+
+    return { embeddedImageCount, imageFallbackCount };
+  };
+
   const prepareExport = async () => {
     await waitForMathJax();
     const clone = preview.cloneNode(true);
@@ -106,8 +159,40 @@
         formula.style.color = "#6a6255";
       }
     }
-    return { node: clone, fallbackCount };
+    const imageResult = await embedImages(clone);
+    return {
+      node: clone,
+      formulaFallbackCount: fallbackCount,
+      ...imageResult,
+    };
   };
+
+  const resultSummary = (prepared) => {
+    const details = [];
+    if (prepared.embeddedImageCount) {
+      details.push(`${prepared.embeddedImageCount} 张图片已内嵌`);
+    }
+    if (prepared.imageFallbackCount) {
+      details.push(`${prepared.imageFallbackCount} 张图片需手动上传`);
+    }
+    if (prepared.formulaFallbackCount) {
+      details.push(`${prepared.formulaFallbackCount} 个公式保留为 LaTeX`);
+    }
+    return details.length ? `；${details.join("，")}` : "";
+  };
+
+  const escapeHtml = (value) =>
+    value.replace(
+      /[&<>"']/g,
+      (character) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[character],
+    );
 
   const fallbackCopy = (html) => {
     const holder = document.createElement("div");
@@ -131,7 +216,7 @@
 
   const copyArticle = async () => {
     copyButton.disabled = true;
-    setStatus("正在处理公式并准备富文本……");
+    setStatus("正在处理公式、图片与公众号正文样式……");
     try {
       const prepared = await prepareExport();
       const html = prepared.node.outerHTML;
@@ -144,9 +229,7 @@
       } else {
         fallbackCopy(html);
       }
-      const suffix = prepared.fallbackCount
-        ? `；${prepared.fallbackCount} 个公式保留为 LaTeX`
-        : "";
+      const suffix = resultSummary(prepared);
       setStatus(`已复制，请粘贴到公众号编辑器并完成最终检查${suffix}。`, "success");
     } catch (error) {
       setStatus(`复制失败：${error.message || "请改用下载 HTML"}`, "error");
@@ -157,13 +240,13 @@
 
   const downloadArticle = async () => {
     downloadButton.disabled = true;
-    setStatus("正在生成包含公式图片的 HTML……");
+    setStatus("正在生成包含公式与内嵌图片的正文 HTML……");
     try {
       const prepared = await prepareExport();
       const documentHtml = [
         "<!doctype html>",
         '<html lang="zh-CN"><head><meta charset="utf-8">',
-        `<title>${preview.dataset.exportTitle || "公众号文章"}</title>`,
+        `<title>${escapeHtml(preview.dataset.exportTitle || "公众号文章")}</title>`,
         "</head><body>",
         prepared.node.outerHTML,
         "</body></html>",
@@ -180,7 +263,8 @@
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      setStatus("HTML 已生成；请打开文件检查公式和图片。", "success");
+      const suffix = resultSummary(prepared);
+      setStatus(`HTML 已生成，请打开检查正文${suffix}。`, "success");
     } catch (error) {
       setStatus(`下载失败：${error.message || "请稍后重试"}`, "error");
     } finally {

@@ -1,102 +1,143 @@
 {% extends "base.html" %}
 
-{% block title %}随手记 · 羽白的幻想栈{% endblock %}
+{% block title %}羽白工作台{% endblock %}
 
 {% block content %}
-<section class="capture-hero">
-    <div class="capture-intro">
-        <p class="eyebrow">CATCH THE THOUGHT</p>
-        <h1>脑子里刚刚<br>闪过了什么？</h1>
-        <p>技术、生活、奇怪的问题，或者一句暂时说不清的话。先把它接住。</p>
-    </div>
-    <div class="abstract-orbit" aria-hidden="true">
-        <span>想</span><i></i><b>?</b>
-    </div>
-</section>
-
-{% if notice %}<div class="message success" role="status">{{ notice }}</div>{% endif %}
-{% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
-
-<section class="capture-card">
-    <form action="{{ url_for('create_idea') }}" method="post">
-        <label class="sr-only" for="quick-body">记录内容</label>
-        <textarea
-            id="quick-body"
-            name="body"
-            rows="8"
-            maxlength="50000"
-            placeholder="比如：今天忽然觉得，很多所谓的效率问题，其实是“不知道自己为什么要做”……"
-            required
-            autofocus
-        >{{ form_data.get('body', '') }}</textarea>
-        <details class="optional-fields" {{ 'open' if form_data.get('title') or form_data.get('tags') or form_data.get('category') else '' }}>
-            <summary>补充标题、标签或分类 <span>可选</span></summary>
-            <div class="field-grid">
-                <label class="field field-wide">
-                    <span>标题</span>
-                    <input name="title" maxlength="120" value="{{ form_data.get('title', '') }}" placeholder="留空时自动取正文第一句">
-                </label>
-                <label class="field">
-                    <span>标签</span>
-                    <input name="tags" value="{{ form_data.get('tags', '') }}" placeholder="生活，观察，突然想到">
-                </label>
-                <label class="field">
-                    <span>分类</span>
-                    <input name="category" maxlength="40" value="{{ form_data.get('category', '') }}" placeholder="例如：路上">
-                </label>
+<div class="workspace-dashboard">
+    <div class="workspace-main-column">
+        <header class="workspace-heading">
+            <div>
+                <p class="eyebrow">CREATIVE DESK</p>
+                <h1>今天想接住什么？</h1>
             </div>
-        </details>
-        <div class="capture-actions">
-            <span>默认保存为草稿 · Markdown</span>
-            <button class="primary-button" type="submit">先记下来</button>
-        </div>
-    </form>
-</section>
+            <p>一句话、一个问题，或者一团还没想明白的东西。先放进来，别让它跑了。</p>
+        </header>
 
-<section class="pulse-strip" aria-label="工作台概览">
-    <div><strong>{{ today_items|length }}</strong><span>今天接住</span></div>
-    <div><strong>{{ pending_count }}</strong><span>等待整理</span></div>
-    <div><strong>{{ published_count }}</strong><span>已经公开</span></div>
-    <p>没有 KPI。数字只负责提醒：这些念头真实来过。</p>
-</section>
+        {% if notice %}<div class="message success" role="status">{{ notice }}</div>{% endif %}
+        {% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
 
-<section class="workspace-section">
-    <div class="section-heading">
-        <div><p class="eyebrow">RECENT ECHOES</p><h2>最近的回声</h2></div>
-        <a class="text-link" href="{{ url_for('ideas') }}">去想法库整理 →</a>
-    </div>
-    {% if recent_items %}
-    <div class="idea-stack">
-        {% for item in recent_items %}
-        <article class="idea-row">
-            <time datetime="{{ item.created_at.isoformat() }}">{{ item.date_label }}<small>{{ item.time_label }}</small></time>
-            <div class="idea-main">
-                <div class="meta-line">
-                    <span class="kind-badge">{{ kind_labels[item.kind] }}</span>
-                    <span>{{ status_labels[item.status] }}</span>
-                    {% if item.category %}<span>{{ item.category }}</span>{% endif %}
+        <section class="capture-card compact-capture">
+            <form action="{{ url_for('create_idea') }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <label class="sr-only" for="quick-body">记录内容</label>
+                <textarea
+                    id="quick-body"
+                    name="body"
+                    rows="5"
+                    maxlength="50000"
+                    placeholder="脑子里刚刚闪过了什么……"
+                    required
+                    autofocus
+                >{{ form_data.get('body', '') }}</textarea>
+                <details class="optional-fields" {{ 'open' if form_data.get('title') or form_data.get('tags') or form_data.get('category') else '' }}>
+                    <summary>补充标题、标签或分类 <span>可选</span></summary>
+                    <div class="field-grid">
+                        <label class="field field-wide">
+                            <span>标题</span>
+                            <input name="title" maxlength="120" value="{{ form_data.get('title', '') }}" placeholder="留空时自动取正文第一句">
+                        </label>
+                        <label class="field">
+                            <span>标签</span>
+                            <input name="tags" value="{{ form_data.get('tags', '') }}" placeholder="生活，观察，突然想到">
+                        </label>
+                        <label class="field">
+                            <span>分类</span>
+                            <input name="category" maxlength="40" value="{{ form_data.get('category', '') }}" placeholder="例如：路上">
+                        </label>
+                    </div>
+                </details>
+                <div class="capture-actions">
+                    <span>默认保存为草稿 · Markdown</span>
+                    <button class="primary-button" type="submit">接住这个念头</button>
                 </div>
-                <h3><a href="{{ url_for('idea_detail', item_id=item.id) }}">{{ item.title }}</a></h3>
-                <p>{{ item.summary }}</p>
-                {% if item.tags %}<div class="tag-row">{% for tag in item.tags %}<span># {{ tag }}</span>{% endfor %}</div>{% endif %}
-            </div>
-            <a class="row-arrow" href="{{ url_for('idea_detail', item_id=item.id) }}" aria-label="打开 {{ item.title }}">↗</a>
-        </article>
-        {% endfor %}
-    </div>
-    {% else %}
-    <div class="empty-state">
-        <span class="empty-cat" aria-hidden="true">ฅ՞•ﻌ•՞ฅ</span>
-        <h3>这里暂时很安静</h3>
-        <p>第一条想法不必完整，甚至不必正确。</p>
-    </div>
-    {% endif %}
-</section>
+            </form>
+        </section>
 
-{% if diagnostics %}
-<details class="diagnostics">
-    <summary>内容诊断 · {{ diagnostics|length }} 个文件暂时无法读取</summary>
-    {% for diagnostic in diagnostics %}<p><code>{{ diagnostic.source.name }}</code> · {{ diagnostic.message }}</p>{% endfor %}
-</details>
-{% endif %}
+        {% include "partials/workspace_feed.html" %}
+
+        {% if diagnostics %}
+        <details class="diagnostics">
+            <summary>内容诊断 · {{ diagnostics|length }} 个文件暂时无法读取</summary>
+            {% for diagnostic in diagnostics %}<p><code>{{ diagnostic.source.name }}</code> · {{ diagnostic.message }}</p>{% endfor %}
+        </details>
+        {% endif %}
+    </div>
+
+    <aside class="workspace-rail" aria-label="工作台状态">
+        <section class="rail-card daily-card">
+            <div class="rail-heading"><div><p class="eyebrow">TODAY</p><h2>今日状态</h2></div><span class="light-spark" aria-hidden="true">✶</span></div>
+            <div class="rail-metrics">
+                <div><strong>{{ today_items|length }}</strong><span>今天记录</span></div>
+                <div><strong>{{ pending_count }}</strong><span>草稿</span></div>
+                <div><strong>{{ published_count }}</strong><span>已成稿</span></div>
+            </div>
+            <p>数字不是 KPI，只是证明这些念头来过。</p>
+        </section>
+
+        <section class="rail-card review-rail-card">
+            <div class="rail-heading">
+                <div><p class="eyebrow">THIS WEEK</p><h2>本周回顾</h2></div>
+                <span class="model-state {{ 'online' if llm_enabled else '' }}">{{ 'AI 可用' if llm_enabled else '规则模式' }}</span>
+            </div>
+            <div class="week-progress"><strong>{{ week_items|length }}</strong><span>条本周记录</span></div>
+            {% if latest_review %}
+            <p class="rail-note">最近回顾：<a href="{{ url_for('idea_detail', item_id=latest_review.id) }}">{{ latest_review.title }}</a></p>
+            {% else %}
+            <p class="rail-note">还没有本周回顾。先让这一周发生点什么。</p>
+            {% endif %}
+            <form action="{{ url_for('generate_review') }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <input type="hidden" name="return_to" value="workspace">
+                <button class="secondary-button full-button" type="submit">生成本周草稿</button>
+            </form>
+            <div class="rail-footer">
+                <span>{{ '下次 ' ~ next_run.strftime('%m-%d %H:%M') if next_run else '自动回顾未启用' }}</span>
+                <a href="{{ url_for('reviews') }}">管理 →</a>
+            </div>
+        </section>
+
+        <section class="rail-card publish-rail-card">
+            <div class="rail-heading"><div><p class="eyebrow">PUBLISH NEXT</p><h2>文章草稿</h2></div><span>{{ article_drafts|length }}</span></div>
+            {% if article_drafts %}
+            <div class="publish-queue">
+                {% for item in article_drafts %}
+                <article>
+                    <div><time>{{ item.date_label }}</time><h3>{{ item.title }}</h3></div>
+                    <a href="{{ url_for('publish_item', item_id=item.id) }}" aria-label="打开 {{ item.title }} 的公众号预览">↗</a>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="rail-note">还没有文章草稿。碎片们正在角落里偷偷长大。</p>
+            {% endif %}
+            <a class="text-link rail-link" href="{{ url_for('publish_index') }}">打开发布工作台 →</a>
+        </section>
+
+        <section class="rail-card video-rail-card">
+            <div class="rail-heading"><div><p class="eyebrow">VIDEO</p><h2>视频创作</h2></div><span>{{ video_projects|length }}</span></div>
+            {% if video_projects %}
+            <div class="publish-queue">
+                {% for project in video_projects %}
+                <article><div><time>{{ video_status_labels[project.status] }}</time><h3>{{ project.title }}</h3></div><a href="{{ url_for('video_studio') }}">→</a></article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="rail-note">还没有视频交接包。文章可以先长出一条时间线。</p>
+            {% endif %}
+            <a class="text-link rail-link" href="{{ url_for('video_studio') }}">打开视频创作区 →</a>
+        </section>
+
+        <section class="rail-card career-rail-card">
+            <div class="rail-heading"><div><p class="eyebrow">CAREER</p><h2>求职进度</h2></div><span>{{ career_active_count }}</span></div>
+            {% if career_jobs %}<div class="publish-queue">{% for job in career_jobs %}<article><div><time>{{ job.status }}</time><h3>{{ job.title }} · {{ job.company }}</h3></div><a href="{{ url_for('career_job_detail', job_id=job.id) }}">→</a></article>{% endfor %}</div>{% else %}<p class="rail-note">还没有职位，驾驶舱目前处于省油模式。</p>{% endif %}
+            <a class="text-link rail-link" href="{{ url_for('career') }}">打开求职驾驶舱 →</a>
+        </section>
+
+        <section class="rail-card learning-rail-card">
+            <div class="rail-heading"><div><p class="eyebrow">LEARNING</p><h2>学习任务</h2></div><span>{{ learning_tasks|length }}</span></div>
+            {% if learning_tasks %}<ul class="task-list">{% for task in learning_tasks %}<li><span>{{ task.priority }}</span><div><strong>{{ task.title }}</strong><small>{{ task.status }}</small></div></li>{% endfor %}</ul>{% else %}<p class="rail-note">技能差距还没有变成任务。</p>{% endif %}
+            <a class="text-link rail-link" href="{{ url_for('learning') }}">查看技能图谱 →</a>
+        </section>
+    </aside>
+</div>
 {% endblock %}

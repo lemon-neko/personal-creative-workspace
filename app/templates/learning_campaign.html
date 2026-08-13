@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ campaign.name }} · 羽白工作台{% endblock %}
+{% block content %}
+<header class="campaign-hero">
+    <div>
+        <p class="eyebrow">30-DAY PROJECT CAMPAIGN</p>
+        <h1>{{ campaign.name }}</h1>
+        <p>{{ campaign.description }}</p>
+        <small>公开代码：{{ campaign.repository_path }} · 私人证据只保存在当前工作台</small>
+    </div>
+    <div class="xp-orb"><strong>{{ earned_xp }}</strong><span>/ {{ campaign.total_xp }} XP</span></div>
+</header>
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+<section class="campaign-map" aria-label="战役关卡">
+{% for quest in quests %}
+    <article class="quest-card quest-{{ quest.status }}" id="{{ quest.id }}">
+        <div class="quest-node"><span>{{ quest.stage_order }}</span></div>
+        <div class="quest-content">
+            <header><div><p>{{ quest.code|upper }}</p><h2>{{ quest.title }}</h2></div><span class="quest-status">{{ quest.status }}</span></header>
+            <p>{{ quest.description }}</p>
+            <div class="quest-criteria"><strong>通关条件</strong><span>{{ quest.pass_criteria }}</span></div>
+            {% if quest.learning_task_ids %}<div class="quest-links"><strong>关联既有任务</strong>{% for task_id in quest.learning_task_ids %}{% if tasks.get(task_id) %}<span>{{ tasks[task_id].title }}</span>{% endif %}{% endfor %}</div>{% endif %}
+            <footer><b>+ {{ quest.xp }} XP</b>{% if quest.started_at %}<span>开始 {{ quest.started_at[:10] }}</span>{% endif %}{% if quest.completed_at %}<span>通关 {{ quest.completed_at[:10] }}</span>{% endif %}</footer>
+            {% if quest.status == 'available' %}<form action="{{ url_for('start_campaign_quest', campaign_id=campaign.id, quest_id=quest.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="primary-button" type="submit">开始这一关</button></form>{% endif %}
+            {% if quest.status == 'active' %}
+            <details class="quest-evidence-form" open>
+                <summary>提交验收证据</summary>
+                <form action="{{ url_for('submit_quest_evidence', campaign_id=campaign.id, quest_id=quest.id) }}" method="post" class="edit-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                    <div class="field-grid"><label class="field"><span>Commit SHA</span><input name="commit_sha" required placeholder="abc1234"></label><label class="field"><span>证据链接（可选）</span><input name="evidence_url" placeholder="PR / Report URL"></label></div>
+                    <label class="field"><span>测试结果</span><textarea name="test_result" rows="4" required placeholder="粘贴验收命令和结果"></textarea></label>
+                    <label class="field"><span>私人复盘</span><textarea name="reflection" rows="5" placeholder="哪里卡住、为什么、下一关要带走什么"></textarea></label>
+                    <button class="secondary-button" type="submit">保存证据</button>
+                </form>
+            </details>
+            {% if quest_evidence[quest.id] %}<div class="evidence-list"><strong>已提交证据</strong>{% for evidence in quest_evidence[quest.id] %}<article><code>{{ evidence.commit_sha }}</code><span>{{ evidence.test_result }}</span>{% if evidence.reflection %}<p>{{ evidence.reflection }}</p>{% endif %}<small>{{ evidence.created_at }}</small></article>{% endfor %}</div><form action="{{ url_for('clear_campaign_quest', campaign_id=campaign.id, quest_id=quest.id) }}" method="post" class="clear-quest-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input name="confirmation" placeholder="输入：确认通关" required><button class="primary-button" type="submit">确认通关并领取 XP</button></form>{% endif %}
+            {% endif %}
+        </div>
+    </article>
+{% endfor %}
+</section>
+{% endblock %}

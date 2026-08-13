@@ -1,12 +1,18 @@
 {% extends "base.html" %}
 
-{% block title %}发布 · 羽白的幻想栈{% endblock %}
+{% block title %}发布 · 羽白工作台{% endblock %}
 
 {% block content %}
 <header class="page-header split-header">
     <div><p class="eyebrow">PUBLISH DESK</p><h1>发布适配</h1><p>从一个念头出发，变成可以贴进公众号编辑器的文章。</p></div>
     <span class="model-state {{ 'online' if llm_enabled else '' }}">{{ '幻想栈润色可用' if llm_enabled else '忠实排版模式' }}</span>
 </header>
+
+<div class="metric-grid creative-entry-grid">
+    <a href="{{ url_for('reviews') }}"><strong>周回顾</strong><span>中性规则汇总与人工模型任务</span></a>
+    <a href="{{ url_for('video_studio') }}"><strong>视频交接</strong><span>整理 OpenCut 私有素材包</span></a>
+    <a href="{{ url_for('models') }}"><strong>模型任务</strong><span>查看 Token、费用与人工桥接</span></a>
+</div>
 
 {% if items %}
 <div class="publish-source-grid">

@@ -15,6 +15,7 @@ from markdown_it import MarkdownIt
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 VALID_STATUSES = {"draft", "published", "archived"}
 VALID_KINDS = {"thought", "weekly-review", "article"}
+VALID_RELATION_TYPES = {"related", "extends", "supports", "contrasts"}
 REQUIRED_FIELDS = {
     "id",
     "title",
@@ -40,6 +41,15 @@ MARKDOWN = (
 
 
 @dataclass(frozen=True)
+class KnowledgeRelation:
+    """One confirmed relationship to another content item."""
+
+    target_id: str
+    relation: str
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class ContentItem:
     """One validated thought, weekly review, or article."""
 
@@ -55,6 +65,10 @@ class ContentItem:
     parent_id: str | None
     body: str
     source: Path
+    subjects: tuple[str, ...] = ()
+    concepts: tuple[str, ...] = ()
+    relations: tuple[KnowledgeRelation, ...] = ()
+    knowledge_updated_at: datetime | None = None
 
     @property
     def date_label(self) -> str:
@@ -106,7 +120,14 @@ class ContentCollection:
                 for item in items
                 if needle
                 in " ".join(
-                    (item.title, item.summary, item.body, " ".join(item.tags)),
+                    (
+                        item.title,
+                        item.summary,
+                        item.body,
+                        " ".join(item.tags),
+                        " ".join(item.subjects),
+                        " ".join(item.concepts),
+                    ),
                 ).casefold()
             )
         if status:
@@ -170,6 +191,66 @@ def _parse_datetime(value: object, field: str) -> datetime:
     return parsed.astimezone(SHANGHAI)
 
 
+def _optional_datetime(metadata: dict, field: str) -> datetime | None:
+    value = metadata.get(field)
+    return None if value in (None, "") else _parse_datetime(value, field)
+
+
+def _optional_text_list(
+    metadata: dict,
+    field: str,
+    *,
+    maximum: int,
+    item_maximum: int,
+) -> tuple[str, ...]:
+    if field not in metadata:
+        return ()
+    values = metadata[field]
+    if not isinstance(values, list) or not values:
+        raise ValueError(f"`{field}` 必须是非空文本列表")
+    cleaned: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"`{field}` 必须是非空文本列表")
+        item = value.strip()
+        if len(item) > item_maximum:
+            raise ValueError(f"`{field}` 中的文本不能超过 {item_maximum} 个字符")
+        if item not in cleaned:
+            cleaned.append(item)
+    if len(cleaned) > maximum:
+        raise ValueError(f"`{field}` 最多包含 {maximum} 项")
+    return tuple(cleaned)
+
+
+def _optional_relations(metadata: dict) -> tuple[KnowledgeRelation, ...]:
+    if "relations" not in metadata:
+        return ()
+    values = metadata["relations"]
+    if not isinstance(values, list):
+        raise ValueError("`relations` 必须是关系列表")
+    if len(values) > 12:
+        raise ValueError("`relations` 最多包含 12 项")
+    relations: list[KnowledgeRelation] = []
+    for value in values:
+        if not isinstance(value, dict):
+            raise ValueError("`relations` 中的每一项必须是键值映射")
+        target_id = value.get("target_id")
+        relation = value.get("type")
+        note = value.get("note", "")
+        if not isinstance(target_id, str) or not target_id.strip():
+            raise ValueError("关系的 `target_id` 必须是非空文本")
+        if relation not in VALID_RELATION_TYPES:
+            raise ValueError(
+                "关系的 `type` 只能是 `related`、`extends`、`supports` 或 `contrasts`",
+            )
+        if not isinstance(note, str) or len(note.strip()) > 160:
+            raise ValueError("关系的 `note` 必须是不超过 160 个字符的文本")
+        relations.append(
+            KnowledgeRelation(target_id.strip(), relation, note.strip()),
+        )
+    return tuple(relations)
+
+
 def parse_item(path: Path) -> ContentItem:
     """Parse and validate one Markdown content item."""
 
@@ -197,6 +278,19 @@ def parse_item(path: Path) -> ContentItem:
     if not body:
         raise ValueError("Markdown 正文不能为空")
 
+    subjects = _optional_text_list(
+        metadata,
+        "subjects",
+        maximum=3,
+        item_maximum=30,
+    )
+    concepts = _optional_text_list(
+        metadata,
+        "concepts",
+        maximum=8,
+        item_maximum=40,
+    )
+
     return ContentItem(
         id=_required_text(metadata, "id"),
         title=_required_text(metadata, "title"),
@@ -210,16 +304,41 @@ def parse_item(path: Path) -> ContentItem:
         parent_id=_optional_text(metadata, "parent_id"),
         body=body,
         source=path,
+        subjects=subjects,
+        concepts=concepts,
+        relations=_optional_relations(metadata),
+        knowledge_updated_at=_optional_datetime(metadata, "knowledge_updated_at"),
     )
 
 
 def load_items(directory: Path) -> ContentCollection:
-    """Load content files while isolating invalid files as diagnostics."""
+    """Load authored content across legacy and lifecycle directories.
+
+    Passing the content root loads the stable authored-content locations. Passing
+    a leaf directory (for example ``trash``) continues to load only that folder.
+    Knowledge cards and maps deliberately use separate parsers.
+    """
 
     items: list[ContentItem] = []
     diagnostics: list[ContentDiagnostic] = []
     seen_ids: dict[str, Path] = {}
-    paths = sorted(directory.glob("*.md")) if directory.exists() else []
+    paths: list[Path] = []
+    if directory.exists():
+        paths.extend(directory.glob("*.md"))
+        lifecycle_roots = (
+            directory / "items",
+            directory / "sources" / "thoughts",
+            directory / "outputs" / "articles",
+            directory / "outputs" / "reviews",
+            directory / "archive",
+        )
+        paths.extend(
+            path
+            for root in lifecycle_roots
+            if root.exists()
+            for path in root.glob("*.md")
+        )
+    paths = sorted(set(paths))
     for path in paths:
         try:
             item = parse_item(path)

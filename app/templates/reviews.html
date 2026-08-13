@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}周回顾 · 羽白的幻想栈{% endblock %}
+{% block title %}周回顾 · 羽白工作台{% endblock %}
 
 {% block content %}
 <header class="page-header split-header">
@@ -18,12 +18,15 @@
         {% if week_items %}
         <ul class="week-preview">{% for item in week_items[:6] %}<li><time>{{ item.created_at.strftime("%a %H:%M") }}</time><span>{{ item.title }}</span></li>{% endfor %}</ul>
         {% else %}<div class="empty-note">这周还没有记录。空白也算一种状态。</div>{% endif %}
-        <form action="{{ url_for('generate_review') }}" method="post"><button class="primary-button full-button" type="submit">现在生成</button></form>
+        <form action="{{ url_for('generate_review') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="primary-button full-button" type="submit">生成规则汇总</button></form>
+        {% if llm_enabled %}<form action="{{ url_for('generate_review') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="use_ai" value="on"><button class="secondary-button full-button" type="submit">AI 汇总 · 先检查外发内容</button></form>{% endif %}
+        <form action="{{ url_for('manual_review_task') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="secondary-button full-button" type="submit">生成 ChatGPT / Codex 任务包</button></form>
     </section>
 
     <aside class="paper-panel">
         <div class="panel-heading"><div><p class="eyebrow">SCHEDULE</p><h2>本地定时</h2></div><span class="status-dot {{ 'online' if settings.enabled else '' }}"></span></div>
         <form action="{{ url_for('save_review_schedule') }}" method="post" class="schedule-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <label class="switch-row"><span><strong>启用自动回顾</strong><small>仅在服务运行时执行</small></span><input name="enabled" type="checkbox" {{ 'checked' if settings.enabled else '' }}></label>
             <div class="field-grid">
                 <label class="field"><span>每周</span><select name="weekday">{% for weekday in weekdays %}<option value="{{ loop.index0 }}" {{ 'selected' if settings.weekday == loop.index0 else '' }}>{{ weekday }}</option>{% endfor %}</select></label>

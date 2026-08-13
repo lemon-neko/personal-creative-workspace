@@ -71,6 +71,33 @@ coverage.xml
 tmp/
 temp/
 *.tmp
+content/.working/
+
+# Private workspace data (never commit personal content)
+content/items/*.md
+content/trash/*.md
+content/knowledge/
+content/sources/
+content/outputs/
+content/archive/
+content/assets/
+app/static/images/
+content/workspace.yaml
+private_data/
+workspace.db
+workspace.db-*
+mobile.db
+mobile.db-*
+mobile.secret
+documents/
+video-projects/
+working/
+content/legacy-items-*/
+backups/
+rollback-*/
+.env
+.env.*
+!.env.example
 
 # Trae workspace
 .uploads/

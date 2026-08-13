@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}视频创作 · 羽白工作台{% endblock %}
+
+{% block content %}
+<header class="page-header video-header">
+    <p class="eyebrow">VIDEO STUDIO</p>
+    <h1>视频创作</h1>
+    <p>把工作台里的文章、正文和配图整理成私有交接包，再交给独立运行的 OpenCut。文字留在文字的世界，时间线留给剪辑器。</p>
+</header>
+
+{% if notice %}<div class="message success" role="status">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="video-overview" aria-label="视频项目概览">
+    <article><strong>{{ video_counts.planning }}</strong><span>待剪辑</span></article>
+    <article><strong>{{ video_counts.editing }}</strong><span>剪辑中</span></article>
+    <article><strong>{{ video_counts.exported }}</strong><span>已导出</span></article>
+    <article><strong>{{ articles|length }}</strong><span>可交接文章</span></article>
+</section>
+
+<div class="video-layout">
+    <div class="video-main">
+        <section class="panel video-create-card">
+            <div class="section-heading">
+                <div><p class="eyebrow">NEW HANDOFF</p><h2>创建视频交接包</h2></div>
+                <span class="local-badge">仅本机</span>
+            </div>
+            {% if articles %}
+            <form action="{{ url_for('create_video_project') }}" method="post" class="edit-form video-create-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <label class="field">
+                    <span>来源文章</span>
+                    <select name="source_id" required>
+                        {% for item in articles %}
+                        <option value="{{ item.id }}">{{ item.title }} · {{ status_labels[item.status] }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="field">
+                    <span>剪辑备注 <small>可选</small></span>
+                    <textarea name="notes" rows="4" maxlength="5000" placeholder="例如：做成 90 秒横屏解释视频；开场先抛出 Vibe Coding 在哪一层。"></textarea>
+                </label>
+                <div class="video-form-footer">
+                    <p>会复制本地文章配图，生成 <code>brief.md</code> 与 <code>manifest.yaml</code>；不会修改原文。</p>
+                    <button class="primary-button" type="submit">生成交接包</button>
+                </div>
+            </form>
+            {% else %}
+            <div class="empty-state compact-empty">
+                <p>还没有文章草稿。先把一条想法整理成文章，再把它送进时间线。</p>
+                <a class="secondary-button" href="{{ url_for('publish_index') }}">去发布工作台</a>
+            </div>
+            {% endif %}
+        </section>
+
+        <section class="video-project-section">
+            <div class="section-heading">
+                <div><p class="eyebrow">PRIVATE PROJECTS</p><h2>视频项目</h2></div>
+                <span>{{ video_projects|length }} 个</span>
+            </div>
+            {% if video_projects %}
+            <div class="video-project-list">
+                {% for project in video_projects %}
+                <article class="video-project-card">
+                    <div class="video-project-topline">
+                        <span class="status-pill status-{{ project.status }}">{{ video_status_labels[project.status] }}</span>
+                        <time>{{ project.date_label }}</time>
+                    </div>
+                    <h3>{{ project.title }}</h3>
+                    <p>来源：<a href="{{ url_for('idea_detail', item_id=project.source_id) }}">{{ project.source_title }}</a></p>
+                    {% if project.notes %}<blockquote>{{ project.notes }}</blockquote>{% endif %}
+                    <dl class="video-project-meta">
+                        <div><dt>素材</dt><dd>{{ project.assets|length }} 张本地图片</dd></div>
+                        <div><dt>目录</dt><dd><code>{{ project.directory }}</code></dd></div>
+                    </dl>
+                    <div class="video-project-actions">
+                        <a class="secondary-button" href="{{ url_for('video_project_file', project_id=project.id, file_path='brief.md') }}">下载交接文稿</a>
+                        <form action="{{ url_for('update_video_project_status', project_id=project.id) }}" method="post">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                            <label class="sr-only" for="status-{{ project.id }}">项目状态</label>
+                            <select id="status-{{ project.id }}" name="status" onchange="this.form.submit()">
+                                {% for value, label in video_status_labels.items() %}
+                                <option value="{{ value }}" {{ 'selected' if value == project.status else '' }}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <noscript><button class="secondary-button" type="submit">更新状态</button></noscript>
+                        </form>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state"><p>还没有视频项目。第一条时间线正在某个平行宇宙里等你。</p></div>
+            {% endif %}
+        </section>
+    </div>
+
+    <aside class="video-side">
+        <section class="panel opencut-card">
+            <div class="opencut-title">
+                <div><p class="eyebrow">OPENCUT</p><h2>本地剪辑器</h2></div>
+                <span class="integration-state {{ 'ready' if opencut.editor_ready else 'waiting' }}">{{ opencut.state_label }}</span>
+            </div>
+            <p class="opencut-explainer">OpenCut 与羽白工作台保持两个独立进程。工作台负责文章和素材交接，OpenCut 负责时间线与导出。</p>
+            <dl class="integration-details">
+                <div><dt>本地源码</dt><dd><code>{{ opencut.repository_path }}</code></dd></div>
+                <div><dt>Fork</dt><dd><a href="{{ opencut.fork_url }}" target="_blank" rel="noreferrer">lemon-neko/OpenCut ↗</a></dd></div>
+                <div><dt>Git 状态</dt><dd>{{ '已连接 Git' if opencut.git_checkout else 'API 源码快照' }}</dd></div>
+            </dl>
+            {% if not opencut.source_available %}
+            <div class="message error">没有找到 OpenCut 本地源码。可通过 <code>OPENCUT_REPO_DIR</code> 指定路径。</div>
+            {% elif not opencut.editor_ready %}
+            <div class="rewrite-notice">
+                <strong>这不是你的配置问题。</strong>
+                <p>当前 OpenCut 主仓库正在从头重写，Web 编辑器路由仍显示 <code>Coming soon</code>，Editor API、MCP 和 Headless 模式也还在路线图中。</p>
+            </div>
+            <a class="secondary-button full-button" href="{{ opencut.upstream_url }}" target="_blank" rel="noreferrer">查看上游进度</a>
+            {% else %}
+            <code class="launch-command">{{ opencut.launch_command }}</code>
+            <a class="primary-button full-button" href="{{ opencut.web_url }}" target="_blank" rel="noreferrer">打开 OpenCut</a>
+            {% endif %}
+        </section>
+
+        <section class="panel handoff-boundary">
+            <p class="eyebrow">PRIVACY BOUNDARY</p>
+            <h2>素材不进 Git</h2>
+            <ul>
+                <li>交接包位于工作台私有数据目录。</li>
+                <li>只复制正文中现有的本地配图。</li>
+                <li>外部图片地址不会被后台抓取。</li>
+                <li>OpenCut 源码仓库只保存代码。</li>
+            </ul>
+        </section>
+    </aside>
+</div>
+{% endblock %}

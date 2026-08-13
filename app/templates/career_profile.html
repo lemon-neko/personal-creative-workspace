@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}候选人档案 · 羽白工作台{% endblock %}
+{% block content %}
+<header class="page-header"><a class="back-link" href="{{ url_for('career') }}">← 返回求职驾驶舱</a><p class="eyebrow">SOURCE OF TRUTH</p><h1>候选人档案</h1><p>简历里的判断应当能回到这里的事实与证据。</p></header>
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% set values = candidate if candidate else profile %}
+<div class="editor-layout">
+<section class="editor-panel"><form action="{{ url_for('save_career_profile') }}" method="post" class="edit-form">
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+{% for name, label, rows in [('target_roles','目标岗位',2),('contact','联系方式',3),('education','教育经历',5),('experience','工作经历',8),('certifications','证书',4),('skills','技能',5),('facts','可验证事实与成果',8)] %}
+<label class="field"><span>{{ label }}</span><textarea name="{{ name }}" rows="{{ rows }}">{{ values[name] if candidate else values|attr(name) }}</textarea></label>
+{% endfor %}<button class="primary-button" type="submit">确认并保存档案</button></form></section>
+<aside class="preview-panel"><p class="eyebrow">IMPORT</p><h2>从本地文档建立候选字段</h2><p>只使用已在本机提取的文本。点击后先进入外发内容预览，不会立即调用模型。</p>
+<div class="compact-list">{% for document in documents if document.extracted_text %}<div class="document-choice"><strong>{{ document.original_name }}</strong><div class="inline-actions">{% if llm_enabled %}<form action="{{ url_for('preview_profile_import', document_id=document.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="text-button" type="submit">API 预览</button></form>{% endif %}<form action="{{ url_for('manual_profile_import', document_id=document.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="text-button" type="submit">人工任务包</button></form></div></div>{% else %}<div class="empty-note">先上传可提取文字的简历。</div>{% endfor %}</div>
+<a class="secondary-button" href="{{ url_for('career_documents') }}">管理私有文档</a></aside></div>
+{% endblock %}

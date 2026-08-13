@@ -40,6 +40,7 @@ def test_body_only_capture_derives_title_summary_and_draft(tmp_path: Path) -> No
     assert item.kind == "thought"
     assert item.tags == ("观察", "工作")
     assert item.created_at.isoformat() == "2026-07-31T09:12:00+08:00"
+    assert item.source.stat().st_mode & 0o777 == 0o600
     assert load_items(items_directory(tmp_path)).get(item.id) == item
 
 
@@ -78,6 +79,16 @@ def test_edit_status_trash_restore_and_permanent_delete(tmp_path: Path) -> None:
     assert load_items(trash_directory(tmp_path)).get(item.id) is None
 
 
+def test_archived_status_moves_between_lifecycle_directories(tmp_path: Path) -> None:
+    item = create_item(tmp_path, body="一条等待归档的想法。")
+    archived = set_item_status(tmp_path, item.id, "archived")
+    assert archived.source.parent == tmp_path / "archive"
+    assert not item.source.exists()
+    restored = set_item_status(tmp_path, item.id, "draft")
+    assert restored.source.parent == tmp_path / "sources" / "thoughts"
+    assert not archived.source.exists()
+
+
 def test_weekly_review_ai_success_fallback_and_idempotency(tmp_path: Path) -> None:
     for hour, body in ((9, "想到写作。"), (16, "想到散步。")):
         create_item(
@@ -104,7 +115,10 @@ def test_weekly_review_ai_success_fallback_and_idempotency(tmp_path: Path) -> No
     assert used_ai is False
     assert review.kind == "weekly-review"
     assert review.status == "draft"
-    assert "本周 / This Week" in review.body
+    assert "本周概览" in review.body
+    assert "按学科汇总" in review.body
+    assert "This Week" not in review.body
+    assert "写在最后" not in review.body
     assert "想到写作" in review.body
     assert created_again is False
     assert duplicate.id == review.id
@@ -120,7 +134,7 @@ def test_weekly_review_uses_ai_candidate(tmp_path: Path) -> None:
     review, _, used_ai = save_weekly_review(
         tmp_path,
         as_of=date(2026, 7, 31),
-        summarizer=lambda _items: "## 本周 / This Week\n\nAI 整理。",
+        summarizer=lambda _items: "## 本周概览\n\nAI 整理。",
     )
 
     assert used_ai is True

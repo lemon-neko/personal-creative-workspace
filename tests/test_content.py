@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.content import load_items, parse_item, render_markdown
 
 
@@ -49,8 +51,48 @@ def test_parse_valid_content_item(tmp_path: Path) -> None:
     assert item.kind == "thought"
     assert item.tags == ("观察", "路上")
     assert item.category == "日常"
+    assert item.subjects == ()
+    assert item.concepts == ()
+    assert item.relations == ()
+    assert item.knowledge_updated_at is None
     assert item.body == "正文"
     assert item.date_label == "2026-07-30"
+
+
+def test_parse_optional_knowledge_metadata(tmp_path: Path) -> None:
+    metadata = (
+        valid_metadata()
+        + "\nsubjects: [技术, 哲学]"
+        + "\nconcepts: [记忆系统, 动态参数]"
+        + "\nrelations:"
+        + "\n  - target_id: idea-2"
+        + "\n    type: contrasts"
+        + "\n    note: 两种解释路径"
+        + "\nknowledge_updated_at: '2026-07-30T12:00:00+08:00'"
+    )
+    item = parse_item(write_item(tmp_path, "knowledge.md", metadata))
+
+    assert item.subjects == ("技术", "哲学")
+    assert item.concepts == ("记忆系统", "动态参数")
+    assert item.relations[0].target_id == "idea-2"
+    assert item.relations[0].relation == "contrasts"
+    assert item.knowledge_updated_at is not None
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "subjects: []",
+        "subjects: [技术, 哲学, 经济学, 心理学]",
+        "concepts: [一, 二, 三, 四, 五, 六, 七, 八, 九]",
+        "relations:\n  - target_id: idea-2\n    type: invented",
+    ],
+)
+def test_invalid_knowledge_metadata_is_rejected(tmp_path: Path, extra: str) -> None:
+    path = write_item(tmp_path, "invalid.md", f"{valid_metadata()}\n{extra}")
+
+    with pytest.raises(ValueError):
+        parse_item(path)
 
 
 def test_load_sorts_newest_and_filters_all_dimensions(tmp_path: Path) -> None:

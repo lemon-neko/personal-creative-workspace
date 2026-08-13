@@ -46,12 +46,20 @@ $$
     rendered = WeChatRenderer().render(source)
 
     assert rendered.platform == "wechat"
-    assert "border-top:1px dotted" in rendered.html
-    assert "color:#0794ae" in rendered.html
+    assert "border-top:1px dotted #d6e0e2" in rendered.html
+    assert "color:#159fb5;font-size:20px" in rendered.html
+    assert "font-size:16px;line-height:1.9" in rendered.html
+    assert "background:#f2f9fa" in rendered.html
     assert "<pre style=" in rendered.html
     assert "<table style=" in rendered.html
+    assert "table-layout:fixed" in rendered.html
+    assert "word-break:break-word" in rendered.html
     assert 'data-formula-source="\\(T &lt; 1\\)"' in rendered.html
     assert "<img" in rendered.html
+    assert "有趣，但先别急着抽象" not in rendered.html
+    assert "用于检查公众号格式" not in rendered.html
+    assert "有趣，但先别急着抽象" not in rendered.plain_text
+    assert "用于检查公众号格式" not in rendered.plain_text
     assert "羽白 | AI Engineer · Builder · Observer" in rendered.html
     assert "用技术观察世界，也记录成长的痕迹" in rendered.html
     assert len(rendered.warnings) == 2
@@ -73,7 +81,8 @@ def test_renderer_escapes_html_and_removes_dangerous_links() -> None:
     rendered = WeChatRenderer().render(source)
 
     assert "<script>" not in rendered.html
-    assert "&lt;unsafe&gt;" in rendered.html
+    assert "&lt;unsafe&gt;" not in rendered.html
+    assert "alert('summary')" not in rendered.html
     assert "&lt;script&gt;" in rendered.html
     assert 'href="javascript:' not in rendered.html
 

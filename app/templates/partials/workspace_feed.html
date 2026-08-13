@@ -1,0 +1,91 @@
+<section id="workspace-feed" class="workbench-feed" aria-live="polite">
+    {% if feed_notice %}<div class="message success compact-message" role="status">{{ feed_notice }}</div>{% endif %}
+    <div class="feed-heading">
+        <div><p class="eyebrow">CREATIVE FLOW</p><h2>创作流</h2></div>
+        <a class="text-link" href="{{ url_for('ideas') }}">高级筛选 →</a>
+    </div>
+
+    <form
+        class="workspace-search"
+        action="{{ url_for('workspace') }}"
+        method="get"
+        hx-get="{{ url_for('workspace_feed_partial') }}"
+        hx-target="#workspace-feed"
+        hx-swap="outerHTML"
+        hx-trigger="input changed delay:350ms from:input[name='q'], submit"
+    >
+        <input type="hidden" name="view" value="{{ workspace_view }}">
+        <label>
+            <span aria-hidden="true">⌕</span>
+            <span class="sr-only">搜索内容</span>
+            <input name="q" value="{{ workspace_query }}" placeholder="搜索标题、正文或标签" autocomplete="off">
+        </label>
+        <button class="secondary-button" type="submit">搜索</button>
+    </form>
+
+    <nav class="workspace-view-tabs" aria-label="内容分组">
+        {% for value, label in workspace_view_labels.items() %}
+        <a
+            class="{{ 'active' if workspace_view == value else '' }}"
+            href="{{ request.url_for('workspace').include_query_params(view=value, q=workspace_query) }}"
+            hx-get="{{ request.url_for('workspace_feed_partial').include_query_params(view=value, q=workspace_query) }}"
+            hx-target="#workspace-feed"
+            hx-swap="outerHTML"
+        >{{ label }} <span>{{ workspace_view_counts[value] }}</span></a>
+        {% endfor %}
+    </nav>
+
+    <div class="feed-result-line">
+        <span>{{ workspace_view_labels[workspace_view] }}</span>
+        <span>{{ workspace_items|length }} 条内容{{ '，关于“' ~ workspace_query ~ '”' if workspace_query else '' }}</span>
+    </div>
+
+    {% if workspace_items %}
+    <div class="workbench-list">
+        {% for item in workspace_items %}
+        <article class="workbench-item">
+            <div class="workbench-item-date"><strong>{{ item.created_at.strftime('%d') }}</strong><span>{{ item.created_at.strftime('%m月') }}</span></div>
+            <div class="workbench-item-body">
+                <div class="meta-line">
+                    <span class="kind-badge">{{ kind_labels[item.kind] }}</span>
+                    <span class="status-badge status-{{ item.status }}">{{ status_labels[item.status] }}</span>
+                    {% if item.category %}<span>{{ item.category }}</span>{% endif %}
+                    <time>{{ item.time_label }}</time>
+                </div>
+                <h3><a href="{{ url_for('idea_detail', item_id=item.id) }}">{{ item.title }}</a></h3>
+                <p>{{ item.summary }}</p>
+                {% if item.tags %}<div class="tag-row">{% for tag in item.tags %}<span># {{ tag }}</span>{% endfor %}</div>{% endif %}
+                <div class="workbench-item-actions">
+                    <a href="{{ url_for('idea_detail', item_id=item.id) }}">编辑</a>
+                    <a href="{{ url_for('publish_item', item_id=item.id) }}">公众号</a>
+                    <div class="quick-status" aria-label="更改 {{ item.title }} 的状态">
+                        {% for status_value, status_label in status_labels.items() %}
+                        <form
+                            action="{{ url_for('change_idea_status', item_id=item.id) }}"
+                            method="post"
+                            hx-post="{{ url_for('change_idea_status', item_id=item.id) }}"
+                            hx-target="#workspace-feed"
+                            hx-swap="outerHTML"
+                        >
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                            <input type="hidden" name="status" value="{{ status_value }}">
+                            <input type="hidden" name="return_to" value="workspace">
+                            <input type="hidden" name="view" value="{{ workspace_view }}">
+                            <input type="hidden" name="q" value="{{ workspace_query }}">
+                            <button class="{{ 'active' if item.status == status_value else '' }}" type="submit" {{ 'disabled' if item.status == status_value else '' }}>{{ status_label }}</button>
+                        </form>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state compact feed-empty">
+        <span class="empty-cat" aria-hidden="true">╲╱┏━━━┓╲╱</span>
+        <h3>这一格暂时是空的</h3>
+        <p>{{ '换个词试试，念头偶尔会用假名。' if workspace_query else '空白不着急，它可能只是还在加载。' }}</p>
+    </div>
+    {% endif %}
+</section>

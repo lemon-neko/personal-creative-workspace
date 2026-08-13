@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}私有文档 · 羽白工作台{% endblock %}
+{% block content %}
+<header class="page-header"><a class="back-link" href="{{ url_for('career') }}">← 返回求职驾驶舱</a><p class="eyebrow">PRIVATE VAULT</p><h1>私有文档</h1><p>文件保存在仓库外，不会进入静态目录或 Git。</p></header>
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+{% if request.query_params.get('saved') %}<div class="message success">文件已安全保存到本地文档库。</div>{% endif %}
+<section class="paper-panel"><form action="{{ url_for('upload_career_document') }}" method="post" enctype="multipart/form-data" class="inline-upload"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label class="field"><span>用途</span><select name="kind">{% for kind in document_kinds|sort %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}</select></label><label class="field field-wide"><span>文件</span><input type="file" name="upload" accept=".pdf,.docx,.md,.txt,.png,.jpg,.jpeg" required></label><button class="primary-button" type="submit">上传到本地</button></form><p class="settings-note">最大 20 MB；拒绝 HTML、SVG、宏文档和可执行文件。</p></section>
+<div class="document-list">{% for document in documents %}<article class="document-card"><div><span>{{ document.kind }} · {{ (document.size / 1024)|round|int }} KB</span><h2>{{ document.original_name }}</h2><code>{{ document.sha256[:16] }}…</code></div><div><span>{{ '已提取本地文本' if document.extracted_text else '仅归档' }}</span><a href="{{ url_for('download_career_document', document_id=document.id) }}">下载</a><form action="{{ url_for('delete_career_document', document_id=document.id) }}" method="post" class="delete-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input name="confirmation" placeholder="输入：删除文档" aria-label="删除文档确认"><button class="danger-link" type="submit">删除</button></form></div></article>{% else %}<div class="empty-state compact"><h3>文档库还是空的</h3><p>上传不会触发任何模型分析。</p></div>{% endfor %}</div>
+{% endblock %}

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}设置 · 羽白的幻想栈{% endblock %}
+{% block title %}设置 · 羽白工作台{% endblock %}
 
 {% block content %}
 <header class="page-header">
@@ -13,21 +13,25 @@
     <section class="paper-panel">
         <p class="eyebrow">STORAGE</p>
         <h2>本地内容</h2>
-        <p>所有想法、文章和周回顾都以 Markdown 保存。</p>
-        <dl class="settings-list"><div><dt>内容目录</dt><dd><code>{{ content_root }}</code></dd></div><div><dt>时区</dt><dd>Asia/Shanghai</dd></div></dl>
+        <p>个人数据位于仓库之外的私有目录；想法仍保持为 Markdown。</p>
+        <dl class="settings-list"><div><dt>私有数据根</dt><dd><code>{{ data_root }}</code></dd></div><div><dt>内容目录</dt><dd><code>{{ content_root }}</code></dd></div><div><dt>时区</dt><dd>Asia/Shanghai</dd></div></dl>
         <a class="secondary-button inline-button" href="{{ url_for('trash') }}">打开回收站</a>
+        <a class="secondary-button inline-button" href="{{ url_for('backups') }}">加密备份</a>
+        <a class="secondary-button inline-button" href="{{ url_for('vault_migration') }}">目录迁移预演</a>
+        <a class="secondary-button inline-button" href="{{ url_for('mobile_settings') }}">手机同步</a>
     </section>
     <section class="paper-panel">
-        <p class="eyebrow">STYLE MODEL</p>
-        <h2>幻想栈润色</h2>
-        <p>{{ '模型已配置，可以生成候选稿和 AI 周回顾。' if llm_enabled else '尚未配置模型；忠实排版和规则周回顾仍然可用。' }}</p>
+        <p class="eyebrow">MODEL ROUTING</p>
+        <h2>本地模型与人工桥接</h2>
+        <p>{{ '模型已配置；每次调用前仍需确认外发内容。' if llm_enabled else '尚未配置模型；忠实排版和规则周回顾仍然可用。' }}</p>
         <dl class="settings-list"><div><dt>状态</dt><dd><span class="model-state {{ 'online' if llm_enabled else '' }}">{{ '可用' if llm_enabled else '未配置' }}</span></dd></div><div><dt>接口</dt><dd><code>{{ llm_base_url or 'LLM_BASE_URL' }}</code></dd></div><div><dt>模型</dt><dd><code>{{ llm_model or 'LLM_MODEL' }}</code></dd></div></dl>
-        <p class="settings-note">密钥只从服务端环境变量 <code>LLM_API_KEY</code> 读取，不在网页中显示或保存。</p>
+        <p class="settings-note">{{ '当前目标是本地模型地址。' if llm_is_local else '当前目标属于外部服务，发送前请完成脱敏。' if llm_enabled else '' }} 密钥只从环境变量读取，不在网页中显示或保存。</p>
+        <a class="secondary-button inline-button" href="{{ url_for('models') }}">查看成本账本</a>
     </section>
     <section class="paper-panel safety-panel">
         <p class="eyebrow">BOUNDARY</p>
         <h2>访问边界</h2>
-        <p>当前没有登录系统。请让服务绑定 <code>127.0.0.1</code>，不要直接暴露到公网。</p>
+        <p>运行时同时校验回环客户端、Host、CSRF 和代理头。请始终使用 <code>python -m app</code> 启动。</p>
         <a class="text-link" href="{{ url_for('reviews') }}">管理周回顾时间 →</a>
     </section>
 </div>
