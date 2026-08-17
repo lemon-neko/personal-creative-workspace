@@ -22,7 +22,7 @@
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements.lock
 .venv/bin/python -m app
 ```
 
@@ -41,6 +41,13 @@ WORKSPACE_DATA_DIR=/absolute/private/path .venv/bin/python -m app
 ```
 
 安装、手机网关、环境变量、迁移和备份步骤见 [运行与维护](docs/OPERATIONS.md)。
+
+需要让工作台随登录常驻运行时，使用显式本机管理命令：
+
+```bash
+.venv/bin/python -m app.runtime install
+.venv/bin/python -m app.runtime status
+```
 
 ## 安全边界
 
@@ -72,10 +79,10 @@ WORKSPACE_DATA_DIR=/absolute/private/path .venv/bin/python -m app
 WORKSPACE_DATA_DIR=/tmp/pcw-test-runtime .venv/bin/pytest -q
 .venv/bin/ruff check app tests tools
 .venv/bin/python tools/security_guards.py
-WORKSPACE_DATA_DIR=/tmp/pcw-import .venv/bin/python -c "from app.main import app; print(app.title)"
+WORKSPACE_DATA_DIR=/tmp/pcw-import .venv/bin/python -c "from app.asgi import app; print(app.title)"
 ```
 
-CI 使用虚构数据，并在 Python 3.10 和 3.11 下运行测试。重构前功能基线为 133 项；加入 5 项文档一致性检查后，最近一次完整执行为 138 项。测试数量会随功能变化，以实际收集结果为准。
+CI 使用锁定依赖和虚构数据，以 Python 3.11 为主版本并保留 Python 3.10 兼容验证；另有高风险模块覆盖率与 Playwright 浏览器验收。测试数量会随功能变化，以实际收集结果为准。
 
 ## 明确不做
 

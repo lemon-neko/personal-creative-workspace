@@ -14,7 +14,8 @@
 | ✅ | 内容生命周期 | `/ideas`、`/trash` | 草稿、已成稿、归档、移入回收站、恢复和二次确认永久删除 |
 | ✅ | 通用周回顾 | `/reviews` | 默认使用确定性规则，同一自然周幂等；定时任务不调用模型 |
 | ✅ | 私有配图 | `/assets/{name}` | 图片位于私有目录，通过受保护路由读取，不进入静态资源或 Git |
-| ✅ | 统一搜索 | `/search`、`Cmd+K` | SQLite FTS5、中文子串回退和结构化索引，全程不调用模型或 Embedding API |
+| ✅ | 统一搜索 | `/search`、`Cmd+K` | SQLite FTS5、中文子串回退和增量索引，全程不调用模型或 Embedding API |
+| ✅ | 检索维护 | `/settings/search` | 显示记录数、最后同步和错误；全量重建只能显式触发 |
 
 内容类型固定为 `thought`、`weekly-review` 和 `article`；状态固定为 `draft`、`published` 和 `archived`。界面中的“已成稿”对应兼容字段 `published`，不代表公网发布。
 
@@ -27,6 +28,7 @@
 | 🟡 | 原子知识卡 | `/knowledge/cards/{id}` | 类型为概念、判断、问题、方法或观察；必须关联至少一个来源 |
 | ✅ | 来源与历史 | 知识卡详情 | 支持 `derived_from`、`related`、`extends`、`supports`、`contrasts`、`superseded_by` 和有效时间 |
 | ✅ | 核心知识图 | `/knowledge` | 默认只显示地图、有效知识卡和明确关系；概念只用于筛选，来源点击卡片后展开 |
+| ✅ | 知识质量队列 | `/knowledge` | 诊断未拆卡、缺来源、无主题、孤立地图、失效关系、冲突与异常替代链，只读不自动修复 |
 | ✅ | Obsidian 零复制 Vault | `/settings/obsidian` | Obsidian 与工作台直接编辑同一份 Markdown，不建立同步副本 |
 | ✅ | Templates 收件箱 | `/settings/obsidian` | 提供学科地图、主题地图和知识卡模板；确认后补齐稳定 ID 并进入正式目录 |
 | ✅ | 外部编辑协调 | `/settings/obsidian` | 扫描合法修改、保留未知 Properties；并发变化返回冲突，不覆盖新正文 |
@@ -107,7 +109,9 @@ Mac 是唯一权威服务器。Mac 离线时手机仍可记录到本地队列，
 | ✅ | 上传保护 | 求职、移动和素材入口 | 随机存储名、真实签名和大小校验，拒绝 HTML、SVG、宏文档和可执行内容 |
 | ✅ | Git 安全守卫 | CI | 拒绝私有数据、密钥和公网部署配置进入版本库 |
 | 🟡 | AES-256 备份 | `/settings/backups` | 加密导出、清单、版本、SHA-256、恢复预演和替换前回滚快照 |
+| ✅ | 本机常驻管理 | `/settings/runtime`、CLI | 用户级 launchd 安装、状态、重启、卸载与日志轮转；只绑定 8765/8766 回环端口 |
+| ✅ | 数据库迁移 | 自动初始化 | 主库与移动库独立登记版本，升级前快照，事务迁移失败可安全回滚 |
+| ✅ | 隔离恢复演练 | CLI | 生成无正文恢复锚点，并只允许恢复到不存在或为空的隔离目录 |
 | ✅ | 公开区移除 | 全站 | `/garden` 不存在；`published` 只表示“已成稿” |
 
 备份不包含 API Key、会话密钥、模型临时任务、`.obsidian/` 配置或旧备份。完整边界见 [安全说明](SECURITY.md)。
-

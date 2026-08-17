@@ -5,7 +5,7 @@
 ## 运行要求
 
 - macOS，建议开启 FileVault。
-- Python 3.10 或 3.11；CI 在这两个版本验证。
+- Python 3.11 为推荐和主验证版本；CI 额外保留 Python 3.10 兼容验证。
 - Android PWA 可选，需要 Mac 和 Android 加入同一个私人 Tailnet。
 - Obsidian 可选，只使用内置 Templates、Properties、Backlinks 和 Graph View。
 - 完整运行不需要 Node.js、前端构建系统、云数据库或模型 API Key。
@@ -14,9 +14,11 @@
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements.lock
 .venv/bin/python -m app
 ```
+
+`requirements.txt` 保留兼容范围，`requirements.lock` 是日常运行和 CI 的可复现安装入口。
 
 桌面地址：<http://127.0.0.1:8765>。
 
@@ -94,7 +96,31 @@ tailscale serve status
 3. 浏览器菜单选择“安装应用”或“添加到主屏幕”。
 4. 后续从桌面图标进入，不需要再次输入地址；设备被撤销后需要重新配对。
 
-移动网关与桌面服务需要同时保持运行。当前没有自动安装 `launchd` 服务。
+移动网关与桌面服务需要同时保持运行。可以使用下文的用户级 `launchd` 管理命令常驻运行。
+
+## 本机常驻运行
+
+安装桌面服务：
+
+```bash
+.venv/bin/python -m app.runtime install
+```
+
+同时安装移动网关：
+
+```bash
+.venv/bin/python -m app.runtime install --mobile
+```
+
+查询、重启或卸载：
+
+```bash
+.venv/bin/python -m app.runtime status
+.venv/bin/python -m app.runtime restart --mobile
+.venv/bin/python -m app.runtime uninstall --mobile
+```
+
+`/settings/runtime` 只读展示 LaunchAgent、端口、Tailscale Serve/Funnel、数据权限和最近日志时间。LaunchAgent 不保存 API Key；日志超过 5 MB 时在安装或重启前轮转一份历史文件。
 
 ## Obsidian 设置
 
@@ -165,16 +191,35 @@ tailscale serve status
 
 错误口令、内容篡改、版本不兼容或清单缺失必须安全失败。首次正式使用前至少完成一次隔离目录恢复演练。
 
+### 恢复锚点与隔离演练
+
+先生成不包含正文、只包含数量、迁移版本和聚合校验和的恢复锚点：
+
+```bash
+.venv/bin/python -m app.recovery inventory \
+  --output /absolute/private/location/recovery-anchor.json
+```
+
+再把下载的加密包恢复到一个不存在或为空的新目录：
+
+```bash
+.venv/bin/python -m app.recovery exercise /absolute/path/backup.zip \
+  --target /absolute/path/isolated-restore \
+  --confirm ISOLATED-RESTORE
+```
+
+命令会在终端安全询问口令，不接受命令行明文口令。核对 Markdown、数据库版本、附件和知识导航后再决定是否切换日常数据；工具不会自动替换当前数据根。
+
 ## 开发与 CI 验证
 
 ```bash
 WORKSPACE_DATA_DIR=/tmp/pcw-test-runtime .venv/bin/pytest -q
 .venv/bin/ruff check app tests tools
 .venv/bin/python tools/security_guards.py
-WORKSPACE_DATA_DIR=/tmp/pcw-import .venv/bin/python -c "from app.main import app; print(app.title)"
+WORKSPACE_DATA_DIR=/tmp/pcw-import .venv/bin/python -c "from app.asgi import app; print(app.title)"
 ```
 
-CI 在 Python 3.10 和 3.11 下运行完整测试，另有独立 Ruff 和私有数据守卫。
+CI 以 Python 3.11 为主并保留 Python 3.10 兼容测试，另有独立 Ruff 和私有数据守卫。Python 3.11 任务还会检查高风险模块逐个达到 80% 覆盖率，并执行 Playwright 桌面与移动关键流程。
 
 ## 常见故障
 

@@ -70,6 +70,8 @@ def test_documented_core_routes_exist(tmp_path: Path) -> None:
         "/models",
         "/settings",
         "/settings/obsidian",
+        "/settings/runtime",
+        "/settings/search",
         "/settings/mobile",
         "/settings/backups",
         "/trash",
