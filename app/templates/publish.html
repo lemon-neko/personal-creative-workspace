@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 
 {% block title %}公众号预览 · {{ source.title }}{% endblock %}
-{% block extra_head %}
+{% block page_styles %}
 <link rel="stylesheet" href="{{ url_for('static', path='/publishing.css') }}">
+{% endblock %}
+{% block extra_head %}
 <script defer src="{{ url_for('static', path='/publishing.js') }}"></script>
 {% endblock %}
 
