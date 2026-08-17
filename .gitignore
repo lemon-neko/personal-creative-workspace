@@ -33,6 +33,7 @@ ENV/
 # IDE
 .vscode/
 .idea/
+.obsidian/
 *.swp
 *.swo
 *~
@@ -98,6 +99,7 @@ rollback-*/
 .env
 .env.*
 !.env.example
+*.canvas
 
 # Trae workspace
 .uploads/

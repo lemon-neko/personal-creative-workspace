@@ -25,7 +25,7 @@ PRIVATE_PATTERNS = (
     "mobile.db",
     "mobile.secret",
 )
-SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
+SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".canvas"}
 DEPLOYMENT_FILES = {
     "vercel.json",
     "render.yaml",

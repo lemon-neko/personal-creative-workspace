@@ -397,9 +397,9 @@ class MobileCaptureService:
 def manifest_payload() -> str:
     return json.dumps(
         {
-            "name": "羽白随手记",
-            "short_name": "羽白随手记",
-            "description": "把突然冒出来的念头安全同步回 Mac。",
+            "name": "羽白工作台",
+            "short_name": "羽白工作台",
+            "description": "随时接住想法，并在 Tailnet 中阅读 Mac 上的分层知识库。",
             "start_url": "/",
             "scope": "/",
             "display": "standalone",

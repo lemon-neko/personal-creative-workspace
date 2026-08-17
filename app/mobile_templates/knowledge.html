@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}知识库 · 羽白工作台{% endblock %}
+{% block content %}
+<header class="knowledge-hero paper-card">
+  <p class="eyebrow">KNOWLEDGE LIBRARY</p>
+  <h1>从学科进入，再沿着主题往下走。</h1>
+  <p>这里实时读取 Mac 上已确认的知识地图与知识卡，只读、不缓存，也不会把原始想法全文带到手机。</p>
+  <div class="knowledge-stats">
+    <div><strong>{{ subjects|length }}</strong><span>学科</span></div>
+    <div><strong>{{ topics|length }}</strong><span>主题</span></div>
+    <div><strong>{{ cards|length }}</strong><span>有效卡片</span></div>
+  </div>
+  {% if latest_update %}<p class="quiet-note">最近更新 {{ latest_update.strftime('%Y-%m-%d %H:%M') }}</p>{% endif %}
+  {% if diagnostic_count %}<p class="diagnostic-note">有 {{ diagnostic_count }} 个知识文件未通过校验，其他内容仍可正常阅读。</p>{% endif %}
+</header>
+<section class="paper-card knowledge-section">
+  <div class="section-heading"><div><p class="eyebrow">SUBJECT MAPS</p><h2>学科地图</h2></div><span>{{ subjects|length }}</span></div>
+  <div class="map-list">
+    {% for row in subjects %}<a class="map-row" href="/knowledge/maps/{{ row.map.id }}"><div><strong>{{ row.map.title }}</strong><p>{{ row.map.summary }}</p></div><span>{{ row.children|length }} 主题 · {{ row.card_count }} 卡</span></a>{% else %}<p class="quiet-note">还没有学科地图。</p>{% endfor %}
+  </div>
+</section>
+<section class="paper-card knowledge-section">
+  <div class="section-heading"><div><p class="eyebrow">TOPIC MAPS</p><h2>主题入口</h2></div><span>{{ topics|length }}</span></div>
+  <div class="chip-grid">{% for item in topics %}<a href="/knowledge/maps/{{ item.id }}"><strong>{{ item.title }}</strong><small>{{ item.summary }}</small></a>{% else %}<p class="quiet-note">还没有主题地图。</p>{% endfor %}</div>
+</section>
+<section class="paper-card knowledge-section">
+  <div class="section-heading"><div><p class="eyebrow">RECENT CARDS</p><h2>最近更新</h2></div><span>{{ recent_cards|length }}</span></div>
+  <div class="knowledge-card-list">
+    {% for card in recent_cards %}<a class="knowledge-card-row" href="/knowledge/cards/{{ card.id }}"><div class="row-meta"><span>{{ card_type_labels[card.card_type] }}</span><time>{{ card.updated_at.strftime('%m-%d') }}</time></div><strong>{{ card.title }}</strong><p>{{ card.subjects|join(' · ') }}</p></a>{% else %}<p class="quiet-note">还没有当前有效的知识卡。</p>{% endfor %}
+  </div>
+</section>
+{% endblock %}

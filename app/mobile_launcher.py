@@ -101,7 +101,7 @@ def main() -> None:
     except RuntimeError as error:
         print(f"手机同步未启动：{error}", file=sys.stderr)
         raise SystemExit(2) from error
-    print(f"羽白随手记已通过私人 Tailnet 提供：{address}")
+    print(f"羽白工作台已通过私人 Tailnet 提供：{address}")
     uvicorn.run(
         "app.mobile_main:app",
         host="127.0.0.1",

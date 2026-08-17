@@ -1,8 +1,8 @@
-const SHELL_CACHE="yubai-mobile-shell-v1";
-const SHELL=["/offline","/mobile-assets/mobile.css","/mobile-assets/mobile.js","/mobile-assets/icon.svg"];
+const SHELL_CACHE="yubai-mobile-shell-v3";
+const SHELL=["/offline","/mobile-assets/mobile.css?v=3","/mobile-assets/mobile.js?v=3","/mobile-assets/icon.svg"];
 self.addEventListener("install",event=>event.waitUntil(caches.open(SHELL_CACHE).then(cache=>cache.addAll(SHELL))));
 self.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==SHELL_CACHE).map(key=>caches.delete(key))))));
-self.addEventListener("fetch",event=>{const url=new URL(event.request.url);if(event.request.method!=="GET"||url.pathname.startsWith("/api/"))return;if(event.request.mode==="navigate"){event.respondWith(fetch(event.request).catch(()=>caches.match("/offline")));return}if(url.pathname.startsWith("/mobile-assets/")){event.respondWith(caches.match(event.request).then(found=>found||fetch(event.request)));}});
+self.addEventListener("fetch",event=>{const url=new URL(event.request.url);if(event.request.method!=="GET"||url.pathname.startsWith("/api/"))return;if(url.pathname.startsWith("/knowledge")){event.respondWith(fetch(event.request).catch(()=>caches.match("/offline")));return}if(event.request.mode==="navigate"){event.respondWith(fetch(event.request).catch(()=>caches.match("/offline")));return}if(url.pathname.startsWith("/mobile-assets/")){event.respondWith(caches.match(event.request).then(found=>found||fetch(event.request)));}});
 self.addEventListener("sync",event=>{if(event.tag==="sync-captures")event.waitUntil(syncCaptures());});
 
 function openCaptureDb(){return new Promise((resolve,reject)=>{const request=indexedDB.open("yubai-mobile-captures",1);request.onupgradeneeded=()=>request.result.createObjectStore("captures",{keyPath:"idempotencyKey"});request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}

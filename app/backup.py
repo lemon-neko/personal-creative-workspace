@@ -63,7 +63,9 @@ def create_encrypted_backup(data_root: Path, password: str, output: Path) -> Bac
                 sources.extend(
                     (path.relative_to(data_root).as_posix(), path)
                     for path in sorted(root.rglob("*"))
-                    if path.is_file() and path.name != ".content.lock"
+                    if path.is_file()
+                    and path.name != ".content.lock"
+                    and ".obsidian" not in path.relative_to(root).parts
                 )
 
         files: list[dict] = []

@@ -42,6 +42,22 @@ def test_aes_backup_verifies_and_restores_private_data(tmp_path: Path) -> None:
         inspect_encrypted_backup(archive, "wrong-password")
 
 
+def test_backup_excludes_obsidian_runtime_configuration(tmp_path: Path) -> None:
+    data_root = prepare_private_root(tmp_path / "private")
+    content = data_root / "content"
+    config = content / ".obsidian"
+    config.mkdir(parents=True)
+    (config / "workspace.json").write_text('{"private":"layout"}', encoding="utf-8")
+    (content / "sources" / "thoughts").mkdir(parents=True, exist_ok=True)
+    (content / "sources" / "thoughts" / "note.md").write_text("safe", encoding="utf-8")
+
+    archive = tmp_path / "backup.zip"
+    preview = create_encrypted_backup(data_root, "a-long-password", archive)
+
+    assert "content/sources/thoughts/note.md" in preview.files
+    assert not any(".obsidian" in value for value in preview.files)
+
+
 def test_backup_rejects_short_password(tmp_path: Path) -> None:
     data_root = prepare_private_root(tmp_path / "private")
     CareerRepository(data_root)

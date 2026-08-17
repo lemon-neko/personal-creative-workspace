@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#168da2">
+  <meta name="description" content="随时接住想法，并在 Tailnet 中阅读 Mac 上的分层知识库。">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/mobile-assets/mobile.css?v=3">
+  <link rel="icon" href="/mobile-assets/icon.svg" type="image/svg+xml">
+  <title>{% block title %}羽白工作台{% endblock %}</title>
+</head>
+<body>
+  <main class="mobile-shell">
+    <header class="mobile-brand">
+      <a class="brand-link" href="/"><img src="/mobile-assets/icon.svg" alt=""><div><strong>羽白工作台</strong><small>PRIVATE WORKSPACE</small></div></a>
+      <span id="network-state">检查连接…</span>
+    </header>
+    {% if paired %}
+    <nav class="mobile-tabs" aria-label="手机工作台">
+      <a href="/" class="{{ 'active' if active_page == 'capture' else '' }}"><span aria-hidden="true">✦</span>随手记</a>
+      <a href="/knowledge" class="{{ 'active' if active_page == 'knowledge' else '' }}"><span aria-hidden="true">◎</span>知识库</a>
+    </nav>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/mobile-assets/mobile.js?v=3" defer></script>
+</body>
+</html>

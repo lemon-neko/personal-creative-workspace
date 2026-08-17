@@ -1,169 +1,83 @@
 {% extends "base.html" %}
 
-{% block title %}知识星图 · 羽白工作台{% endblock %}
+{% block title %}知识库 · 羽白工作台{% endblock %}
 
 {% block extra_head %}
 <script defer src="{{ url_for('static', path='/vendor/d3.min.js') }}"></script>
-<script defer src="{{ url_for('static', path='/knowledge.js') }}?v=20260809-vault1"></script>
+<script defer src="{{ url_for('static', path='/knowledge.js') }}?v=20260817-core1"></script>
 {% endblock %}
 
 {% block content %}
 <header class="page-header knowledge-header">
     <div>
-        <p class="eyebrow">KNOWLEDGE CONSTELLATION</p>
-        <h1>知识星图</h1>
-        <p>不是把想法塞进抽屉，而是看看它们隔着技术、哲学或生活，是否仍在谈同一件事。</p>
+        <p class="eyebrow">OBSIDIAN-LED KNOWLEDGE</p>
+        <h1>知识库</h1>
+        <p>从学科进入主题，再进入可追溯的知识卡。Obsidian 负责整理，工作台负责校验、使用和看见关系。</p>
     </div>
-    <div class="knowledge-overview" aria-label="知识网络状态">
-        <div><strong>{{ knowledge_items|length }}</strong><span>内容</span></div>
-        <div><strong>{{ knowledge_index.subjects|length }}</strong><span>学科</span></div>
-        <div><strong>{{ stale_items|length }}</strong><span>待整理</span></div>
+    <div class="knowledge-overview" aria-label="知识库状态">
+        <div><strong>{{ subject_maps|length }}</strong><span>学科</span></div>
+        <div><strong>{{ topic_maps|length }}</strong><span>主题</span></div>
+        <div><strong>{{ knowledge_cards|selectattr('status', 'equalto', 'active')|list|length }}</strong><span>有效知识卡</span></div>
     </div>
 </header>
-<p><a class="secondary-button inline-button" href="{{ url_for('library') }}">打开材料收件箱与阅读队列</a></p>
 
 {% if notice %}<div class="message success" role="status">{{ notice }}</div>{% endif %}
 {% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
+{% if knowledge_store_diagnostics %}<div class="message warning">{% for value in knowledge_store_diagnostics %}<p>{{ value }}</p>{% endfor %}</div>{% endif %}
 
-<section class="knowledge-actions paper-panel">
-    <div>
-        <p class="eyebrow">ANALYSE</p>
-        <h2>整理尚未进入网络的内容</h2>
-        <p>AI 只产生候选学科、概念和关联。你确认之前，Markdown 不会发生变化。</p>
+<section class="paper-panel knowledge-command-bar">
+    <div><p class="eyebrow">WORKFLOW</p><h2>主要整理入口在 Obsidian</h2><p>模板负责新建，扫描负责校验；网页端不再维护第二套学科和概念字段。</p></div>
+    <div class="button-row">
+        <a class="primary-button inline-button" href="{{ url_for('obsidian_settings') }}">打开 Obsidian 工作流</a>
+        <a class="secondary-button inline-button" href="{{ url_for('library') }}">材料收件箱</a>
+        <form action="{{ url_for('manual_analyze_knowledge') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="secondary-button" type="submit" {{ 'disabled' if not pending_sources else '' }}>人工拆卡任务</button></form>
     </div>
-    {% if knowledge_ai_enabled %}
-    <form action="{{ url_for('analyze_knowledge') }}" method="post">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <button class="primary-button" type="submit" {{ 'disabled' if not stale_items else '' }}>
-            {{ '分析 ' ~ stale_items|length ~ ' 条待整理内容' if stale_items else '当前已整理完成' }}
-        </button>
-    </form>
-    {% else %}
-    <div class="model-hint"><span>规则模式</span><p>没有 API 也可以生成任务包，手动交给 ChatGPT / Codex 后再导入候选结果。</p></div>
-    {% endif %}
-    <form action="{{ url_for('manual_analyze_knowledge') }}" method="post">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <button class="secondary-button" type="submit" {{ 'disabled' if not stale_items else '' }}>生成人工拆卡任务</button>
-    </form>
-</section>
-
-{% if pending_suggestions %}
-<section class="knowledge-review-section">
-    <div class="section-heading">
-        <div><p class="eyebrow">REVIEW SUGGESTIONS</p><h2>确认 AI 建议</h2></div>
-        <span>{{ pending_suggestions|length }} 条候选</span>
-    </div>
-    <form action="{{ url_for('confirm_knowledge') }}" method="post" class="suggestion-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <div class="suggestion-list">
-            {% for row in pending_suggestions %}
-            <article class="suggestion-card">
-                <div class="suggestion-topline">
-                    <label><input type="checkbox" name="selected" value="{{ row.suggestion.item_id }}" checked> 纳入本次确认</label>
-                    <a href="{{ url_for('idea_detail', item_id=row.item.id) }}">查看原文 →</a>
-                </div>
-                <h3>{{ row.item.title }}</h3>
-                <p>{{ row.item.summary }}</p>
-                <div class="field-grid">
-                    <label class="field">
-                        <span>学科 <small>1–3 个</small></span>
-                        <input name="subjects__{{ row.suggestion.item_id }}" required value="{{ row.suggestion.subjects|join('，') }}">
-                    </label>
-                    <label class="field">
-                        <span>概念 <small>最多 8 个</small></span>
-                        <input name="concepts__{{ row.suggestion.item_id }}" value="{{ row.suggestion.concepts|join('，') }}">
-                    </label>
-                </div>
-                <label class="field">
-                    <span>关联 <small>内容 ID | 类型 | 说明</small></span>
-                    <textarea name="relations__{{ row.suggestion.item_id }}" rows="3">{{ row.relations_value }}</textarea>
-                </label>
-            </article>
-            {% endfor %}
-        </div>
-        <div class="suggestion-submit">
-            <p>确认后只更新知识元数据，并重新生成学科索引。</p>
-            <button class="primary-button" type="submit">批量确认并更新星图</button>
-        </div>
-    </form>
-</section>
-{% endif %}
-
-<section class="subject-section">
-    <div class="section-heading">
-        <div><p class="eyebrow">SUBJECT INDEX</p><h2>学科汇总</h2></div>
-        {% if knowledge_index.updated_at %}<span>更新于 {{ knowledge_index.updated_at.strftime('%m-%d %H:%M') }}</span>{% endif %}
-    </div>
-    {% if knowledge_index.subjects %}
-    <div class="subject-grid">
-        {% for subject in knowledge_index.subjects %}
-        <article class="subject-card" style="--subject-color: {{ subject.color }}">
-            <div><span class="subject-dot"></span><strong>{{ subject.name }}</strong><small>{{ subject.source_ids|length }} 条</small></div>
-            <p>{{ subject.summary }}</p>
-            {% if subject.concepts %}<div class="tag-row">{% for concept in subject.concepts[:5] %}<span>{{ concept }}</span>{% endfor %}</div>{% endif %}
-        </article>
-        {% endfor %}
-    </div>
-    {% else %}
-    <div class="empty-state compact"><span class="empty-cat">✣</span><h3>星图还是一片空白</h3><p>先记录一些想法，再为它们补充学科和概念。</p></div>
-    {% endif %}
 </section>
 
 <section class="knowledge-layer-section">
-    <div class="section-heading"><div><p class="eyebrow">MAPS & CARDS</p><h2>分层知识库</h2></div><span>{{ knowledge_maps|length }} 张地图 · {{ knowledge_cards|length }} 张知识卡</span></div>
-    {% if knowledge_store_diagnostics %}<div class="message warning">{% for value in knowledge_store_diagnostics %}<p>{{ value }}</p>{% endfor %}</div>{% endif %}
-    <div class="knowledge-map-grid">
-        <section class="paper-panel"><h3>学科与主题地图</h3><div class="compact-list">{% for item in knowledge_maps %}<a class="document-choice" href="{{ url_for('knowledge_map', map_id=item.id) }}"><strong>{{ item.title }}</strong><span>{{ item.kind }} · {{ item.summary }}</span></a>{% else %}<div class="empty-note">先建立一张学科地图，再让主题跨学科生长。</div>{% endfor %}</div><details><summary>新建知识地图</summary><form action="{{ url_for('create_knowledge_map') }}" method="post" class="edit-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label class="field"><span>名称</span><input name="title" required></label><label class="field"><span>类型</span><select name="kind"><option value="subject">学科</option><option value="topic">主题</option></select></label><label class="field"><span>摘要</span><textarea name="summary" required></textarea></label><label class="field"><span>父级（可多选）</span><select name="parent_ids" multiple>{% for parent in knowledge_maps %}<option value="{{ parent.id }}">{{ parent.title }}</option>{% endfor %}</select></label><label class="field"><span>说明</span><textarea name="body"></textarea></label><button class="primary-button">创建地图</button></form></details></section>
-        <section class="paper-panel"><h3>原子知识卡</h3><div class="compact-list">{% for card in knowledge_cards %}<a class="document-choice" href="{{ url_for('knowledge_card', card_id=card.id) }}"><strong>{{ card.title }}</strong><span>{{ card.card_type }} · {{ card.subjects|join('、') }}</span></a>{% else %}<div class="empty-note">确认拆卡建议后，知识卡会出现在这里。</div>{% endfor %}</div><details><summary>手动创建知识卡</summary><form action="{{ url_for('create_knowledge_card') }}" method="post" class="edit-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label class="field"><span>标题</span><input name="title" required></label><label class="field"><span>类型</span><select name="card_type">{% for value in ['concept','claim','question','method','observation'] %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label><label class="field"><span>学科</span><input name="subjects" required></label><label class="field"><span>概念</span><input name="concepts"></label><label class="field"><span>来源（可多选）</span><select name="source_ids" multiple required>{% for source in knowledge_items %}<option value="{{ source.id }}">{{ source.title }}</option>{% endfor %}</select></label><label class="field"><span>地图（可多选）</span><select name="map_ids" multiple>{% for item in knowledge_maps %}<option value="{{ item.id }}">{{ item.title }}</option>{% endfor %}</select></label><label class="field"><span>正文</span><textarea name="body" required></textarea></label><button class="primary-button">创建知识卡</button></form></details></section>
+    <div class="section-heading"><div><p class="eyebrow">KNOWLEDGE PATH</p><h2>学科 → 主题 → 知识卡</h2></div><span>{{ pending_sources|length }} 条来源待拆卡</span></div>
+    <div class="knowledge-subject-list">
+        {% for subject in subject_maps %}
+        <article class="knowledge-subject-row">
+            <a class="knowledge-subject-heading" href="{{ url_for('knowledge_map', map_id=subject.id) }}"><span class="subject-orbit" aria-hidden="true"></span><div><strong>{{ subject.title }}</strong><p>{{ subject.summary }}</p></div></a>
+            <div class="knowledge-topic-list">
+                {% for topic in topic_maps if subject.id in topic.parent_ids %}
+                <a href="{{ url_for('knowledge_map', map_id=topic.id) }}"><strong>{{ topic.title }}</strong><span>查看主题与知识卡 →</span></a>
+                {% else %}<span class="empty-note">还没有下级主题</span>{% endfor %}
+            </div>
+        </article>
+        {% else %}<div class="empty-state compact"><h3>还没有学科地图</h3><p>在 Obsidian 使用学科地图模板，新文件会进入待确认收件箱。</p></div>{% endfor %}
     </div>
 </section>
 
 <section class="constellation-section">
     <div class="section-heading">
-        <div><p class="eyebrow">INTERACTIVE MAP</p><h2>想法与概念的连接</h2></div>
-        <span>{{ knowledge_graph.nodes|length }} 个节点 · {{ knowledge_graph.edges|length }} 条连接</span>
+        <div><p class="eyebrow">CORE GRAPH</p><h2>核心知识图</h2></div>
+        <span>{{ core_graph.nodes|length }} 个核心节点 · 来源按需展开</span>
     </div>
-    <div class="knowledge-controls" aria-label="星图筛选">
-        <label><span>搜索</span><input id="knowledge-search" type="search" placeholder="标题或概念"></label>
-        <label><span>学科</span><select id="knowledge-subject"><option value="">全部学科</option>{% for subject in knowledge_index.subjects %}<option value="{{ subject.name }}">{{ subject.name }}</option>{% endfor %}</select></label>
-        <label><span>状态</span><select id="knowledge-status"><option value="">全部状态</option><option value="draft">草稿</option><option value="published">已成稿</option></select></label>
-        <label><span>类型</span><select id="knowledge-kind"><option value="">全部类型</option><option value="source">原始来源</option><option value="card">知识卡</option><option value="subject">学科地图</option><option value="topic">主题地图</option><option value="concept">概念</option></select></label>
+    <div class="knowledge-controls" aria-label="核心图筛选">
+        <label><span>搜索标题或概念</span><input id="knowledge-search" type="search" placeholder="输入关键词"></label>
+        <label><span>学科</span><select id="knowledge-subject"><option value="">全部学科</option>{% for subject in subject_maps %}<option value="{{ subject.title }}">{{ subject.title }}</option>{% endfor %}</select></label>
+        <label><span>知识卡状态</span><select id="knowledge-status"><option value="active">当前有效</option><option value="">全部非归档</option><option value="superseded">已被替代</option></select></label>
+        <label><span>关系</span><select id="knowledge-relation"><option value="">全部关系</option>{% for value, label in [('related','相关'),('extends','延伸'),('supports','支持'),('contrasts','对照'),('superseded_by','替代')] %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
         <button id="knowledge-reset" class="secondary-button" type="button">重置视图</button>
     </div>
     <div class="constellation-layout">
-        <div class="constellation-canvas" id="knowledge-graph" aria-label="可交互知识关系图">
-            <div class="graph-empty" hidden>当前筛选下没有可显示的节点。</div>
-        </div>
-        <aside class="node-inspector" id="knowledge-inspector" aria-live="polite">
-            <span class="light-spark" aria-hidden="true">✶</span>
-            <h3>点亮一个节点</h3>
-            <p>选择一条想法或一个概念，查看它属于哪里，又与什么相连。</p>
-        </aside>
+        <div class="constellation-canvas core-graph-canvas" id="knowledge-graph" aria-label="学科、主题和知识卡关系图"><div class="graph-empty" hidden>当前筛选下没有可显示的节点。</div></div>
+        <aside class="node-inspector" id="knowledge-inspector" aria-live="polite"><span class="light-spark" aria-hidden="true">✶</span><h3>选择一个节点</h3><p>知识卡会显示概念和关系；点击“展开来源”才会把原始记录加入图中。</p></aside>
     </div>
-    <div class="graph-legend">
-        <span><i class="legend-item"></i>想法</span><span><i class="legend-concept"></i>概念</span><span>拖动节点 · 滚轮缩放 · 点击查看关联</span>
+    <div class="graph-legend"><span><i class="legend-subject"></i>学科</span><span><i class="legend-topic"></i>主题</span><span><i class="legend-card"></i>知识卡</span><span><i class="legend-source"></i>按需来源</span></div>
+</section>
+
+<section class="knowledge-recent-section">
+    <div class="section-heading"><div><p class="eyebrow">RECENT CARDS</p><h2>最近确认的知识</h2></div><a href="{{ url_for('obsidian_settings') }}">管理模板与扫描 →</a></div>
+    <div class="knowledge-card-grid">
+        {% for card in recent_cards %}<a class="knowledge-card-preview" href="{{ url_for('knowledge_card', card_id=card.id) }}"><span>{{ card.card_type }}</span><h3>{{ card.title }}</h3><p>{{ card.body[:100] }}{% if card.body|length > 100 %}…{% endif %}</p><div class="tag-row">{% for concept in card.concepts[:3] %}<i>{{ concept }}</i>{% endfor %}</div></a>{% else %}<div class="empty-note">知识卡还没有开始生长。</div>{% endfor %}
     </div>
 </section>
 
-{% if unclassified_items %}
-<section class="unclassified-section">
-    <div class="section-heading"><div><p class="eyebrow">UNCLASSIFIED</p><h2>还漂在外面的想法</h2></div><span>{{ unclassified_items|length }} 条</span></div>
-    <div class="archive-list">
-        {% for item in unclassified_items %}
-        <article class="archive-item compact-archive"><div class="archive-date"><strong>{{ item.created_at.strftime('%m.%d') }}</strong><span>{{ item.created_at.year }}</span></div><div><h2><a href="{{ url_for('idea_detail', item_id=item.id) }}">{{ item.title }}</a></h2><p>{{ item.summary }}</p></div><div class="archive-actions"><a href="{{ url_for('idea_detail', item_id=item.id) }}">手动整理</a></div></article>
-        {% endfor %}
-    </div>
-</section>
-{% endif %}
+{% if pending_sources %}<section class="unclassified-section"><div class="section-heading"><div><p class="eyebrow">PROVENANCE INBOX</p><h2>尚未形成知识卡的来源</h2></div><span>{{ pending_sources|length }} 条</span></div><div class="compact-list">{% for item in pending_sources[:8] %}<a class="document-choice" href="{{ url_for('idea_detail', item_id=item.id) }}"><strong>{{ item.title }}</strong><span>{{ item.summary }}</span></a>{% endfor %}</div></section>{% endif %}
 
-<noscript>
-    <section class="fallback-knowledge">
-        <h2>按学科查看来源</h2>
-        {% for subject in knowledge_index.subjects %}
-        <article><h3>{{ subject.name }}</h3><p>{{ subject.summary }}</p><ul>{% for item_id in subject.source_ids %}{% set source = knowledge_item_map.get(item_id) %}{% if source %}<li><a href="{{ url_for('idea_detail', item_id=source.id) }}">{{ source.title }}</a></li>{% endif %}{% endfor %}</ul></article>
-        {% endfor %}
-    </section>
-</noscript>
-
-<script id="knowledge-graph-data" type="application/json">{{ layered_graph|tojson }}</script>
+<noscript><section class="fallback-knowledge"><h2>分层知识目录</h2>{% for subject in subject_maps %}<article><h3><a href="{{ url_for('knowledge_map', map_id=subject.id) }}">{{ subject.title }}</a></h3><ul>{% for topic in topic_maps if subject.id in topic.parent_ids %}<li><a href="{{ url_for('knowledge_map', map_id=topic.id) }}">{{ topic.title }}</a></li>{% endfor %}</ul></article>{% endfor %}</section></noscript>
+<script id="knowledge-graph-data" type="application/json">{{ core_graph|tojson }}</script>
 {% endblock %}

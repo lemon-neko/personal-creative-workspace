@@ -1,7 +1,8 @@
-"""Private video-project handoff packages for the local OpenCut integration."""
+"""Private video planning, storyboard and editor handoff packages."""
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -14,11 +15,13 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
+from app.atomic import atomic_write_text
 from app.content import ContentItem
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
+SUPPORTED_MANIFEST_VERSIONS = {1, MANIFEST_VERSION}
 VIDEO_STATUSES = {"planning", "editing", "exported", "archived"}
 VIDEO_STATUS_LABELS = {
     "planning": "待剪辑",
@@ -26,6 +29,22 @@ VIDEO_STATUS_LABELS = {
     "exported": "已导出",
     "archived": "归档",
 }
+VIDEO_PLATFORMS = {
+    "general": "通用",
+    "wechat-channels": "视频号",
+    "bilibili": "哔哩哔哩",
+    "douyin": "抖音",
+    "xiaohongshu": "小红书",
+}
+VIDEO_ASPECT_RATIOS = {"16:9", "9:16", "1:1"}
+VIDEO_TYPES = {
+    "knowledge-explainer": "知识讲解",
+    "talking-head": "真人口播",
+    "mixed": "混合表达",
+}
+MIN_TARGET_DURATION = 15
+MAX_TARGET_DURATION = 3600
+MAX_SCENES = 40
 OPENCUT_FORK_URL = "https://github.com/lemon-neko/OpenCut"
 OPENCUT_UPSTREAM_URL = "https://github.com/OpenCut-app/OpenCut"
 IMAGE_PATTERN = re.compile(
@@ -45,6 +64,18 @@ class VideoAsset:
 
 
 @dataclass(frozen=True)
+class VideoScene:
+    """One editable scene in a private storyboard."""
+
+    id: str
+    duration_seconds: int
+    narration: str
+    visual: str
+    caption: str
+    assets: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class VideoProject:
     """A private, file-backed video project linked to one article."""
 
@@ -54,6 +85,13 @@ class VideoProject:
     source_title: str
     status: str
     notes: str
+    platform: str
+    aspect_ratio: str
+    target_duration: int
+    video_type: str
+    audience: str
+    tone: str
+    scenes: tuple[VideoScene, ...]
     assets: tuple[VideoAsset, ...]
     created_at: datetime
     updated_at: datetime
@@ -66,6 +104,25 @@ class VideoProject:
     @property
     def brief_path(self) -> Path:
         return self.directory / "brief.md"
+
+    @property
+    def planned_duration(self) -> int:
+        return sum(scene.duration_seconds for scene in self.scenes)
+
+    @property
+    def exports_ready(self) -> bool:
+        return (self.directory / "storyboard.yaml").is_file()
+
+
+def _default_spec() -> dict[str, object]:
+    return {
+        "platform": "general",
+        "aspect_ratio": "16:9",
+        "target_duration": 90,
+        "video_type": "knowledge-explainer",
+        "audience": "对主题感兴趣的普通读者",
+        "tone": "清晰、克制、保留个人观察",
+    }
 
 
 @dataclass(frozen=True)
@@ -123,8 +180,7 @@ def _private_directory(path: Path) -> Path:
 
 
 def _private_write(path: Path, text: str) -> None:
-    path.write_text(text, encoding="utf-8")
-    path.chmod(0o600)
+    atomic_write_text(path, text, mode=0o600)
 
 
 def _parse_datetime(value: object, field: str) -> datetime:
@@ -139,6 +195,101 @@ def _parse_datetime(value: object, field: str) -> datetime:
 
 def _safe_project_id(value: str) -> bool:
     return bool(re.fullmatch(r"video-[0-9]{8}-[0-9]{6}-[a-f0-9]{6}", value))
+
+
+def _validate_project_spec(
+    *,
+    platform: str,
+    aspect_ratio: str,
+    target_duration: int,
+    video_type: str,
+    audience: str,
+    tone: str,
+) -> None:
+    if platform not in VIDEO_PLATFORMS:
+        raise ValueError("视频发布平台无效")
+    if aspect_ratio not in VIDEO_ASPECT_RATIOS:
+        raise ValueError("视频画面比例无效")
+    if video_type not in VIDEO_TYPES:
+        raise ValueError("视频表达类型无效")
+    if not MIN_TARGET_DURATION <= target_duration <= MAX_TARGET_DURATION:
+        raise ValueError("视频目标时长需要在 15 秒到 60 分钟之间")
+    if not audience.strip() or len(audience.strip()) > 300:
+        raise ValueError("视频受众需要填写且不能超过 300 个字符")
+    if not tone.strip() or len(tone.strip()) > 300:
+        raise ValueError("视频表达风格需要填写且不能超过 300 个字符")
+
+
+def _parse_scene(value: object, index: int) -> VideoScene:
+    if not isinstance(value, dict):
+        raise ValueError("视频分镜信息无效")
+    scene_id = str(value.get("id", f"scene-{index + 1:02d}"))
+    if not re.fullmatch(r"scene-[0-9]{2}", scene_id):
+        raise ValueError("视频分镜 ID 无效")
+    try:
+        duration = int(value.get("duration_seconds", 0))
+    except (TypeError, ValueError) as error:
+        raise ValueError("视频分镜时长无效") from error
+    if not 1 <= duration <= 600:
+        raise ValueError("单个分镜时长需要在 1 到 600 秒之间")
+    narration = str(value.get("narration", "")).strip()
+    visual = str(value.get("visual", "")).strip()
+    caption = str(value.get("caption", "")).strip()
+    if not narration or len(narration) > 5000:
+        raise ValueError("分镜旁白需要填写且不能超过 5000 个字符")
+    if not visual or len(visual) > 2000:
+        raise ValueError("分镜画面说明需要填写且不能超过 2000 个字符")
+    if len(caption) > 500:
+        raise ValueError("分镜字幕不能超过 500 个字符")
+    raw_assets = value.get("assets", [])
+    if not isinstance(raw_assets, (list, tuple)):
+        raise ValueError("分镜素材列表无效")
+    assets = tuple(str(item).strip() for item in raw_assets if str(item).strip())
+    if len(assets) > 10 or any(Path(item).name != item for item in assets):
+        raise ValueError("分镜素材文件名无效")
+    return VideoScene(scene_id, duration, narration, visual, caption, assets)
+
+
+def _initial_scenes(source: ContentItem, target_duration: int) -> tuple[VideoScene, ...]:
+    paragraphs = tuple(
+        value.strip()
+        for value in re.split(r"\n\s*\n+", IMAGE_PATTERN.sub("", source.body))
+        if value.strip() and not value.lstrip().startswith("#")
+    )
+    seed = paragraphs[:3] or (source.summary or source.title,)
+    duration = max(3, target_duration // len(seed))
+    scenes: list[VideoScene] = []
+    for index, paragraph in enumerate(seed):
+        narration = re.sub(r"[*_`>#-]", "", paragraph).strip()[:900]
+        scenes.append(
+            VideoScene(
+                id=f"scene-{index + 1:02d}",
+                duration_seconds=duration,
+                narration=narration,
+                visual="根据旁白选择配图、关键词或简洁动态图解",
+                caption=narration[:80],
+            )
+        )
+    return tuple(scenes)
+
+
+def _srt_timestamp(seconds: int) -> str:
+    hours, remainder = divmod(max(0, seconds), 3600)
+    minutes, second = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{second:02d},000"
+
+
+def _render_srt(scenes: tuple[VideoScene, ...]) -> str:
+    cursor = 0
+    entries: list[str] = []
+    for index, scene in enumerate(scenes, start=1):
+        end = cursor + scene.duration_seconds
+        caption = scene.caption or scene.narration
+        entries.append(
+            f"{index}\n{_srt_timestamp(cursor)} --> {_srt_timestamp(end)}\n{caption}\n"
+        )
+        cursor = end
+    return "\n".join(entries)
 
 
 def _resolve_workspace_asset(content_root: Path, raw_url: str) -> Path | None:
@@ -178,7 +329,7 @@ class VideoProjectRepository:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as error:
             raise ValueError(f"无法读取视频项目：{path.parent.name}") from error
-        if not isinstance(raw, dict) or raw.get("version") != MANIFEST_VERSION:
+        if not isinstance(raw, dict) or raw.get("version") not in SUPPORTED_MANIFEST_VERSIONS:
             raise ValueError("视频项目版本不受支持")
         project_id = str(raw.get("id", ""))
         status = str(raw.get("status", ""))
@@ -204,6 +355,37 @@ class VideoProjectRepository:
                     size=max(0, int(value.get("size", 0))),
                 ),
             )
+        defaults = _default_spec()
+        platform = str(raw.get("platform", defaults["platform"]))
+        aspect_ratio = str(raw.get("aspect_ratio", defaults["aspect_ratio"]))
+        video_type = str(raw.get("video_type", defaults["video_type"]))
+        try:
+            target_duration = int(raw.get("target_duration", defaults["target_duration"]))
+        except (TypeError, ValueError) as error:
+            raise ValueError("视频目标时长无效") from error
+        _validate_project_spec(
+            platform=platform,
+            aspect_ratio=aspect_ratio,
+            target_duration=target_duration,
+            video_type=video_type,
+            audience=str(raw.get("audience", defaults["audience"])),
+            tone=str(raw.get("tone", defaults["tone"])),
+        )
+        raw_scenes = raw.get("scenes", [])
+        if not isinstance(raw_scenes, list) or len(raw_scenes) > MAX_SCENES:
+            raise ValueError("视频分镜列表无效")
+        scenes = tuple(_parse_scene(value, index) for index, value in enumerate(raw_scenes))
+        if not scenes and raw.get("version") == 1:
+            source_title = str(raw.get("source_title", "未命名视频")).strip()[:120]
+            scenes = (
+                VideoScene(
+                    id="scene-01",
+                    duration_seconds=target_duration,
+                    narration=source_title,
+                    visual="根据原文补充画面说明",
+                    caption=source_title,
+                ),
+            )
         return VideoProject(
             id=project_id,
             title=str(raw.get("title", "")).strip()[:120],
@@ -211,6 +393,13 @@ class VideoProjectRepository:
             source_title=str(raw.get("source_title", "")).strip()[:120],
             status=status,
             notes=str(raw.get("notes", "")).strip()[:5000],
+            platform=platform,
+            aspect_ratio=aspect_ratio,
+            target_duration=target_duration,
+            video_type=video_type,
+            audience=str(raw.get("audience", defaults["audience"])).strip()[:300],
+            tone=str(raw.get("tone", defaults["tone"])).strip()[:300],
+            scenes=scenes,
             assets=tuple(assets),
             created_at=_parse_datetime(raw.get("created_at"), "created_at"),
             updated_at=_parse_datetime(raw.get("updated_at"), "updated_at"),
@@ -226,9 +415,16 @@ class VideoProjectRepository:
             "source_title": project.source_title,
             "status": project.status,
             "notes": project.notes,
+            "platform": project.platform,
+            "aspect_ratio": project.aspect_ratio,
+            "target_duration": project.target_duration,
+            "video_type": project.video_type,
+            "audience": project.audience,
+            "tone": project.tone,
             "created_at": project.created_at.isoformat(),
             "updated_at": project.updated_at.isoformat(),
             "brief_file": "brief.md",
+            "source_file": "source.md",
             "assets": [
                 {
                     "alt": asset.alt,
@@ -237,6 +433,17 @@ class VideoProjectRepository:
                     "size": asset.size,
                 }
                 for asset in project.assets
+            ],
+            "scenes": [
+                {
+                    "id": scene.id,
+                    "duration_seconds": scene.duration_seconds,
+                    "narration": scene.narration,
+                    "visual": scene.visual,
+                    "caption": scene.caption,
+                    "assets": list(scene.assets),
+                }
+                for scene in project.scenes
             ],
         }
         path = project.directory / "manifest.yaml"
@@ -267,14 +474,33 @@ class VideoProjectRepository:
         except ValueError:
             return None
 
-    def create(self, source: ContentItem, *, notes: str = "") -> VideoProject:
-        """Create a handoff package without modifying the source article."""
+    def create(
+        self,
+        source: ContentItem,
+        *,
+        notes: str = "",
+        platform: str = "general",
+        aspect_ratio: str = "16:9",
+        target_duration: int = 90,
+        video_type: str = "knowledge-explainer",
+        audience: str = "对主题感兴趣的普通读者",
+        tone: str = "清晰、克制、保留个人观察",
+    ) -> VideoProject:
+        """Create a private planning package without modifying the source article."""
 
         if source.kind != "article":
             raise ValueError("视频项目只能从文章草稿或已成稿创建")
         cleaned_notes = notes.strip()
         if len(cleaned_notes) > 5000:
             raise ValueError("剪辑备注不能超过 5000 个字符")
+        _validate_project_spec(
+            platform=platform,
+            aspect_ratio=aspect_ratio,
+            target_duration=target_duration,
+            video_type=video_type,
+            audience=audience,
+            tone=tone,
+        )
         now = datetime.now(SHANGHAI).replace(microsecond=0)
         project_id = f"video-{now:%Y%m%d-%H%M%S}-{uuid4().hex[:6]}"
         directory = _private_directory(self.root / project_id)
@@ -315,7 +541,18 @@ class VideoProjectRepository:
             f"> 来源：羽白工作台 `{source.id}` · 生成于 {now:%Y-%m-%d %H:%M}\n\n"
             f"{body}\n"
         )
-        _private_write(directory / "brief.md", brief)
+        _private_write(directory / "source.md", brief)
+        initial_scenes = _initial_scenes(source, target_duration)
+        copied_assets = tuple(copied.values())
+        initial_scenes = tuple(
+            replace(
+                scene,
+                assets=(copied_assets[index].stored_name,)
+                if index < len(copied_assets)
+                else (),
+            )
+            for index, scene in enumerate(initial_scenes)
+        )
         project = VideoProject(
             id=project_id,
             title=source.title,
@@ -323,12 +560,177 @@ class VideoProjectRepository:
             source_title=source.title,
             status="planning",
             notes=cleaned_notes,
-            assets=tuple(copied.values()),
+            platform=platform,
+            aspect_ratio=aspect_ratio,
+            target_duration=target_duration,
+            video_type=video_type,
+            audience=audience.strip(),
+            tone=tone.strip(),
+            scenes=initial_scenes,
+            assets=copied_assets,
             created_at=now,
             updated_at=now,
             directory=directory,
         )
-        return self._write_manifest(project)
+        project = self._write_manifest(project)
+        self._write_exports(project)
+        return project
+
+    def update_plan(
+        self,
+        project_id: str,
+        *,
+        platform: str,
+        aspect_ratio: str,
+        target_duration: int,
+        video_type: str,
+        audience: str,
+        tone: str,
+        notes: str,
+        scenes: tuple[VideoScene, ...],
+    ) -> VideoProject:
+        project = self.get(project_id)
+        if project is None:
+            raise KeyError(project_id)
+        if len(notes.strip()) > 5000:
+            raise ValueError("剪辑备注不能超过 5000 个字符")
+        _validate_project_spec(
+            platform=platform,
+            aspect_ratio=aspect_ratio,
+            target_duration=target_duration,
+            video_type=video_type,
+            audience=audience,
+            tone=tone,
+        )
+        if not scenes or len(scenes) > MAX_SCENES:
+            raise ValueError("视频分镜需要 1 到 40 个")
+        normalized = tuple(
+            _parse_scene(
+                {
+                    "id": f"scene-{index + 1:02d}",
+                    "duration_seconds": scene.duration_seconds,
+                    "narration": scene.narration,
+                    "visual": scene.visual,
+                    "caption": scene.caption,
+                    "assets": scene.assets,
+                },
+                index,
+            )
+            for index, scene in enumerate(scenes)
+        )
+        available_assets = {asset.stored_name for asset in project.assets}
+        if any(name not in available_assets for scene in normalized for name in scene.assets):
+            raise ValueError("分镜引用了不属于当前项目的素材")
+        updated = self._write_manifest(
+            replace(
+                project,
+                platform=platform,
+                aspect_ratio=aspect_ratio,
+                target_duration=target_duration,
+                video_type=video_type,
+                audience=audience.strip(),
+                tone=tone.strip(),
+                notes=notes.strip(),
+                scenes=normalized,
+                updated_at=datetime.now(SHANGHAI).replace(microsecond=0),
+            )
+        )
+        self._write_exports(updated)
+        return updated
+
+    def _write_exports(self, project: VideoProject) -> None:
+        storyboard = {
+            "version": 1,
+            "project_id": project.id,
+            "title": project.title,
+            "platform": project.platform,
+            "aspect_ratio": project.aspect_ratio,
+            "target_duration": project.target_duration,
+            "video_type": project.video_type,
+            "audience": project.audience,
+            "tone": project.tone,
+            "scenes": [
+                {
+                    "id": scene.id,
+                    "duration": scene.duration_seconds,
+                    "narration": scene.narration,
+                    "visual": scene.visual,
+                    "caption": scene.caption,
+                    "assets": list(scene.assets),
+                }
+                for scene in project.scenes
+            ],
+        }
+        _private_write(
+            project.directory / "storyboard.yaml",
+            yaml.safe_dump(storyboard, allow_unicode=True, sort_keys=False),
+        )
+        narration = "\n\n".join(
+            f"## {scene.id} · {scene.duration_seconds} 秒\n\n{scene.narration}"
+            for scene in project.scenes
+        )
+        _private_write(project.directory / "narration.md", f"# {project.title}\n\n{narration}\n")
+        _private_write(project.directory / "captions.srt", _render_srt(project.scenes))
+        props = {
+            "title": project.title,
+            "platform": project.platform,
+            "aspectRatio": project.aspect_ratio,
+            "targetDuration": project.target_duration,
+            "audience": project.audience,
+            "tone": project.tone,
+            "scenes": [
+                {
+                    "id": scene.id,
+                    "durationInSeconds": scene.duration_seconds,
+                    "narration": scene.narration,
+                    "visual": scene.visual,
+                    "caption": scene.caption,
+                    "assets": [f"assets/{name}" for name in scene.assets],
+                }
+                for scene in project.scenes
+            ],
+        }
+        _private_write(
+            project.directory / "remotion-props.json",
+            json.dumps(props, ensure_ascii=False, indent=2) + "\n",
+        )
+        source_path = project.directory / "source.md"
+        if not source_path.is_file():
+            legacy_brief = project.directory / "brief.md"
+            source_text = (
+                legacy_brief.read_text(encoding="utf-8")
+                if legacy_brief.is_file()
+                else f"# {project.source_title}\n"
+            )
+            _private_write(source_path, source_text)
+        else:
+            source_text = source_path.read_text(encoding="utf-8")
+        scene_sections = "\n\n".join(
+            (
+                f"### 镜头 {index} · {scene.duration_seconds} 秒\n\n"
+                f"- 旁白：{scene.narration}\n"
+                f"- 画面：{scene.visual}\n"
+                f"- 字幕：{scene.caption or '跟随旁白'}\n"
+                f"- 素材：{', '.join(scene.assets) or '待补充'}"
+            )
+            for index, scene in enumerate(project.scenes, start=1)
+        )
+        brief = (
+            f"# {project.title}\n\n"
+            f"> 来源：羽白工作台 `{project.source_id}` · 更新于 {project.updated_at:%Y-%m-%d %H:%M}\n\n"
+            "## 视频规格\n\n"
+            f"- 平台：{VIDEO_PLATFORMS[project.platform]}\n"
+            f"- 比例：{project.aspect_ratio}\n"
+            f"- 类型：{VIDEO_TYPES[project.video_type]}\n"
+            f"- 目标时长：{project.target_duration} 秒\n"
+            f"- 当前分镜时长：{project.planned_duration} 秒\n"
+            f"- 受众：{project.audience}\n"
+            f"- 风格：{project.tone}\n"
+            f"- 备注：{project.notes or '无'}\n\n"
+            f"## 镜头清单\n\n{scene_sections}\n\n"
+            f"## 来源文章\n\n{source_text.strip()}\n"
+        )
+        _private_write(project.directory / "brief.md", brief)
 
     def update_status(self, project_id: str, status: str) -> VideoProject:
         if status not in VIDEO_STATUSES:
@@ -336,13 +738,16 @@ class VideoProjectRepository:
         project = self.get(project_id)
         if project is None:
             raise KeyError(project_id)
-        return self._write_manifest(
+        updated = self._write_manifest(
             replace(
                 project,
                 status=status,
                 updated_at=datetime.now(SHANGHAI).replace(microsecond=0),
             ),
         )
+        if updated.scenes:
+            self._write_exports(updated)
+        return updated
 
     def resolve_file(self, project_id: str, relative_name: str) -> Path | None:
         project = self.get(project_id)

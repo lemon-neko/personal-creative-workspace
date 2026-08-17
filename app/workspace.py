@@ -22,8 +22,10 @@ from app.content import (
     VALID_STATUSES,
     ContentItem,
     KnowledgeRelation,
+    combine_managed_links,
     load_items,
     parse_item,
+    semantic_revision,
 )
 
 
@@ -39,6 +41,14 @@ STATUS_LABELS = {
     "published": "已成稿",
     "archived": "归档",
 }
+
+
+class ContentConflictError(ValueError):
+    """Raised when another editor changed a note after a form was opened."""
+
+    def __init__(self, current: ContentItem) -> None:
+        super().__init__("内容已在 Obsidian 或其他窗口中修改")
+        self.current = current
 
 
 def locked_content_mutation(function):
@@ -130,7 +140,8 @@ def _derive_summary(body: str, maximum: int = 110) -> str:
 
 
 def _metadata(item: ContentItem) -> dict:
-    data = {
+    data = dict(item.extra_metadata)
+    data.update({
         "id": item.id,
         "title": item.title,
         "created_at": item.created_at.isoformat(),
@@ -139,7 +150,7 @@ def _metadata(item: ContentItem) -> dict:
         "kind": item.kind,
         "summary": item.summary,
         "tags": list(item.tags),
-    }
+    })
     if item.category:
         data["category"] = item.category
     if item.parent_id:
@@ -159,6 +170,8 @@ def _metadata(item: ContentItem) -> dict:
         ]
     if item.knowledge_updated_at:
         data["knowledge_updated_at"] = item.knowledge_updated_at.isoformat()
+    if item.knowledge_source_revision:
+        data["knowledge_source_revision"] = item.knowledge_source_revision
     return data
 
 
@@ -168,7 +181,8 @@ def _write_item(path: Path, item: ContentItem) -> ContentItem:
         allow_unicode=True,
         sort_keys=False,
     ).strip()
-    rendered = f"---\n{front_matter}\n---\n\n{item.body.strip()}\n"
+    body = combine_managed_links(item.body, item.managed_links)
+    rendered = f"---\n{front_matter}\n---\n\n{body}\n"
     with content_lock(_content_root_for(path)):
         atomic_write_text(path, rendered)
     return parse_item(path)
@@ -267,6 +281,7 @@ def update_item(
     title: str = "",
     tags: str | Sequence[str] = "",
     category: str = "",
+    expected_revision: str = "",
     now: datetime | None = None,
 ) -> ContentItem:
     """Update editable fields while preserving stable identity and creation time."""
@@ -274,6 +289,8 @@ def update_item(
     item = load_items(items_directory(content_root)).get(item_id)
     if item is None:
         raise KeyError(item_id)
+    if expected_revision and semantic_revision(item) != expected_revision:
+        raise ContentConflictError(item)
     cleaned_body = _required_text(body, "内容", maximum=50_000)
     cleaned_title = title.strip() or _derive_title(cleaned_body)
     if len(cleaned_title) > 120:
@@ -294,6 +311,46 @@ def update_item(
         body=cleaned_body,
     )
     return _write_item(item.source, updated)
+
+
+@locked_content_mutation
+def reconcile_external_edit(
+    content_root: Path,
+    item_id: str,
+    *,
+    expected_revision: str,
+    now: datetime | None = None,
+) -> ContentItem:
+    """Refresh derived metadata after a stable, valid external edit."""
+
+    item = load_items(items_directory(content_root)).get(item_id)
+    if item is None:
+        raise KeyError(item_id)
+    if semantic_revision(item) != expected_revision:
+        raise ContentConflictError(item)
+    stamp = now or datetime.now(SHANGHAI)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=SHANGHAI)
+    updated = replace(
+        item,
+        summary=_derive_summary(item.body),
+        updated_at=stamp.astimezone(SHANGHAI).replace(microsecond=0),
+    )
+    return _write_item(item.source, updated)
+
+
+@locked_content_mutation
+def set_managed_links(
+    content_root: Path,
+    item_id: str,
+    managed_links: str,
+) -> ContentItem:
+    """Replace a generated Obsidian block without changing authored timestamps."""
+
+    item = load_items(items_directory(content_root)).get(item_id)
+    if item is None:
+        raise KeyError(item_id)
+    return _write_item(item.source, replace(item, managed_links=managed_links.strip()))
 
 
 @locked_content_mutation
@@ -377,6 +434,7 @@ def update_knowledge_metadata(
             microsecond=0,
         ),
     )
+    updated = replace(updated, knowledge_source_revision=semantic_revision(updated))
     return _write_item(item.source, updated)
 
 

@@ -56,14 +56,23 @@ def test_multi_parent_maps_cards_and_provenance(tmp_path: Path) -> None:
 
     store = load_knowledge_store(content)
     graph = layered_graph((source,), store)
+    assert technology.source.name.startswith("技术--")
+    assert card.source.name.startswith("记忆是选择性压缩--")
     assert store.map(memory.id).parent_ids == (technology.id, cognition.id)
     assert store.card(card.id).source_ids == (source.id,)
     assert any(
         edge["source"] == card.id
         and edge["target"] == source.id
         and edge["type"] == "derived_from"
-        for edge in graph["edges"]
+        for edge in graph["source_edges"]
     )
+    assert {node["type"] for node in graph["nodes"]} == {
+        "subject",
+        "topic",
+        "card",
+    }
+    assert not any(edge["type"] == "mentions" for edge in graph["edges"])
+    assert [value["id"] for value in graph["sources"]] == [source.id]
 
 
 def test_map_cycle_and_invalid_card_are_rejected(tmp_path: Path) -> None:

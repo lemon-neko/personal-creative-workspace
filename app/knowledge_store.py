@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import hashlib
+import json
+import re
+from typing import Any
 from uuid import uuid4
 
 import yaml
 
-from app.content import ContentItem, load_items, render_markdown
+from app.atomic import atomic_write_text
+from app.content import (
+    ContentItem,
+    combine_managed_links,
+    load_items,
+    render_markdown,
+    split_managed_links,
+)
 from app.workspace import SHANGHAI
 
 
@@ -17,6 +28,21 @@ CARD_TYPES = {"concept", "claim", "question", "method", "observation"}
 CARD_STATUSES = {"active", "superseded", "archived"}
 MAP_KINDS = {"subject", "topic"}
 EDGE_TYPES = {"related", "extends", "supports", "contrasts"}
+CARD_FIELDS = {
+    "id", "title", "card_type", "status", "created_at", "updated_at",
+    "subjects", "map_ids", "concepts", "source_ids", "relations",
+    "valid_from", "valid_to", "superseded_by",
+}
+MAP_FIELDS = {"id", "title", "kind", "summary", "parent_ids", "created_at", "updated_at"}
+
+
+def _knowledge_filename(title: str, item_id: str) -> str:
+    """Keep stable IDs while making newly created Obsidian nodes readable."""
+
+    readable = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", title.strip())
+    readable = re.sub(r"\s+", " ", readable).strip(" .-")[:72] or "未命名知识"
+    suffix = item_id.rsplit("-", 1)[-1]
+    return f"{readable}--{suffix}.md"
 
 
 @dataclass(frozen=True)
@@ -44,6 +70,8 @@ class KnowledgeCard:
     valid_to: datetime | None = None
     superseded_by: str | None = None
     source: Path = Path()
+    extra_metadata: dict[str, Any] = field(default_factory=dict)
+    managed_links: str = ""
 
     @property
     def html(self) -> str:
@@ -61,6 +89,8 @@ class KnowledgeMap:
     updated_at: datetime
     body: str = ""
     source: Path = Path()
+    extra_metadata: dict[str, Any] = field(default_factory=dict)
+    managed_links: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,6 +106,24 @@ class KnowledgeStore:
         return next((item for item in self.maps if item.id == map_id), None)
 
 
+@dataclass(frozen=True)
+class CoreKnowledgeGraph:
+    """A quiet graph projection: maps and cards first, provenance on demand."""
+
+    nodes: tuple[dict, ...]
+    edges: tuple[dict, ...]
+    sources: tuple[dict, ...]
+    source_edges: tuple[dict, ...]
+
+    def as_dict(self) -> dict[str, list[dict]]:
+        return {
+            "nodes": list(self.nodes),
+            "edges": list(self.edges),
+            "sources": list(self.sources),
+            "source_edges": list(self.source_edges),
+        }
+
+
 def cards_directory(content_root: Path) -> Path:
     return content_root / "knowledge" / "cards"
 
@@ -88,7 +136,7 @@ def indexes_directory(content_root: Path) -> Path:
     return content_root / "knowledge" / "indexes"
 
 
-def _split(text: str) -> tuple[dict, str]:
+def _split(text: str) -> tuple[dict, str, str]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         raise ValueError("缺少 YAML front matter")
@@ -99,7 +147,15 @@ def _split(text: str) -> tuple[dict, str]:
     metadata = yaml.safe_load("\n".join(lines[1:end]))
     if not isinstance(metadata, dict):
         raise ValueError("front matter 必须是键值映射")
-    return metadata, "\n".join(lines[end + 1 :]).strip()
+    body, managed_links = split_managed_links("\n".join(lines[end + 1 :]).strip())
+    return metadata, body, managed_links
+
+
+def _extras(metadata: dict, reserved: set[str]) -> dict[str, Any]:
+    values = {str(key): value for key, value in metadata.items() if key not in reserved}
+    if len(values) > 50 or len(yaml.safe_dump(values, allow_unicode=True).encode()) > 20_000:
+        raise ValueError("Obsidian 自定义属性数量或大小超限")
+    return values
 
 
 def _text(metadata: dict, key: str, maximum: int) -> str:
@@ -154,7 +210,7 @@ def _optional_datetime(metadata: dict, key: str) -> datetime | None:
 
 
 def parse_card(path: Path) -> KnowledgeCard:
-    metadata, body = _split(path.read_text(encoding="utf-8"))
+    metadata, body, managed_links = _split(path.read_text(encoding="utf-8"))
     card_type = metadata.get("card_type")
     status = metadata.get("status")
     if card_type not in CARD_TYPES:
@@ -196,11 +252,13 @@ def parse_card(path: Path) -> KnowledgeCard:
         valid_to=valid_to,
         superseded_by=(str(metadata.get("superseded_by", "")).strip() or None),
         source=path,
+        extra_metadata=_extras(metadata, CARD_FIELDS),
+        managed_links=managed_links,
     )
 
 
 def parse_map(path: Path) -> KnowledgeMap:
-    metadata, body = _split(path.read_text(encoding="utf-8"))
+    metadata, body, managed_links = _split(path.read_text(encoding="utf-8"))
     kind = metadata.get("kind")
     if kind not in MAP_KINDS:
         raise ValueError("知识地图类型无效")
@@ -214,6 +272,8 @@ def parse_map(path: Path) -> KnowledgeMap:
         updated_at=_datetime(metadata.get("updated_at"), "updated_at"),
         body=body,
         source=path,
+        extra_metadata=_extras(metadata, MAP_FIELDS),
+        managed_links=managed_links,
     )
 
 
@@ -288,12 +348,126 @@ def validate_map_graph(maps: tuple[KnowledgeMap, ...]) -> None:
         visit(node, set(), complete)
 
 
-def _write(path: Path, metadata: dict, body: str) -> None:
+def _write(
+    path: Path,
+    metadata: dict,
+    body: str,
+    *,
+    extra_metadata: dict[str, Any] | None = None,
+    managed_links: str = "",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.parent.chmod(0o700)
-    front = yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False).strip()
-    path.write_text(f"---\n{front}\n---\n\n{body.strip()}\n", encoding="utf-8")
-    path.chmod(0o600)
+    values = dict(extra_metadata or {})
+    values.update(metadata)
+    front = yaml.safe_dump(values, allow_unicode=True, sort_keys=False).strip()
+    combined = combine_managed_links(body, managed_links)
+    atomic_write_text(path, f"---\n{front}\n---\n\n{combined}\n")
+
+
+def knowledge_semantic_revision(value: KnowledgeCard | KnowledgeMap) -> str:
+    """Hash authored meaning while ignoring timestamps and generated links."""
+
+    if isinstance(value, KnowledgeCard):
+        payload = {
+            "id": value.id,
+            "title": value.title,
+            "card_type": value.card_type,
+            "status": value.status,
+            "body": value.body,
+            "subjects": value.subjects,
+            "map_ids": value.map_ids,
+            "concepts": value.concepts,
+            "source_ids": value.source_ids,
+            "relations": [
+                (edge.target_id, edge.relation, edge.note) for edge in value.relations
+            ],
+            "valid_from": value.valid_from.isoformat() if value.valid_from else None,
+            "valid_to": value.valid_to.isoformat() if value.valid_to else None,
+            "superseded_by": value.superseded_by,
+            "extra_metadata": value.extra_metadata,
+        }
+    else:
+        payload = {
+            "id": value.id,
+            "title": value.title,
+            "kind": value.kind,
+            "summary": value.summary,
+            "parent_ids": value.parent_ids,
+            "body": value.body,
+            "extra_metadata": value.extra_metadata,
+        }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def reconcile_knowledge_external_edit(
+    content_root: Path,
+    item_id: str,
+    *,
+    expected_revision: str,
+    now: datetime | None = None,
+) -> KnowledgeCard | KnowledgeMap:
+    """Accept one valid Obsidian edit and only refresh its update timestamp."""
+
+    store = load_knowledge_store(content_root)
+    value: KnowledgeCard | KnowledgeMap | None = store.card(item_id) or store.map(item_id)
+    if value is None:
+        raise KeyError(item_id)
+    if knowledge_semantic_revision(value) != expected_revision:
+        raise ValueError("知识文件在扫描期间再次变化，请重新扫描")
+    stamp = (now or datetime.now(SHANGHAI)).astimezone(SHANGHAI).replace(
+        microsecond=0
+    )
+    if isinstance(value, KnowledgeCard):
+        metadata = {
+            "id": value.id,
+            "title": value.title,
+            "card_type": value.card_type,
+            "status": value.status,
+            "created_at": value.created_at.isoformat(),
+            "updated_at": stamp.isoformat(),
+            "subjects": list(value.subjects),
+            "map_ids": list(value.map_ids),
+            "concepts": list(value.concepts),
+            "source_ids": list(value.source_ids),
+            "relations": [
+                {
+                    "target_id": edge.target_id,
+                    "type": edge.relation,
+                    "note": edge.note,
+                }
+                for edge in value.relations
+            ],
+            "valid_from": value.valid_from.isoformat() if value.valid_from else None,
+            "valid_to": value.valid_to.isoformat() if value.valid_to else None,
+            "superseded_by": value.superseded_by,
+        }
+    else:
+        metadata = {
+            "id": value.id,
+            "title": value.title,
+            "kind": value.kind,
+            "summary": value.summary,
+            "parent_ids": list(value.parent_ids),
+            "created_at": value.created_at.isoformat(),
+            "updated_at": stamp.isoformat(),
+        }
+    metadata = {key: item for key, item in metadata.items() if item is not None}
+    _write(
+        value.source,
+        metadata,
+        value.body,
+        extra_metadata=value.extra_metadata,
+        managed_links=value.managed_links,
+    )
+    return parse_card(value.source) if isinstance(value, KnowledgeCard) else parse_map(value.source)
 
 
 def create_knowledge_card(
@@ -349,7 +523,7 @@ def create_knowledge_card(
         raise ValueError("知识卡引用了不存在的关系目标")
     stamp = (now or datetime.now(SHANGHAI)).astimezone(SHANGHAI).replace(microsecond=0)
     card_id = f"card-{stamp:%Y%m%d-%H%M%S}-{uuid4().hex[:6]}"
-    path = cards_directory(content_root) / f"{card_id}.md"
+    path = cards_directory(content_root) / _knowledge_filename(title, card_id)
     _write(
         path,
         {
@@ -394,7 +568,7 @@ def create_knowledge_map(
         raise ValueError("知识地图引用了不存在的父节点")
     stamp = (now or datetime.now(SHANGHAI)).astimezone(SHANGHAI).replace(microsecond=0)
     map_id = f"map-{uuid4().hex[:10]}"
-    path = maps_directory(content_root) / f"{map_id}.md"
+    path = maps_directory(content_root) / _knowledge_filename(title, map_id)
     candidate = KnowledgeMap(
         id=map_id,
         title=title.strip()[:160],
@@ -468,70 +642,101 @@ def supersede_knowledge_card(
         "valid_to": stamp.isoformat(),
         "superseded_by": replacement.id,
     }
-    _write(card.source, metadata, card.body)
+    _write(
+        card.source,
+        metadata,
+        card.body,
+        extra_metadata=card.extra_metadata,
+        managed_links=card.managed_links,
+    )
     return parse_card(card.source)
 
 
-def layered_graph(
+def core_knowledge_graph(
     sources: tuple[ContentItem, ...],
     store: KnowledgeStore,
-) -> dict[str, list[dict]]:
-    source_ids = {item.id for item in sources}
-    card_ids = {card.id for card in store.cards}
-    map_ids = {item.id for item in store.maps}
+) -> CoreKnowledgeGraph:
+    """Project the canonical hierarchy without legacy concept/source noise."""
+
+    source_lookup = {
+        item.id: item
+        for item in sources
+        if item.kind != "weekly-review" and item.status != "archived"
+    }
+    map_lookup = {item.id: item for item in store.maps}
+    visible_cards = tuple(card for card in store.cards if card.status != "archived")
+    card_ids = {card.id for card in visible_cards}
     nodes: list[dict] = []
     edges: list[dict] = []
-    concepts: set[str] = set()
-    for source in sources:
+
+    subject_cache: dict[str, tuple[str, ...]] = {}
+
+    def subject_ids(map_id: str, active: set[str] | None = None) -> tuple[str, ...]:
+        if map_id in subject_cache:
+            return subject_cache[map_id]
+        item = map_lookup.get(map_id)
+        if item is None:
+            return ()
+        if item.kind == "subject":
+            subject_cache[map_id] = (item.id,)
+            return (item.id,)
+        path = set(active or ())
+        if map_id in path:
+            return ()
+        path.add(map_id)
+        result = tuple(
+            sorted(
+                {
+                    subject
+                    for parent in item.parent_ids
+                    for subject in subject_ids(parent, path)
+                },
+            ),
+        )
+        subject_cache[map_id] = result
+        return result
+
+    for item in store.maps:
+        subjects = subject_ids(item.id)
         nodes.append(
             {
-                "id": source.id,
-                "label": source.title,
-                "type": "source",
-                "kind": source.kind,
-                "status": source.status,
-                "subjects": list(source.subjects),
-                "summary": source.summary,
-                "href": f"/ideas/{source.id}",
+                "id": item.id,
+                "label": item.title,
+                "type": item.kind,
+                "status": "active",
+                "subjects": [map_lookup[value].title for value in subjects],
+                "cluster": subjects[0] if subjects else item.id,
+                "summary": item.summary,
+                "href": f"/knowledge/maps/{item.id}",
             },
         )
-        if source.parent_id and source.parent_id in source_ids:
-            edges.append(
-                {
-                    "source": source.id,
-                    "target": source.parent_id,
-                    "type": "derived_from",
-                }
-            )
         edges.extend(
             {
-                "source": source.id,
-                "target": edge.target_id,
-                "type": edge.relation,
-                "note": edge.note,
+                "source": item.id,
+                "target": parent,
+                "type": "child_of",
             }
-            for edge in source.relations
-            if edge.target_id in source_ids
-        )
-        for concept in source.concepts:
-            concepts.add(concept)
-            edges.append(
-                {
-                    "source": source.id,
-                    "target": f"concept:{concept}",
-                    "type": "mentions",
-                }
-            )
-    for item in store.maps:
-        nodes.append(
-            {"id": item.id, "label": item.title, "type": item.kind, "summary": item.summary, "href": f"/knowledge/maps/{item.id}"},
-        )
-        edges.extend(
-            {"source": item.id, "target": parent, "type": "child_of"}
             for parent in item.parent_ids
-            if parent in map_ids
+            if parent in map_lookup
         )
-    for card in store.cards:
+
+    referenced_sources: set[str] = set()
+    source_edges: list[dict] = []
+    for card in visible_cards:
+        mapped_subjects = {
+            map_lookup[value].title
+            for map_id in card.map_ids
+            for value in subject_ids(map_id)
+            if value in map_lookup
+        }
+        subjects = sorted(mapped_subjects or set(card.subjects))
+        cluster_ids = sorted(
+            {
+                value
+                for map_id in card.map_ids
+                for value in subject_ids(map_id)
+            },
+        )
         nodes.append(
             {
                 "id": card.id,
@@ -539,36 +744,82 @@ def layered_graph(
                 "type": "card",
                 "kind": card.card_type,
                 "status": card.status,
-                "subjects": list(card.subjects),
+                "subjects": subjects,
+                "concepts": list(card.concepts),
+                "cluster": cluster_ids[0] if cluster_ids else "unmapped",
                 "summary": card.body[:160],
                 "href": f"/knowledge/cards/{card.id}",
+                "source_count": sum(
+                    source_id in source_lookup for source_id in card.source_ids
+                ),
             },
         )
         edges.extend(
-            {"source": card.id, "target": source, "type": "derived_from"}
-            for source in card.source_ids
-            if source in source_ids
-        )
-        edges.extend(
-            {"source": card.id, "target": map_id, "type": "belongs_to"}
+            {
+                "source": card.id,
+                "target": map_id,
+                "type": "belongs_to",
+            }
             for map_id in card.map_ids
-            if map_id in map_ids
+            if map_id in map_lookup
         )
-        for concept in card.concepts:
-            concept_id = f"concept:{concept}"
-            concepts.add(concept)
-            edges.append({"source": card.id, "target": concept_id, "type": "mentions"})
         edges.extend(
-            {"source": card.id, "target": edge.target_id, "type": edge.relation, "note": edge.note}
+            {
+                "source": card.id,
+                "target": edge.target_id,
+                "type": edge.relation,
+                "note": edge.note,
+            }
             for edge in card.relations
-            if edge.target_id in source_ids | card_ids | map_ids
+            if edge.target_id in card_ids or edge.target_id in map_lookup
         )
         if card.superseded_by and card.superseded_by in card_ids:
             edges.append(
-                {"source": card.id, "target": card.superseded_by, "type": "superseded_by"},
+                {
+                    "source": card.id,
+                    "target": card.superseded_by,
+                    "type": "superseded_by",
+                },
             )
-    nodes.extend(
-        {"id": f"concept:{concept}", "label": concept, "type": "concept"}
-        for concept in sorted(concepts)
+        for source_id in card.source_ids:
+            if source_id not in source_lookup:
+                continue
+            referenced_sources.add(source_id)
+            source_edges.append(
+                {
+                    "source": card.id,
+                    "target": source_id,
+                    "type": "derived_from",
+                },
+            )
+
+    deferred_sources = tuple(
+        {
+            "id": item.id,
+            "label": item.title,
+            "type": "source",
+            "kind": item.kind,
+            "status": item.status,
+            "summary": item.summary,
+            "href": f"/ideas/{item.id}",
+        }
+        for item in sorted(
+            (source_lookup[value] for value in referenced_sources),
+            key=lambda value: (value.title, value.id),
+        )
     )
-    return {"nodes": nodes, "edges": edges}
+    return CoreKnowledgeGraph(
+        tuple(nodes),
+        tuple(edges),
+        deferred_sources,
+        tuple(source_edges),
+    )
+
+
+def layered_graph(
+    sources: tuple[ContentItem, ...],
+    store: KnowledgeStore,
+) -> dict[str, list[dict]]:
+    """Backward-compatible name for callers migrating to the core projection."""
+
+    return core_knowledge_graph(sources, store).as_dict()

@@ -14,6 +14,7 @@ from typing import Optional
 from urllib.parse import urlencode, urlparse
 
 import httpx
+import yaml
 from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -34,14 +35,18 @@ from app.career import (
     RESUME_STATUSES,
     CareerRepository,
 )
-from app.content import ContentCollection, ContentItem, load_items, render_markdown
+from app.content import (
+    ContentCollection,
+    ContentItem,
+    load_items,
+    render_markdown,
+    semantic_revision,
+)
 from app.knowledge import (
     DEFAULT_SUBJECTS,
-    build_knowledge_graph,
     clear_pending_suggestions,
     eligible_items,
     format_relation_lines,
-    load_knowledge_index,
     load_pending_suggestions,
     parse_relation_lines,
     rebuild_knowledge_index,
@@ -50,6 +55,7 @@ from app.knowledge import (
     validate_suggestions,
 )
 from app.knowledge_store import (
+    KnowledgeCard,
     KnowledgeEdge,
     create_knowledge_card,
     create_knowledge_map,
@@ -72,6 +78,7 @@ from app.model_gateway import (
     ModelTaskStore,
 )
 from app.mobile import MobileStore
+from app.obsidian import ObsidianBridge, obsidian_uri
 from app.publishing import (
     PublishingSource,
     WECHAT_RENDERER,
@@ -87,9 +94,13 @@ from app.privacy import (
 from app.search import SearchRepository
 from app.vault import apply_vault_migration, plan_vault_migration
 from app.video import (
+    VIDEO_ASPECT_RATIOS,
+    VIDEO_PLATFORMS,
     VIDEO_STATUS_LABELS,
     VIDEO_STATUSES,
+    VIDEO_TYPES,
     VideoProjectRepository,
+    VideoScene,
     inspect_opencut,
 )
 from app.workspace import (
@@ -97,6 +108,7 @@ from app.workspace import (
     SHANGHAI,
     STATUS_LABELS,
     WEEKDAYS,
+    ContentConflictError,
     create_item,
     current_week_items,
     items_directory,
@@ -122,6 +134,8 @@ TEMPLATES.env.globals.update(
     kind_labels=KIND_LABELS,
     status_labels=STATUS_LABELS,
     video_status_labels=VIDEO_STATUS_LABELS,
+    video_platform_labels=VIDEO_PLATFORMS,
+    video_type_labels=VIDEO_TYPES,
     csrf_token=csrf_token,
 )
 
@@ -165,15 +179,66 @@ def _return_path_id(return_url: str, prefix: str) -> str | None:
     return value if value and Path(value).name == value else None
 
 
-def _item_context(item: ContentItem) -> dict:
-    return {
+def _item_context(item: ContentItem, content_root: Path | None = None) -> dict:
+    context = {
         "item": item,
-        "item_html": render_markdown(item.body),
+        "item_html": render_markdown(
+            item.body,
+            source=item.source,
+            content_root=content_root,
+        ),
         "tags_value": "，".join(item.tags),
         "subjects_value": "，".join(item.subjects),
         "concepts_value": "，".join(item.concepts),
         "relations_value": format_relation_lines(item.relations),
+        "source_revision": semantic_revision(item),
+        "obsidian_url": obsidian_uri(item.source),
     }
+    if content_root is not None:
+        store = load_knowledge_store(content_root)
+        context["derived_cards"] = tuple(
+            card for card in store.cards if item.id in card.source_ids
+        )
+        context["has_legacy_knowledge"] = bool(
+            item.subjects or item.concepts or item.relations
+        )
+    return context
+
+
+def _obsidian_context(
+    request: Request,
+    *,
+    state=None,
+    notice: str = "",
+    error: str = "",
+) -> dict:
+    bridge: ObsidianBridge = request.app.state.obsidian
+    store = load_knowledge_store(request.app.state.content_root)
+    collection = _collection(request)
+    return {
+        "active_page": "settings",
+        "state": state or bridge.state(),
+        "inbox": bridge.inbox(),
+        "knowledge_inbox": bridge.knowledge_inbox(),
+        "knowledge_maps": store.maps,
+        "knowledge_sources": eligible_items(collection),
+        "migration": bridge.migration_preview(),
+        "vault_url": obsidian_uri(request.app.state.content_root),
+        "knowledge_home_url": obsidian_uri(
+            request.app.state.content_root / "知识首页.md"
+        ),
+        "notice": notice,
+        "error": error,
+    }
+
+
+def _refresh_obsidian_links(request: Request) -> None:
+    """Best-effort refresh of derived links; authored writes remain authoritative."""
+
+    try:
+        request.app.state.obsidian.rebuild_links()
+    except (OSError, TypeError, UnicodeError, ValueError):
+        return
 
 
 def _knowledge_context(
@@ -184,41 +249,39 @@ def _knowledge_context(
 ) -> dict:
     collection = _collection(request)
     items = eligible_items(collection)
-    pending = load_pending_suggestions(request.app.state.content_root, items)
-    item_map = {item.id: item for item in items}
-    index = load_knowledge_index(request.app.state.content_root, items)
     notices = {
-        "analyzed": "分析完成。请调整建议后再批量确认，原始内容尚未修改。",
-        "confirmed": "知识元数据已确认，知识索引和星图已更新。",
-        "confirmed-fallback": "知识元数据已确认；模型摘要不可用，已使用规则汇总。",
+        "card": "知识卡已保存，原始来源没有被覆盖。",
+        "map": "知识地图已保存。",
         "up-to-date": "当前没有需要重新分析的内容。",
     }
-    analyzer = getattr(request.app.state.llm_client, "analyze_knowledge", None)
     store = load_knowledge_store(request.app.state.content_root)
+    subject_maps = tuple(item for item in store.maps if item.kind == "subject")
+    topic_maps = tuple(item for item in store.maps if item.kind == "topic")
+    card_source_ids = {
+        source_id
+        for card in store.cards
+        if card.status != "archived"
+        for source_id in card.source_ids
+    }
+    pending_sources = tuple(
+        item
+        for item in items
+        if item.id not in card_source_ids and item.kind != "weekly-review"
+    )
+    graph = layered_graph(items, store)
     return {
         "active_page": "knowledge",
         "knowledge_items": items,
-        "knowledge_item_map": item_map,
-        "stale_items": stale_items(collection),
-        "unclassified_items": tuple(item for item in items if not item.subjects),
-        "knowledge_index": index,
-        "knowledge_graph": build_knowledge_graph(items).as_dict(),
-        "layered_graph": layered_graph(items, store),
+        "pending_sources": pending_sources,
+        "core_graph": graph,
         "knowledge_cards": store.cards,
         "knowledge_maps": store.maps,
+        "subject_maps": subject_maps,
+        "topic_maps": topic_maps,
+        "recent_cards": tuple(
+            card for card in store.cards if card.status == "active"
+        )[:6],
         "knowledge_store_diagnostics": store.diagnostics,
-        "pending_suggestions": tuple(
-            {
-                "suggestion": suggestion,
-                "item": item_map.get(suggestion.item_id),
-                "relations_value": format_relation_lines(suggestion.relations),
-            }
-            for suggestion in pending
-            if suggestion.item_id in item_map
-        ),
-        "default_subjects": DEFAULT_SUBJECTS,
-        "knowledge_ai_enabled": request.app.state.llm_client.enabled
-        and callable(analyzer),
         "notice": notices.get(saved or ""),
         "error": error,
     }
@@ -300,8 +363,9 @@ def _video_context(
     collection = _collection(request)
     projects = request.app.state.video.projects()
     notices = {
-        "created": "视频交接包已生成。原文章没有被修改，配图副本已放进私有项目目录。",
+        "created": "视频策划项目已生成。原文章没有被修改，初始分镜和私有交接文件已经就位。",
         "status": "视频项目状态已更新。",
+        "plan": "视频规格与分镜已保存，旁白、字幕、Remotion Props 和 OpenCut 交接文件已重新生成。",
     }
     return {
         "active_page": "video",
@@ -316,6 +380,9 @@ def _video_context(
             for status in VIDEO_STATUSES
         },
         "opencut": inspect_opencut(REPO_ROOT.parent / "OpenCut"),
+        "video_platforms": VIDEO_PLATFORMS,
+        "video_aspect_ratios": tuple(sorted(VIDEO_ASPECT_RATIOS)),
+        "video_types": VIDEO_TYPES,
         "notice": notices.get(saved or ""),
         "error": error,
     }
@@ -601,6 +668,10 @@ def create_app(
     )
     workspace_app.state.search = SearchRepository(resolved_data_root)
     workspace_app.state.mobile_store = MobileStore(resolved_data_root)
+    workspace_app.state.obsidian = ObsidianBridge(
+        resolved_data_root,
+        workspace_app.state.content_root,
+    )
     workspace_app.state.career.seed_agent_reliability_campaign(
         str(REPO_ROOT.parent / "agent-reliability-arena"),
     )
@@ -675,6 +746,7 @@ def create_app(
                 tags=tags,
                 category=category,
             )
+            _refresh_obsidian_links(request)
         except ValueError as error:
             return TEMPLATES.TemplateResponse(
                 request=request,
@@ -787,7 +859,7 @@ def create_app(
                     for candidate in eligible_items(collection)
                     if candidate.id != item.id
                 ),
-                **_item_context(item),
+                **_item_context(item, request.app.state.content_root),
             },
         )
 
@@ -799,6 +871,7 @@ def create_app(
         title: str = Form(default=""),
         tags: str = Form(default=""),
         category: str = Form(default=""),
+        source_revision: str = Form(default=""),
     ) -> HTMLResponse:
         try:
             item = update_item(
@@ -808,6 +881,31 @@ def create_app(
                 title=title,
                 tags=tags,
                 category=category,
+                expected_revision=source_revision,
+            )
+        except ContentConflictError as error:
+            current = error.current
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="idea_conflict.html",
+                context={
+                    "active_page": "ideas",
+                    "item": current,
+                    "current_html": render_markdown(
+                        current.body,
+                        source=current.source,
+                        content_root=request.app.state.content_root,
+                    ),
+                    "submitted": {
+                        "title": title,
+                        "body": body,
+                        "tags": tags,
+                        "category": category,
+                    },
+                    "submitted_html": render_markdown(body),
+                    "obsidian_url": obsidian_uri(current.source),
+                },
+                status_code=409,
             )
         except KeyError:
             return _not_found(request, "ideas")
@@ -820,7 +918,7 @@ def create_app(
                 name="idea_detail.html",
                 context={
                     "active_page": "ideas",
-                    **_item_context(current),
+                    **_item_context(current, request.app.state.content_root),
                     "error": str(error),
                 },
                 status_code=422,
@@ -847,48 +945,18 @@ def create_app(
         item = collection.get(item_id)
         if item is None or item.kind == "weekly-review" or item.status == "archived":
             return _not_found(request, "ideas")
-        active_items = eligible_items(collection)
-        try:
-            parsed_relations = parse_relation_lines(
-                relations,
-                item_id=item.id,
-                known_ids={candidate.id for candidate in active_items},
-            )
-            updated = update_knowledge_metadata(
-                request.app.state.content_root,
-                item.id,
-                subjects=subjects,
-                concepts=concepts,
-                relations=parsed_relations,
-            )
-            refreshed = eligible_items(_collection(request))
-            rebuild_knowledge_index(request.app.state.content_root, refreshed)
-        except ValueError as error:
-            return TEMPLATES.TemplateResponse(
-                request=request,
-                name="idea_detail.html",
-                context={
-                    "active_page": "ideas",
-                    "knowledge_candidates": tuple(
-                        candidate
-                        for candidate in active_items
-                        if candidate.id != item.id
-                    ),
-                    **_item_context(item),
-                    "knowledge_error": str(error),
-                    "knowledge_form": {
-                        "subjects": subjects,
-                        "concepts": concepts,
-                        "relations": relations,
-                    },
-                },
-                status_code=422,
-            )
-        return RedirectResponse(
-            request.url_for("idea_detail", item_id=updated.id).include_query_params(
-                saved="knowledge",
-            ),
-            status_code=303,
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="idea_detail.html",
+            context={
+                "active_page": "ideas",
+                **_item_context(item, request.app.state.content_root),
+                "error": (
+                    "原始想法的旧版知识字段已停止写入。请在 Obsidian 中创建"
+                    "知识卡，并把这条想法选为来源。"
+                ),
+            },
+            status_code=410,
         )
 
     @workspace_app.post("/ideas/{item_id}/status", name="change_idea_status")
@@ -902,6 +970,7 @@ def create_app(
     ) -> HTMLResponse:
         try:
             item = set_item_status(request.app.state.content_root, item_id, status)
+            _refresh_obsidian_links(request)
         except KeyError:
             return _not_found(request, "ideas")
         except ValueError:
@@ -964,6 +1033,18 @@ def create_app(
         request: Request,
         outbound_text: str = Form(default=""),
     ) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="knowledge.html",
+            context=_knowledge_context(
+                request,
+                error=(
+                    "旧版学科元数据分析已经停用。请使用“人工拆卡任务”或"
+                    "Obsidian 知识卡模板，候选结果会写入正式知识卡。"
+                ),
+            ),
+            status_code=410,
+        )
         collection = _collection(request)
         pending_items = stale_items(collection)
         if not pending_items:
@@ -1058,7 +1139,18 @@ def create_app(
     )
     async def manual_analyze_knowledge(request: Request) -> HTMLResponse:
         collection = _collection(request)
-        pending_items = stale_items(collection)
+        store = load_knowledge_store(request.app.state.content_root)
+        covered = {
+            source_id
+            for card in store.cards
+            if card.status != "archived"
+            for source_id in card.source_ids
+        }
+        pending_items = tuple(
+            item
+            for item in eligible_items(collection)
+            if item.kind != "weekly-review" and item.id not in covered
+        )
         if not pending_items:
             return RedirectResponse(
                 request.url_for("knowledge").include_query_params(saved="up-to-date"),
@@ -1106,6 +1198,15 @@ def create_app(
 
     @workspace_app.post("/knowledge/confirm", name="confirm_knowledge")
     async def confirm_knowledge(request: Request) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="knowledge.html",
+            context=_knowledge_context(
+                request,
+                error="旧版来源元数据确认已经停用，原始想法不会再承担正式知识结构。",
+            ),
+            status_code=410,
+        )
         form = await request.form()
         selected_ids = {str(value) for value in form.getlist("selected")}
         collection = _collection(request)
@@ -1590,12 +1691,27 @@ def create_app(
         request: Request,
         source_id: str = Form(...),
         notes: str = Form(default=""),
+        platform: str = Form(default="general"),
+        aspect_ratio: str = Form(default="16:9"),
+        target_duration: int = Form(default=90),
+        video_type: str = Form(default="knowledge-explainer"),
+        audience: str = Form(default="对主题感兴趣的普通读者"),
+        tone: str = Form(default="清晰、克制、保留个人观察"),
     ) -> HTMLResponse:
         source = _collection(request).get(source_id)
         if source is None:
             return _not_found(request, "video")
         try:
-            request.app.state.video.create(source, notes=notes)
+            request.app.state.video.create(
+                source,
+                notes=notes,
+                platform=platform,
+                aspect_ratio=aspect_ratio,
+                target_duration=target_duration,
+                video_type=video_type,
+                audience=audience,
+                tone=tone,
+            )
         except ValueError as error:
             return TEMPLATES.TemplateResponse(
                 request=request,
@@ -1605,6 +1721,81 @@ def create_app(
             )
         return RedirectResponse(
             request.url_for("video_studio").include_query_params(saved="created"),
+            status_code=303,
+        )
+
+    @workspace_app.post(
+        "/video/projects/{project_id}/plan",
+        name="update_video_project_plan",
+    )
+    async def update_video_project_plan(
+        request: Request,
+        project_id: str,
+        platform: str = Form(...),
+        aspect_ratio: str = Form(...),
+        target_duration: int = Form(...),
+        video_type: str = Form(...),
+        audience: str = Form(...),
+        tone: str = Form(...),
+        notes: str = Form(default=""),
+        scene_duration: list[int] = Form(...),
+        scene_narration: list[str] = Form(...),
+        scene_visual: list[str] = Form(...),
+        scene_caption: list[str] = Form(...),
+        scene_assets: list[str] = Form(default=[]),
+    ) -> HTMLResponse:
+        lengths = {
+            len(scene_duration),
+            len(scene_narration),
+            len(scene_visual),
+            len(scene_caption),
+        }
+        if len(lengths) != 1 or not scene_duration:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="video.html",
+                context=_video_context(request, error="分镜表单结构无效，请刷新页面后重试"),
+                status_code=422,
+            )
+        padded_assets = scene_assets + [""] * (len(scene_duration) - len(scene_assets))
+        scenes = tuple(
+            VideoScene(
+                id=f"scene-{index + 1:02d}",
+                duration_seconds=duration,
+                narration=scene_narration[index],
+                visual=scene_visual[index],
+                caption=scene_caption[index],
+                assets=tuple(
+                    value.strip()
+                    for value in padded_assets[index].replace("，", ",").split(",")
+                    if value.strip()
+                ),
+            )
+            for index, duration in enumerate(scene_duration)
+        )
+        try:
+            request.app.state.video.update_plan(
+                project_id,
+                platform=platform,
+                aspect_ratio=aspect_ratio,
+                target_duration=target_duration,
+                video_type=video_type,
+                audience=audience,
+                tone=tone,
+                notes=notes,
+                scenes=scenes,
+            )
+        except KeyError:
+            return _not_found(request, "video")
+        except ValueError as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="video.html",
+                context=_video_context(request, error=str(error)),
+                status_code=422,
+            )
+        return RedirectResponse(
+            request.url_for("video_studio").include_query_params(saved="plan"),
             status_code=303,
         )
 
@@ -2930,6 +3121,12 @@ def create_app(
             context={
                 "active_page": "knowledge",
                 "card": card,
+                "card_html": render_markdown(
+                    card.body,
+                    source=card.source,
+                    content_root=request.app.state.content_root,
+                ),
+                "obsidian_url": obsidian_uri(card.source),
                 "sources": tuple(source_map[value] for value in card.source_ids if value in source_map),
                 "maps": tuple(map_lookup[value] for value in card.map_ids if value in map_lookup),
                 "replacement": store.card(card.superseded_by or ""),
@@ -2956,6 +3153,7 @@ def create_app(
                 card_id,
                 replacement_id,
             )
+            _refresh_obsidian_links(request)
         except ValueError:
             return _not_found(request, "knowledge")
         return RedirectResponse(
@@ -2977,6 +3175,12 @@ def create_app(
             context={
                 "active_page": "knowledge",
                 "knowledge_map": item,
+                "map_html": render_markdown(
+                    item.body,
+                    source=item.source,
+                    content_root=request.app.state.content_root,
+                ),
+                "obsidian_url": obsidian_uri(item.source),
                 "parents": tuple(lookup[value] for value in item.parent_ids if value in lookup),
                 "children": tuple(value for value in store.maps if item.id in value.parent_ids),
                 "cards": tuple(card for card in store.cards if item.id in card.map_ids),
@@ -3001,6 +3205,7 @@ def create_app(
                 parent_ids=tuple(parent_ids),
                 body=body,
             )
+            _refresh_obsidian_links(request)
         except ValueError as error:
             return TEMPLATES.TemplateResponse(
                 request=request,
@@ -3037,6 +3242,7 @@ def create_app(
                 map_ids=tuple(map_ids),
                 concepts=tuple(_comma_values(concepts)),
             )
+            _refresh_obsidian_links(request)
         except ValueError as error:
             return TEMPLATES.TemplateResponse(
                 request=request,
@@ -3351,6 +3557,251 @@ def create_app(
                 ).hostname
                 in {"localhost", "127.0.0.1", "::1"},
             },
+        )
+
+    @workspace_app.get(
+        "/settings/obsidian",
+        response_class=HTMLResponse,
+        name="obsidian_settings",
+    )
+    async def obsidian_settings(request: Request) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="obsidian_settings.html",
+            context=_obsidian_context(request),
+        )
+
+    @workspace_app.post(
+        "/settings/obsidian/templates",
+        name="initialize_obsidian_templates",
+    )
+    async def initialize_obsidian_templates(request: Request) -> HTMLResponse:
+        bridge: ObsidianBridge = request.app.state.obsidian
+        try:
+            changed = bridge.initialize_templates()
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(
+                    request,
+                    notice=f"知识模板已就位，更新 {changed} 个模板文件。",
+                ),
+            )
+        except OSError as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(request, error=str(error)),
+                status_code=422,
+            )
+
+    @workspace_app.post("/settings/obsidian/scan", name="scan_obsidian")
+    async def scan_obsidian(request: Request) -> HTMLResponse:
+        bridge: ObsidianBridge = request.app.state.obsidian
+        try:
+            state = bridge.scan()
+            notice = (
+                f"扫描完成，协调了 {state.external_changes} 个外部修改。"
+                if state.external_changes
+                else "扫描完成，未发现需要协调的外部修改。"
+            )
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(request, state=state, notice=notice),
+            )
+        except (OSError, ValueError) as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(request, error=str(error)),
+                status_code=422,
+            )
+
+    @workspace_app.post(
+        "/settings/obsidian/rebuild-links",
+        name="rebuild_obsidian_links",
+    )
+    async def rebuild_obsidian_links(request: Request) -> HTMLResponse:
+        bridge: ObsidianBridge = request.app.state.obsidian
+        try:
+            changed = bridge.rebuild_links()
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(
+                    request,
+                    notice=f"已重建原生关系链接，更新 {changed} 个文件。",
+                ),
+            )
+        except (OSError, TypeError, UnicodeError, ValueError) as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(request, error=str(error)),
+                status_code=422,
+            )
+
+    @workspace_app.post(
+        "/settings/obsidian/knowledge-inbox/{draft_id}/import",
+        name="import_obsidian_knowledge_inbox",
+    )
+    async def import_obsidian_knowledge_inbox(
+        request: Request,
+        draft_id: str,
+        expected_revision: str = Form(...),
+        title: str = Form(default=""),
+        summary: str = Form(default=""),
+        subjects: str = Form(default=""),
+        concepts: str = Form(default=""),
+        source_ids: list[str] = Form(default=[]),
+        map_ids: list[str] = Form(default=[]),
+        parent_ids: list[str] = Form(default=[]),
+    ) -> HTMLResponse:
+        bridge: ObsidianBridge = request.app.state.obsidian
+        try:
+            value = bridge.import_knowledge_inbox(
+                draft_id,
+                expected_revision=expected_revision,
+                title=title,
+                summary=summary,
+                subjects=tuple(_comma_values(subjects)),
+                concepts=tuple(_comma_values(concepts)),
+                source_ids=tuple(source_ids),
+                map_ids=tuple(map_ids),
+                parent_ids=tuple(parent_ids),
+            )
+            bridge.rebuild_links()
+            bridge.scan()
+        except (OSError, TypeError, UnicodeError, ValueError, yaml.YAMLError) as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(request, error=str(error)),
+                status_code=422,
+            )
+        endpoint = "knowledge_card" if isinstance(value, KnowledgeCard) else "knowledge_map"
+        parameter = {"card_id": value.id} if isinstance(value, KnowledgeCard) else {"map_id": value.id}
+        return RedirectResponse(request.url_for(endpoint, **parameter), status_code=303)
+
+    @workspace_app.post(
+        "/settings/obsidian/migration/apply",
+        name="apply_obsidian_migration",
+    )
+    async def apply_obsidian_migration(
+        request: Request,
+        confirmation: str = Form(...),
+    ) -> HTMLResponse:
+        bridge: ObsidianBridge = request.app.state.obsidian
+        try:
+            snapshot = bridge.apply_migration(confirmation)
+            bridge.rebuild_links()
+            state = bridge.scan()
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(
+                    request,
+                    state=state,
+                    notice=f"知识结构已整理；回滚快照保存在 {snapshot.name}。",
+                ),
+            )
+        except (OSError, TypeError, UnicodeError, ValueError, yaml.YAMLError) as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(request, error=str(error)),
+                status_code=422,
+            )
+
+    @workspace_app.post(
+        "/settings/obsidian/migration/rollback",
+        name="rollback_obsidian_migration",
+    )
+    async def rollback_obsidian_migration(
+        request: Request,
+        confirmation: str = Form(...),
+    ) -> HTMLResponse:
+        bridge: ObsidianBridge = request.app.state.obsidian
+        try:
+            snapshot = bridge.rollback_latest_migration(confirmation)
+            state = bridge.scan()
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(
+                    request,
+                    state=state,
+                    notice=f"已恢复到 {snapshot.name} 整理前的版本。",
+                ),
+            )
+        except (OSError, ValueError) as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(request, error=str(error)),
+                status_code=422,
+            )
+
+    @workspace_app.post(
+        "/settings/obsidian/permissions",
+        name="repair_obsidian_permissions",
+    )
+    async def repair_obsidian_permissions(request: Request) -> HTMLResponse:
+        bridge: ObsidianBridge = request.app.state.obsidian
+        try:
+            changed = bridge.repair_permissions()
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(
+                    request,
+                    notice=f"权限检查完成，修复 {changed} 个路径。",
+                ),
+            )
+        except OSError as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(request, error=str(error)),
+                status_code=422,
+            )
+
+    @workspace_app.post(
+        "/settings/obsidian/inbox/{draft_id}/import",
+        name="import_obsidian_inbox",
+    )
+    async def import_obsidian_inbox(
+        request: Request,
+        draft_id: str,
+        expected_revision: str = Form(...),
+        title: str = Form(default=""),
+        tags: str = Form(default=""),
+        category: str = Form(default=""),
+    ) -> HTMLResponse:
+        bridge: ObsidianBridge = request.app.state.obsidian
+        try:
+            item = bridge.import_inbox(
+                draft_id,
+                expected_revision=expected_revision,
+                title=title,
+                tags=tags,
+                category=category,
+            )
+            bridge.rebuild_links()
+            bridge.scan()
+        except (OSError, TypeError, UnicodeError, ValueError, yaml.YAMLError) as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="obsidian_settings.html",
+                context=_obsidian_context(request, error=str(error)),
+                status_code=422,
+            )
+        return RedirectResponse(
+            request.url_for("idea_detail", item_id=item.id).include_query_params(
+                saved="imported",
+            ),
+            status_code=303,
         )
 
     @workspace_app.get(

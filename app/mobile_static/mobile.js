@@ -155,17 +155,29 @@
   document.addEventListener("DOMContentLoaded", async () => {
     updateNetwork();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/service-worker.js");
-    document.querySelector("#capture-form")?.addEventListener("submit", queueForm);
+    const captureForm = document.querySelector("#capture-form");
+    captureForm?.addEventListener("submit", queueForm);
     document.querySelector("#sync-now")?.addEventListener("click", syncQueue);
     document.querySelector("#refresh-recent")?.addEventListener("click", loadRecent);
     document.querySelector("#revoke-session")?.addEventListener("click", revoke);
     document.querySelector('input[name="images"]')?.addEventListener("change", event => {
       const files = [...event.target.files]; document.querySelector("#image-summary").textContent = files.length ? `已选择 ${files.length} 张，共 ${(files.reduce((s,f)=>s+f.size,0)/1024/1024).toFixed(1)} MB` : "";
     });
-    await updateQueueCount();
-    if (document.querySelector("#capture-form")) { try { await session(); } catch (error) { message(error.message); } await syncQueue(); await loadRecent(); }
+    if (captureForm) {
+      await updateQueueCount();
+      try { await session(); } catch (error) { message(error.message); }
+      await syncQueue();
+      await loadRecent();
+    }
   });
-  window.addEventListener("online", () => { updateNetwork(); syncQueue(); });
+  window.addEventListener("online", () => {
+    updateNetwork();
+    if (document.querySelector("#capture-form")) syncQueue();
+  });
   window.addEventListener("offline", updateNetwork);
-  navigator.serviceWorker?.addEventListener("message", event => { if (event.data?.type === "SYNC_COMPLETE") { updateQueueCount(); loadRecent(); message("后台同步已完成。"); } });
+  navigator.serviceWorker?.addEventListener("message", event => {
+    if (event.data?.type === "SYNC_COMPLETE" && document.querySelector("#capture-form")) {
+      updateQueueCount(); loadRecent(); message("后台同步已完成。");
+    }
+  });
 })();

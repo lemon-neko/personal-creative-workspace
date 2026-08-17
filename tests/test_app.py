@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi.testclient import TestClient
 
-from app.content import KnowledgeRelation, load_items
-from app.knowledge import KnowledgeSuggestion
+from app.content import load_items
 from app.llm import PolishResult
+from app.knowledge_store import create_knowledge_card, create_knowledge_map
 from app.main import REPO_ROOT, create_app
 from app.workspace import create_item, items_directory, set_item_status
 
@@ -33,30 +33,6 @@ class FakeStyleClient:
         return "## 本周概览\n\nAI 看见了一条反复出现的线索。"
 
 
-class FakeKnowledgeClient(FakeStyleClient):
-    def analyze_knowledge(self, items, catalog, subjects):
-        relation = (
-            (KnowledgeRelation(catalog[1].id, "related", "讨论了同一问题"),)
-            if len(catalog) > 1
-            else ()
-        )
-        return tuple(
-            KnowledgeSuggestion(
-                item.id,
-                ("技术", "哲学"),
-                ("记忆系统", "认知"),
-                relation if item.id == catalog[0].id else (),
-            )
-            for item in items
-        )
-
-    def summarize_subjects(self, items):
-        return {
-            "技术": "这些记录讨论技术如何映射人的认知。",
-            "哲学": "这些记录继续追问理解与选择。",
-        }
-
-
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
@@ -67,7 +43,7 @@ def client(tmp_path: Path) -> TestClient:
     [
         ("/", "今天想接住什么"),
         ("/ideas", "想法库"),
-        ("/knowledge", "知识星图"),
+        ("/knowledge", "核心知识图"),
         ("/reviews", "周回顾"),
         ("/publish", "发布适配"),
         ("/video", "视频创作"),
@@ -235,17 +211,39 @@ def test_workspace_status_actions_support_htmx_and_plain_forms(tmp_path: Path) -
 
 def test_knowledge_page_is_private_local_and_uses_local_assets(tmp_path: Path) -> None:
     item = create_item(tmp_path, body="只有工作台可以看到的草稿。", title="私人草稿")
-    create_item(
+    dangerous = create_item(
         tmp_path,
         body="危险标题仍然只能作为文本。",
         title="</script><script>alert('x')</script>",
+    )
+    subject = create_knowledge_map(
+        tmp_path,
+        title="技术",
+        kind="subject",
+        summary="实现机制",
+    )
+    topic = create_knowledge_map(
+        tmp_path,
+        title="本地安全",
+        kind="topic",
+        summary="私人服务的安全边界",
+        parent_ids=(subject.id,),
+    )
+    create_knowledge_card(
+        tmp_path,
+        title="本地服务需要阻断危险输入",
+        body="所有不可信输入都需要转义。",
+        card_type="claim",
+        subjects=("技术",),
+        concepts=("安全",),
+        source_ids=(item.id, dangerous.id),
+        map_ids=(topic.id,),
     )
     client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
 
     page = client.get("/knowledge")
 
     assert page.status_code == 200
-    assert "私人草稿" in page.text
     assert client.get("/garden").status_code == 404
     assert "/static/vendor/d3.min.js" in page.text
     assert "/static/knowledge.js" in page.text
@@ -253,69 +251,10 @@ def test_knowledge_page_is_private_local_and_uses_local_assets(tmp_path: Path) -
     assert f"/ideas/{item.id}" in page.text
     assert "</script><script>alert('x')</script>" not in page.text
     assert "\\u003c/script\\u003e" in page.text
+    assert '"type": "concept"' not in page.text
 
 
-def test_knowledge_analysis_requires_confirmation_before_writing(
-    tmp_path: Path,
-) -> None:
-    older = create_item(tmp_path, body="第一条记录。", title="第一条")
-    newer = create_item(tmp_path, body="第二条记录。", title="第二条")
-    client = TestClient(
-        create_app(
-            content_root=tmp_path,
-            enable_scheduler=False,
-            llm_client=FakeKnowledgeClient(),
-        ),
-    )
-
-    preview = client.post("/knowledge/analyze", follow_redirects=True)
-    payload = json.dumps(
-        {
-            "items": [
-                {"id": older.id, "title": older.title, "body": older.body},
-                {"id": newer.id, "title": newer.title, "body": newer.body},
-            ],
-        },
-        ensure_ascii=False,
-    )
-    analyzed = client.post(
-        "/knowledge/analyze",
-        data={"outbound_text": payload},
-        follow_redirects=True,
-    )
-    before_confirm = load_items(items_directory(tmp_path))
-
-    assert "确认模型外发内容" in preview.text
-    assert analyzed.status_code == 200
-    assert "确认 AI 建议" in analyzed.text
-    assert before_confirm.get(older.id).subjects == ()
-    assert before_confirm.get(newer.id).subjects == ()
-
-    confirmed = client.post(
-        "/knowledge/confirm",
-        data={
-            "selected": [older.id, newer.id],
-            f"subjects__{older.id}": "技术，哲学",
-            f"concepts__{older.id}": "记忆系统，认知",
-            f"relations__{older.id}": f"{newer.id} | related | 同一问题",
-            f"subjects__{newer.id}": "生活观察",
-            f"concepts__{newer.id}": "日常经验",
-            f"relations__{newer.id}": "",
-        },
-        follow_redirects=True,
-    )
-    collection = load_items(items_directory(tmp_path))
-
-    assert confirmed.status_code == 200
-    assert "知识元数据已确认" in confirmed.text
-    assert collection.get(older.id).subjects == ("技术", "哲学")
-    assert collection.get(older.id).body == "第一条记录。"
-    assert collection.get(newer.id).subjects == ("生活观察",)
-    assert (tmp_path / "knowledge" / "indexes" / "subject-index.yaml").exists()
-    assert not (tmp_path / "working" / "knowledge-suggestions.yaml").exists()
-
-
-def test_manual_knowledge_edit_and_unconfigured_analysis(tmp_path: Path) -> None:
+def test_legacy_source_knowledge_writes_are_retired(tmp_path: Path) -> None:
     item = create_item(tmp_path, body="关于选择的一条记录。", title="选择")
     client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
 
@@ -327,15 +266,15 @@ def test_manual_knowledge_edit_and_unconfigured_analysis(tmp_path: Path) -> None
             "concepts": "选择，决策",
             "relations": "",
         },
-        follow_redirects=True,
     )
     updated = load_items(items_directory(tmp_path)).get(item.id)
 
-    assert rejected.status_code == 422
-    assert "尚未配置可用模型" in rejected.text
-    assert saved.status_code == 200
-    assert "知识分类与关联已保存" in saved.text
-    assert updated.subjects == ("哲学", "心理学")
+    assert rejected.status_code == 410
+    assert "旧版学科元数据分析已经停用" in rejected.text
+    assert saved.status_code == 410
+    assert "旧版知识字段已停止写入" in saved.text
+    assert updated.subjects == ()
+    assert updated.body == item.body
 
 
 def test_idea_filters_partial_edit_and_finished_status(

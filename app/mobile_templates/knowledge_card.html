@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ card.title }} · 羽白工作台{% endblock %}
+{% block content %}
+<a class="back-link" href="/knowledge">← 返回知识库</a>
+<article class="paper-card knowledge-detail">
+  <div class="status-line"><span>{{ card_type_labels[card.card_type] }}</span><span class="status-{{ card.status }}">{{ card_status_labels[card.status] }}</span></div>
+  <h1>{{ card.title }}</h1><p class="quiet-note">更新于 {{ card.updated_at.strftime('%Y-%m-%d %H:%M') }}</p>
+  {% if card.status == 'superseded' %}<aside class="superseded-note">这张卡保留为历史观点。{% if replacement %}当前版本：<a href="/knowledge/cards/{{ replacement.id }}">{{ replacement.title }}</a>{% endif %}</aside>{% endif %}
+  <div class="mobile-markdown">{{ body_html|safe }}</div>
+  {% if card.subjects or card.concepts %}<div class="tag-stack">{% for subject in card.subjects %}<span class="tag subject-tag">{{ subject }}</span>{% endfor %}{% for concept in card.concepts %}<span class="tag">{{ concept }}</span>{% endfor %}</div>{% endif %}
+</article>
+{% if maps %}<section class="paper-card compact-section"><h2>所属地图</h2><div class="inline-links">{% for item in maps %}<a href="/knowledge/maps/{{ item.id }}">{{ item.title }}</a>{% endfor %}</div></section>{% endif %}
+{% if relations %}<section class="paper-card compact-section"><h2>确认关系</h2><div class="relation-list">{% for relation in relations %}<div><span>{{ relation.relation_label }}</span>{% if relation.href %}<a href="{{ relation.href }}">{{ relation.title }}</a>{% else %}<strong>{{ relation.title }}</strong>{% endif %}<small>{{ relation.target_type }}{% if relation.note %} · {{ relation.note }}{% endif %}</small></div>{% endfor %}</div></section>{% endif %}
+<section class="paper-card compact-section source-section"><h2>来源摘要</h2><p class="quiet-note">手机端只展示最小溯源信息；原始想法全文请在 Mac 工作台或 Obsidian 查看。</p>{% for source in sources %}<article><strong>{{ source.title }}</strong><p>{{ source.summary }}</p><time>{{ source.created_at.strftime('%Y-%m-%d %H:%M') }}</time></article>{% else %}<p class="quiet-note">当前没有可展示的来源摘要。</p>{% endfor %}</section>
+{% endblock %}

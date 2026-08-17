@@ -30,7 +30,7 @@
                     <small class="nav-group-label">工作</small>
                     <a class="{{ 'active' if active_page == 'workspace' else '' }}" href="{{ url_for('workspace') }}"><span aria-hidden="true">◌</span>工作台</a>
                     <a class="{{ 'active' if active_page == 'ideas' else '' }}" href="{{ url_for('ideas') }}"><span aria-hidden="true">≡</span>想法库</a>
-                    <a class="{{ 'active' if active_page == 'knowledge' else '' }}" href="{{ url_for('knowledge') }}"><span aria-hidden="true">✣</span>知识星图</a>
+                    <a class="{{ 'active' if active_page == 'knowledge' else '' }}" href="{{ url_for('knowledge') }}"><span aria-hidden="true">✣</span>知识库</a>
                     <a class="{{ 'active' if active_page in ['publish','reviews','video'] else '' }}" href="{{ url_for('publish_index') }}"><span aria-hidden="true">↗</span>创作</a>
                 </nav>
                 <nav class="sidebar-nav" aria-label="求职与学习">

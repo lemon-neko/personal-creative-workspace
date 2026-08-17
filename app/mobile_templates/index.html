@@ -1,51 +1,31 @@
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#168da2">
-  <meta name="description" content="把突然冒出来的念头安全同步回 Mac。">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/mobile-assets/mobile.css">
-  <link rel="icon" href="/mobile-assets/icon.svg" type="image/svg+xml">
-  <title>羽白随手记</title>
-</head>
-<body>
-  <main class="mobile-shell">
-    <header class="mobile-brand"><img src="/mobile-assets/icon.svg" alt=""><div><strong>羽白随手记</strong><small>PRIVATE CAPTURE</small></div><span id="network-state">检查连接…</span></header>
-    {% if not paired %}
-    <section class="paper-card pair-card">
-      <p class="eyebrow">PAIR THIS DEVICE</p><h1>先和 Mac 对个暗号。</h1>
-      <p>在电脑工作台的“设置 → 手机同步”生成六位配对码。它十分钟后失效，只能使用一次。</p>
-      {% if error %}<p class="error-message">{{ error }}</p>{% endif %}
-      <form action="/pair" method="post">
-        <input type="hidden" name="csrf_token" value="{{ pair_csrf }}">
-        <label>设备名称<input name="device_name" maxlength="80" value="我的 Android"></label>
-        <label>配对码<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
-        <button class="primary-button">完成配对</button>
-      </form>
-    </section>
-    {% else %}
-    <section class="paper-card capture-card">
-      <p class="eyebrow">CATCH THE THOUGHT</p><h1>先接住，分类以后再说。</h1>
-      <form id="capture-form">
-        <label class="body-field"><span>突然想到……</span><textarea name="body" rows="8" maxlength="50000" required></textarea></label>
-        <details><summary>标题、标签和分类</summary>
-          <label>标题<input name="title" maxlength="120"></label>
-          <label>标签<input name="tags" placeholder="生活，技术，观察"></label>
-          <label>分类<input name="category" maxlength="40"></label>
-        </details>
-        <label class="image-picker"><span>添加图片 <small>最多 5 张</small></span><input name="images" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" multiple></label>
-        <div id="image-summary" class="quiet-note"></div>
-        <button class="primary-button" type="submit">保存到羽白工作台</button>
-      </form>
-      <div class="sync-strip"><span><b id="queue-count">0</b> 条待同步</span><button id="sync-now" type="button">立即同步</button></div>
-      <p id="sync-message" class="quiet-note" aria-live="polite"></p>
-    </section>
-    <section class="paper-card recent-card"><div class="section-heading"><h2>最近接住的想法</h2><button id="refresh-recent" type="button">刷新</button></div><div id="recent-list"><p class="quiet-note">正在读取 Mac 上的最近记录……</p></div></section>
-    <button id="revoke-session" class="text-button" type="button">解除这台手机的配对</button>
-    {% endif %}
-  </main>
-  <script src="/mobile-assets/mobile.js" defer></script>
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}随手记 · 羽白工作台{% endblock %}
+{% block content %}
+{% if not paired %}
+<section class="paper-card pair-card">
+  <p class="eyebrow">PAIR THIS DEVICE</p><h1>先和 Mac 对个暗号。</h1>
+  <p>在电脑工作台的“设置 → 手机同步”生成六位配对码。它十分钟后失效，只能使用一次。</p>
+  {% if error %}<p class="error-message">{{ error }}</p>{% endif %}
+  <form action="/pair" method="post">
+    <input type="hidden" name="csrf_token" value="{{ pair_csrf }}">
+    <label>设备名称<input name="device_name" maxlength="80" value="我的 Android"></label>
+    <label>配对码<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
+    <button class="primary-button">完成配对</button>
+  </form>
+</section>
+{% else %}
+<section class="paper-card capture-card">
+  <p class="eyebrow">CATCH THE THOUGHT</p><h1>先接住，分类以后再说。</h1>
+  <form id="capture-form">
+    <label class="body-field"><span>突然想到……</span><textarea name="body" rows="5" maxlength="50000" placeholder="先写下来，不急着完整。" required></textarea></label>
+    <details><summary>标题、标签和分类</summary><label>标题<input name="title" maxlength="120"></label><label>标签<input name="tags" placeholder="生活，技术，观察"></label><label>分类<input name="category" maxlength="40"></label></details>
+    <label class="image-picker"><span><b>＋ 添加图片</b><small>最多 5 张 · PNG / JPEG / WebP</small></span><input name="images" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" multiple></label>
+    <div id="image-summary" class="quiet-note"></div>
+    <button class="primary-button" type="submit">保存到羽白工作台</button>
+  </form>
+  <div class="sync-strip"><span><b id="queue-count">0</b> 条待同步</span><button id="sync-now" type="button">立即同步</button></div><p id="sync-message" class="quiet-note" aria-live="polite"></p>
+</section>
+<section class="paper-card recent-card"><div class="section-heading"><h2>最近接住的想法</h2><button id="refresh-recent" type="button">刷新</button></div><div id="recent-list"><p class="quiet-note">正在读取 Mac 上的最近记录……</p></div></section>
+<button id="revoke-session" class="text-button" type="button">解除这台手机的配对</button>
+{% endif %}
+{% endblock %}
