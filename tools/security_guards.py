@@ -22,10 +22,21 @@ PRIVATE_PATTERNS = (
     "working/",
     "backups/",
     "app/static/images/",
+    "workspace.db",
     "mobile.db",
     "mobile.secret",
 )
-SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".canvas"}
+SENSITIVE_SUFFIXES = {
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    ".canvas",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".aes",
+}
 DEPLOYMENT_FILES = {
     "vercel.json",
     "render.yaml",
@@ -48,12 +59,10 @@ def violations(files: tuple[str, ...]) -> tuple[str, ...]:
     found: list[str] = []
     for name in files:
         path = Path(name)
-        if not (ROOT / path).exists():
-            continue
         if any(name.startswith(prefix) for prefix in PRIVATE_PATTERNS):
             found.append(f"私有数据被 Git 跟踪：{name}")
         if path.name == ".env" or path.suffix.lower() in SENSITIVE_SUFFIXES:
-            found.append(f"密钥文件被 Git 跟踪：{name}")
+            found.append(f"敏感或私有文件被 Git 跟踪：{name}")
         if path.name in DEPLOYMENT_FILES:
             found.append(f"本地专用项目不应包含公网部署配置：{name}")
     return tuple(found)

@@ -24,13 +24,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
+          pip install -r requirements.lock
 
       - name: Run tests (CPU only)
         env:
           WORKSPACE_DATA_DIR: /tmp/pcw-ci-${{ matrix.python-version }}
-        run: pytest -q
+        run: pytest -q --ignore=tests/browser
 
       - name: Guard private data and deployment boundary
         run: python tools/security_guards.py
@@ -38,7 +37,20 @@ jobs:
       - name: Import FastAPI application
         env:
           WORKSPACE_DATA_DIR: /tmp/pcw-import-${{ matrix.python-version }}
-        run: python -c "from app.main import app; print(app.title)"
+        run: python -c "from app.asgi import app; print(app.title)"
+
+      - name: Enforce critical-module coverage
+        if: matrix.python-version == '3.11'
+        env:
+          WORKSPACE_DATA_DIR: /tmp/pcw-coverage
+        run: |
+          pytest -q \
+            --ignore=tests/browser \
+            --cov=app.privacy --cov=app.workspace --cov=app.backup \
+            --cov=app.mobile --cov=app.knowledge_store \
+            --cov=app.model_gateway --cov=app.database \
+            --cov-report=json:coverage.json
+          python tools/check_coverage_targets.py coverage.json
 
   lint:
     runs-on: ubuntu-latest
@@ -51,7 +63,28 @@ jobs:
           python-version: "3.11"
 
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.16.1
 
       - name: Lint source and tests
         run: ruff check app tests tools
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          playwright install --with-deps chromium
+
+      - name: Run browser acceptance
+        env:
+          WORKSPACE_DATA_DIR: /tmp/pcw-browser
+        run: pytest -q tests/browser
