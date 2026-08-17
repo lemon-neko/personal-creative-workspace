@@ -81,3 +81,25 @@ def test_fts_search_covers_sources_cards_and_materials(tmp_path: Path) -> None:
     assert all(result.url.startswith("/") for result in results)
     assert search.search("   ") == ()
 
+
+def test_incremental_search_sync_only_changes_updated_rows(tmp_path: Path) -> None:
+    content = tmp_path / "content"
+    first = create_item(content, body="第一条时序记录。", title="第一条")
+    search = SearchRepository(tmp_path)
+    sources = {
+        "items": (first,),
+        "knowledge": load_knowledge_store(content),
+        "materials": (),
+        "career": EmptyRepository(),
+        "video": EmptyRepository(),
+    }
+
+    initial = search.sync(**sources)
+    unchanged = search.sync(**sources)
+    second = create_item(content, body="第二条记忆记录。", title="第二条")
+    changed = search.sync(**{**sources, "items": (first, second)})
+
+    assert initial == {"changed": 1, "removed": 0, "total": 1}
+    assert unchanged == {"changed": 0, "removed": 0, "total": 1}
+    assert changed == {"changed": 1, "removed": 0, "total": 2}
+    assert search.search("第二条")[0].id == second.id

@@ -13,6 +13,12 @@ from pathlib import Path
 from typing import Sequence
 from uuid import uuid4
 
+from app.database import (
+    MOBILE_REGISTRY,
+    apply_migrations,
+    connect_database,
+)
+
 from app.atomic import atomic_write_bytes, content_lock
 from app.content import ContentItem, load_items
 from app.workspace import create_item, items_directory
@@ -105,19 +111,16 @@ class MobileStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        for path in (self.path, self.path.with_name(f"{self.path.name}-wal"), self.path.with_name(f"{self.path.name}-shm")):
-            if path.exists():
-                path.chmod(0o600)
-        return connection
+        return connect_database(self.path)
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
-            connection.executescript(
-                """
+        apply_migrations(
+            self.path,
+            registry=MOBILE_REGISTRY,
+            subsystem="mobile_gateway",
+            snapshot_root=self.data_root / "working" / "db-migrations",
+            migrations={
+                1: """
                 CREATE TABLE IF NOT EXISTS mobile_config (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     enabled INTEGER NOT NULL DEFAULT 0,
@@ -149,9 +152,9 @@ class MobileStore:
                     content_id TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
-                """
-            )
-        self.path.chmod(0o600)
+                """,
+            },
+        )
 
     def _hash(self, value: str) -> str:
         return hmac.new(self.secret, value.encode(), hashlib.sha256).hexdigest()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -13,10 +15,14 @@ from app.model_gateway import (
     ModelProvider,
     ModelTaskKind,
     ModelTaskStore,
+    ModelUsageRecord,
     ModelUsageRepository,
     estimate_tokens,
     is_loopback_endpoint,
+    validate_manual_result,
 )
+from app.llm import LLMConfig
+from app.workspace import SHANGHAI
 from app.workspace import create_item
 
 
@@ -62,6 +68,7 @@ def _knowledge_result(item_id: str = "idea-1", map_id: str = "map-memory") -> st
 
 
 def test_loopback_policy_and_default_rules(monkeypatch, tmp_path: Path) -> None:
+    assert estimate_tokens("") == 0
     assert is_loopback_endpoint("http://127.0.0.1:11434/v1")
     assert is_loopback_endpoint("http://localhost:1234/v1")
     assert not is_loopback_endpoint("https://api.example.com/v1")
@@ -73,6 +80,162 @@ def test_loopback_policy_and_default_rules(monkeypatch, tmp_path: Path) -> None:
     gateway = ModelGateway(tmp_path)
     assert gateway.provider == ModelProvider.RULES
     assert not gateway.enabled
+
+
+def test_usage_ledger_totals_and_price_roundtrip(tmp_path: Path) -> None:
+    usage = ModelUsageRepository(tmp_path)
+    assert usage.totals() == {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cost": 0,
+    }
+    usage.record(
+        ModelUsageRecord(
+            id="usage-1",
+            task_type="publish",
+            provider="external",
+            model="fake",
+            estimated_input_tokens=20,
+            input_tokens=12,
+            output_tokens=8,
+            latency_ms=5,
+            status="success",
+            estimated_cost=0.25,
+            created_at=datetime.now(SHANGHAI).isoformat(),
+        )
+    )
+    assert usage.totals()["calls"] == 1
+    assert usage.totals()["input_tokens"] == 12
+    assert usage.totals()["cost"] == pytest.approx(0.25)
+    assert usage.recent(limit=0)[0].id == "usage-1"
+
+
+@pytest.mark.parametrize(
+    ("task_type", "payload"),
+    [
+        ("weekly-review", {"markdown": "本周记录"}),
+        ("publish", {"title": "标题", "markdown": "正文", "image_suggestions": []}),
+        (
+            "profile",
+            {
+                "target_roles": "Agent 开发",
+                "contact": "",
+                "education": "",
+                "experience": "",
+                "certifications": "",
+                "skills": "Python",
+                "facts": "四年经验",
+            },
+        ),
+        ("job-skills", {"skills": [{"name": "Python", "importance": 4}]}),
+    ],
+)
+def test_manual_result_validates_all_task_shapes(task_type: str, payload: dict) -> None:
+    raw = f"```json\n{json.dumps(payload, ensure_ascii=False)}\n```"
+    assert validate_manual_result(task_type, raw) == payload
+
+
+@pytest.mark.parametrize(
+    ("task_type", "payload", "message"),
+    [
+        ("weekly-review", {"markdown": ""}, "不能为空"),
+        ("publish", {"title": "", "markdown": "正文"}, "标题或正文为空"),
+        ("publish", {"title": "标题", "markdown": "正文", "image_suggestions": "图"}, "列表"),
+        ("profile", {"facts": []}, "必须是文本"),
+        ("job-skills", {"skills": [{"name": ""}]}, "名称无效"),
+        ("job-skills", {"skills": [{"name": "Python", "importance": "高"}]}, "重要度无效"),
+    ],
+)
+def test_manual_result_rejects_task_specific_invalid_values(
+    task_type: str, payload: dict, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        validate_manual_result(task_type, json.dumps(payload, ensure_ascii=False))
+
+
+def test_manual_knowledge_candidate_validation_boundaries() -> None:
+    base = json.loads(_knowledge_result())
+    for key, value, message in (
+        ("card_type", "unknown", "类型无效"),
+        ("subjects", [], "1–3"),
+        ("concepts", list(map(str, range(9))), "概念数量"),
+        ("map_ids", list(map(str, range(9))), "地图数量"),
+        ("relations", [{"type": "unknown", "target_id": "idea-2"}], "关系无效"),
+    ):
+        candidate = json.loads(json.dumps(base))
+        candidate["suggestions"][0]["cards"][0][key] = value
+        with pytest.raises(ValueError, match=message):
+            validate_manual_result("knowledge", json.dumps(candidate, ensure_ascii=False))
+
+
+class FakeModelClient:
+    def __init__(self, base_url: str = "http://127.0.0.1:11434/v1") -> None:
+        self.config = LLMConfig(base_url, "local-key", "fake-model")
+        self.enabled = True
+        self.last_usage = {"prompt_tokens": 10, "completion_tokens": 4}
+        self.fail = False
+
+    @contextmanager
+    def output_limit(self, _limit: int):
+        yield
+
+    def _result(self, value):
+        if self.fail:
+            raise RuntimeError("fake failure")
+        return value
+
+    def polish(self, **_kwargs):
+        return self._result("polished")
+
+    def summarize(self, _items):
+        return self._result("summary")
+
+    def analyze_knowledge(self, *_args):
+        return self._result("knowledge")
+
+    def analyze_knowledge_material(self, *_args):
+        return self._result("material")
+
+    def knowledge_card_candidate(self, _material):
+        return self._result(json.loads(_knowledge_result()))
+
+    def profile_candidate(self, _material):
+        return self._result({"facts": "fact"})
+
+    def job_skill_candidate(self, _material):
+        return self._result({"skills": []})
+
+
+def test_gateway_records_local_success_failure_and_facade_calls(tmp_path: Path) -> None:
+    client = FakeModelClient()
+    gateway = ModelGateway(tmp_path, client=client)  # type: ignore[arg-type]
+    source = create_item(tmp_path / "content", body="模型网关测试")
+    assert gateway.provider == ModelProvider.LOCAL
+    assert gateway.polish(title="标题", body="正文", mode="auto") == "polished"
+    assert gateway.summarize((source,)) == "summary"
+    assert gateway.analyze_knowledge((source,), (), ()) == "knowledge"
+    assert gateway.analyze_knowledge_material('{"items":[]}', ()) == "material"
+    assert gateway.knowledge_card_candidate(_knowledge_payload())["suggestions"]
+    assert gateway.profile_candidate("profile") == {"facts": "fact"}
+    assert gateway.job_skill_candidate("jd") == {"skills": []}
+    assert all(row.estimated_cost == 0 for row in gateway.usage.recent())
+
+    client.fail = True
+    with pytest.raises(RuntimeError, match="fake failure"):
+        gateway.polish(title="标题", body="正文", mode="auto")
+    assert any(row.status == "failed" for row in gateway.usage.recent())
+
+
+def test_gateway_external_requires_explicit_opt_in(monkeypatch, tmp_path: Path) -> None:
+    client = FakeModelClient("https://api.example.test/v1")
+    assert ModelGateway(tmp_path, client=client).provider == ModelProvider.RULES  # type: ignore[arg-type]
+    monkeypatch.setenv("MODEL_ALLOW_EXTERNAL", "true")
+    gateway = ModelGateway(tmp_path, client=client)  # type: ignore[arg-type]
+    gateway.save_prices(2.0, 4.0)
+    assert gateway.provider == ModelProvider.EXTERNAL
+    assert gateway.polish(title="标题", body="正文", mode="auto") == "polished"
+    assert gateway.usage.recent()[0].estimated_cost is not None
 
 
 def test_local_provider_rejects_non_loopback(monkeypatch, tmp_path: Path) -> None:

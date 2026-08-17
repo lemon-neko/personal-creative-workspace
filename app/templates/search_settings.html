@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% from "macros/ui.html" import csrf_input, setting_row with context %}
+
+{% block title %}检索索引 · 羽白工作台{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <p class="eyebrow">LOCAL SEARCH INDEX</p>
+    <h1>检索索引</h1>
+    <p>内容变更后只更新发生变化的记录；完整重建只作为显式修复工具。</p>
+</header>
+
+{% if notice %}<div class="message success" role="status">{{ notice }}</div>{% endif %}
+{% if search_error %}<div class="message error" role="alert">最近一次索引同步失败：{{ search_error }}</div>{% endif %}
+
+<section class="paper-panel">
+    <dl class="settings-list">
+        {{ setting_row('索引记录', search_status.total_rows) }}
+        {{ setting_row('最后同步', search_status.last_synced_at or '尚未同步') }}
+    </dl>
+    <form action="{{ url_for('rebuild_search_index') }}" method="post">
+        {{ csrf_input(request) }}
+        <button class="secondary-button" type="submit">完整重建索引</button>
+    </form>
+</section>
+{% endblock %}

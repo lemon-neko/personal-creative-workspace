@@ -2,14 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from app.database import (
+    WORKSPACE_REGISTRY,
+    apply_migrations,
+    connect_database,
+)
 
 from app.content import ContentItem
 from app.knowledge_store import KnowledgeStore
 from app.library import SourceMaterial
+
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True)
@@ -25,9 +38,13 @@ class SearchResult:
 class SearchRepository:
     def __init__(self, data_root: Path) -> None:
         self.database_path = data_root / "workspace.db"
-        with self.connect() as connection:
-            connection.execute(
-                """CREATE VIRTUAL TABLE IF NOT EXISTS workspace_search USING fts5(
+        apply_migrations(
+            self.database_path,
+            registry=WORKSPACE_REGISTRY,
+            subsystem="search",
+            snapshot_root=data_root / "working" / "db-migrations",
+            migrations={
+                1: """CREATE VIRTUAL TABLE IF NOT EXISTS workspace_search USING fts5(
                     item_id UNINDEXED,
                     result_type UNINDEXED,
                     title,
@@ -36,16 +53,26 @@ class SearchRepository:
                     url UNINDEXED,
                     source_label UNINDEXED,
                     tokenize='unicode61'
-                )""",
-            )
-        self.database_path.chmod(0o600)
+                );""",
+                2: """CREATE TABLE IF NOT EXISTS workspace_search_state (
+                    item_id TEXT NOT NULL,
+                    result_type TEXT NOT NULL,
+                    revision TEXT NOT NULL,
+                    PRIMARY KEY(item_id, result_type)
+                );
+                CREATE TABLE IF NOT EXISTS workspace_search_meta (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                    last_synced_at TEXT NOT NULL DEFAULT '',
+                    total_rows INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT OR IGNORE INTO workspace_search_meta(singleton) VALUES(1);""",
+            },
+        )
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
-        connection.row_factory = sqlite3.Row
-        return connection
+        return connect_database(self.database_path)
 
-    def rebuild(
+    def rows(
         self,
         *,
         items: tuple[ContentItem, ...],
@@ -53,7 +80,7 @@ class SearchRepository:
         materials: tuple[SourceMaterial, ...],
         career,
         video,
-    ) -> None:
+    ) -> tuple[tuple[str, str, str, str, str, str, str], ...]:
         rows: list[tuple[str, str, str, str, str, str, str]] = []
         kind_labels = {
             "thought": "原始想法",
@@ -146,12 +173,92 @@ class SearchRepository:
                         "视频项目",
                     ),
                 )
+        return tuple(rows)
+
+    @staticmethod
+    def _revision(row: tuple[str, str, str, str, str, str, str]) -> str:
+        return hashlib.sha256(
+            json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+    def rebuild(self, **sources) -> None:
+        rows = self.rows(**sources)
+        now = datetime.now(SHANGHAI).replace(microsecond=0).isoformat()
         with self.connect() as connection:
             connection.execute("DELETE FROM workspace_search")
+            connection.execute("DELETE FROM workspace_search_state")
             connection.executemany(
                 "INSERT INTO workspace_search VALUES(?,?,?,?,?,?,?)",
                 rows,
             )
+            connection.executemany(
+                "INSERT INTO workspace_search_state VALUES(?,?,?)",
+                ((row[0], row[1], self._revision(row)) for row in rows),
+            )
+            connection.execute(
+                "UPDATE workspace_search_meta SET last_synced_at=?, total_rows=? WHERE singleton=1",
+                (now, len(rows)),
+            )
+
+    def sync(self, **sources) -> dict[str, int]:
+        rows = self.rows(**sources)
+        desired = {(row[0], row[1]): (row, self._revision(row)) for row in rows}
+        changed = 0
+        removed = 0
+        now = datetime.now(SHANGHAI).replace(microsecond=0).isoformat()
+        with self.connect() as connection:
+            existing = {
+                (str(row["item_id"]), str(row["result_type"])): str(
+                    row["revision"]
+                )
+                for row in connection.execute(
+                    "SELECT item_id,result_type,revision FROM workspace_search_state"
+                )
+            }
+            for key in existing.keys() - desired.keys():
+                connection.execute(
+                    "DELETE FROM workspace_search WHERE item_id=? AND result_type=?",
+                    key,
+                )
+                connection.execute(
+                    "DELETE FROM workspace_search_state WHERE item_id=? AND result_type=?",
+                    key,
+                )
+                removed += 1
+            for key, (row, revision) in desired.items():
+                if existing.get(key) == revision:
+                    continue
+                connection.execute(
+                    "DELETE FROM workspace_search WHERE item_id=? AND result_type=?",
+                    key,
+                )
+                connection.execute(
+                    "INSERT INTO workspace_search VALUES(?,?,?,?,?,?,?)",
+                    row,
+                )
+                connection.execute(
+                    """INSERT INTO workspace_search_state VALUES(?,?,?)
+                    ON CONFLICT(item_id,result_type) DO UPDATE SET revision=excluded.revision""",
+                    (key[0], key[1], revision),
+                )
+                changed += 1
+            connection.execute(
+                "UPDATE workspace_search_meta SET last_synced_at=?, total_rows=? WHERE singleton=1",
+                (now, len(rows)),
+            )
+        return {"changed": changed, "removed": removed, "total": len(rows)}
+
+    def status(self) -> dict[str, str | int]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT last_synced_at,total_rows FROM workspace_search_meta WHERE singleton=1"
+            ).fetchone()
+        return {
+            "last_synced_at": str(row["last_synced_at"] if row else ""),
+            "total_rows": int(row["total_rows"] if row else 0),
+        }
 
     def search(self, query: str, *, limit: int = 30) -> tuple[SearchResult, ...]:
         terms = re.findall(r"[\w\u3400-\u9fff]+", query, flags=re.UNICODE)
@@ -160,7 +267,7 @@ class SearchRepository:
         match = " AND ".join(f'"{term}"' for term in terms[:8])
         with self.connect() as connection:
             fts_rows = connection.execute(
-                """SELECT item_id, result_type, title,
+                """SELECT item_id AS id, result_type, title,
                 snippet(workspace_search, 3, '【', '】', '…', 18) AS snippet,
                 url, source_label
                 FROM workspace_search WHERE workspace_search MATCH ?

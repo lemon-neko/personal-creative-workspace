@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "macros/ui.html" import setting_row with context %}
+
+{% block title %}运行状态 · 羽白工作台{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <p class="eyebrow">LOCAL RUNTIME</p>
+    <h1>本机运行状态</h1>
+    <p>这里只读取 launchd 和回环端口状态。安装、重启和卸载必须在终端中显式执行。</p>
+</header>
+
+<div class="settings-grid">
+    {% for service in services %}
+    <section class="paper-panel">
+        <p class="eyebrow">{{ service.name | upper }}</p>
+        <h2>{{ '桌面工作台' if service.name == 'desktop' else '手机网关' }}</h2>
+        <dl class="settings-list">
+            {{ setting_row('回环端口', '127.0.0.1:' ~ service.port, true) }}
+            {{ setting_row('LaunchAgent', '已安装' if service.installed else '未安装') }}
+            {{ setting_row('运行状态', '运行中' if service.running else '未运行') }}
+            {{ setting_row('端口状态', '可访问' if service.port_open else '未监听') }}
+            {% if service.pid %}{{ setting_row('PID', service.pid, true) }}{% endif %}
+            {{ setting_row('最近日志', service.last_log_at or '尚无运行日志') }}
+        </dl>
+    </section>
+    {% endfor %}
+    <section class="paper-panel">
+        <p class="eyebrow">TAILNET</p>
+        <h2>手机私网入口</h2>
+        <dl class="settings-list">
+            {{ setting_row('Tailscale', '已连接' if tailnet.connected else tailnet.detail) }}
+            {{ setting_row('Serve', '已代理到 8766' if tailnet.serve_enabled else '未检测到 8766 代理') }}
+            {{ setting_row('Funnel', '危险：已启用' if tailnet.funnel_enabled else '未启用') }}
+            {{ setting_row('配置主机', mobile_config.tailnet_host or '未配置') }}
+        </dl>
+    </section>
+    <section class="paper-panel">
+        <p class="eyebrow">PRIVATE DATA</p>
+        <h2>数据权限</h2>
+        <dl class="settings-list">
+            {{ setting_row('数据目录', permissions.root_mode, true) }}
+            {% for name, mode in permissions.database_modes %}{{ setting_row(name, mode, true) }}{% endfor %}
+            {{ setting_row('结论', '符合 0700 / 0600' if permissions.healthy else '需要检查权限') }}
+        </dl>
+    </section>
+    <section class="paper-panel safety-panel">
+        <p class="eyebrow">COMMANDS</p>
+        <h2>显式管理</h2>
+        <pre><code>python -m app.runtime install --mobile
+python -m app.runtime status
+python -m app.runtime restart --mobile
+python -m app.runtime uninstall --mobile</code></pre>
+        <p>LaunchAgent 只保存非敏感的数据目录配置，不保存模型 API Key。</p>
+    </section>
+</div>
+{% endblock %}

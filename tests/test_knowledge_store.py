@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from app.knowledge_quality import inspect_knowledge_quality
 from app.knowledge_store import (
     KnowledgeEdge,
     create_knowledge_card,
@@ -73,6 +74,38 @@ def test_multi_parent_maps_cards_and_provenance(tmp_path: Path) -> None:
     }
     assert not any(edge["type"] == "mentions" for edge in graph["edges"])
     assert [value["id"] for value in graph["sources"]] == [source.id]
+
+
+def test_knowledge_quality_reports_only_actionable_structure_issues(
+    tmp_path: Path,
+) -> None:
+    content = tmp_path / "content"
+    covered = create_item(content, body="已经拆成卡片的来源。", title="已覆盖")
+    uncovered = create_item(content, body="还没有整理的来源。", title="未覆盖")
+    subject = create_knowledge_map(
+        content,
+        title="技术",
+        kind="subject",
+        summary="技术学科",
+    )
+    card = create_knowledge_card(
+        content,
+        title="没有主题的卡片",
+        body="卡片有来源，但还没有进入主题。",
+        card_type="observation",
+        subjects=("技术",),
+        source_ids=(covered.id,),
+    )
+
+    issues = inspect_knowledge_quality(
+        (covered, uncovered), load_knowledge_store(content)
+    )
+    codes = {(issue.code, issue.href) for issue in issues}
+
+    assert ("uncovered-source", f"/ideas/{uncovered.id}") in codes
+    assert ("unmapped-card", f"/knowledge/cards/{card.id}") in codes
+    assert ("empty-subject", f"/knowledge/maps/{subject.id}") in codes
+    assert all(issue.obsidian_url.startswith("obsidian://open?") for issue in issues)
 
 
 def test_map_cycle_and_invalid_card_are_rejected(tmp_path: Path) -> None:

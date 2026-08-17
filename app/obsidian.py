@@ -14,6 +14,12 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
+from app.database import (
+    WORKSPACE_REGISTRY,
+    apply_migrations,
+    connect_database,
+)
+
 import yaml
 
 from app.atomic import atomic_write_bytes, atomic_write_text, content_lock
@@ -271,9 +277,13 @@ class ObsidianBridge:
         self.migration_root = self.data_root / "migrations" / "obsidian-knowledge"
         self.migration_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.migration_root.chmod(0o700)
-        with self.connect() as connection:
-            connection.executescript(
-                """
+        apply_migrations(
+            self.database_path,
+            registry=WORKSPACE_REGISTRY,
+            subsystem="obsidian",
+            snapshot_root=self.data_root / "working" / "db-migrations",
+            migrations={
+                1: """
                 CREATE TABLE IF NOT EXISTS obsidian_file_state (
                     relative_path TEXT PRIMARY KEY,
                     item_id TEXT NOT NULL,
@@ -288,13 +298,11 @@ class ObsidianBridge:
                 );
                 INSERT OR IGNORE INTO obsidian_integration_state(id) VALUES(1);
                 """,
-            )
-        self.database_path.chmod(0o600)
+            },
+        )
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
-        connection.row_factory = sqlite3.Row
-        return connection
+        return connect_database(self.database_path)
 
     def inbox(self) -> tuple[InboxDraft, ...]:
         drafts: list[InboxDraft] = []

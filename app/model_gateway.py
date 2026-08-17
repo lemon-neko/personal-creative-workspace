@@ -12,6 +12,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 from urllib.parse import urlparse
+
+from app.database import (
+    WORKSPACE_REGISTRY,
+    apply_migrations,
+    connect_database,
+)
 from uuid import uuid4
 
 from app.llm import LLMConfig, OpenAICompatibleClient
@@ -105,9 +111,13 @@ def is_loopback_endpoint(base_url: str) -> bool:
 class ModelUsageRepository:
     def __init__(self, data_root: Path) -> None:
         self.database_path = data_root / "workspace.db"
-        with self.connect() as connection:
-            connection.execute(
-                """CREATE TABLE IF NOT EXISTS model_usage (
+        apply_migrations(
+            self.database_path,
+            registry=WORKSPACE_REGISTRY,
+            subsystem="model_gateway",
+            snapshot_root=data_root / "working" / "db-migrations",
+            migrations={
+                1: """CREATE TABLE IF NOT EXISTS model_usage (
                     id TEXT PRIMARY KEY,
                     task_type TEXT NOT NULL,
                     provider TEXT NOT NULL,
@@ -119,21 +129,17 @@ class ModelUsageRepository:
                     status TEXT NOT NULL,
                     estimated_cost REAL,
                     created_at TEXT NOT NULL
-                )""",
-            )
-            connection.execute(
-                """CREATE TABLE IF NOT EXISTS model_settings (
+                );
+                CREATE TABLE IF NOT EXISTS model_settings (
                     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
                     input_price_per_m REAL NOT NULL DEFAULT 0,
                     output_price_per_m REAL NOT NULL DEFAULT 0
-                )"""
-            )
-        self.database_path.chmod(0o600)
+                );""",
+            },
+        )
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
-        connection.row_factory = sqlite3.Row
-        return connection
+        return connect_database(self.database_path)
 
     def record(self, record: ModelUsageRecord) -> None:
         with self.connect() as connection:

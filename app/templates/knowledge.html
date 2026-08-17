@@ -50,6 +50,21 @@
     </div>
 </section>
 
+<section class="knowledge-layer-section">
+    <div class="section-heading">
+        <div><p class="eyebrow">QUALITY QUEUE</p><h2>知识维护队列</h2></div>
+        <span>{{ knowledge_quality_issues|length }} 项只读诊断</span>
+    </div>
+    <div class="compact-list">
+        {% for issue in knowledge_quality_issues[:12] %}
+        <article class="document-choice knowledge-quality-item {{ issue.severity }}">
+            <div><strong>{{ issue.title }}</strong><span>{{ issue.detail }}</span></div>
+            <div class="button-row"><a class="text-link" href="{{ issue.href }}">查看详情</a><a class="text-link" href="{{ issue.obsidian_url }}">在 Obsidian 中处理</a></div>
+        </article>
+        {% else %}<div class="empty-note">当前正式知识结构没有发现需要处理的问题。</div>{% endfor %}
+    </div>
+</section>
+
 <section class="constellation-section">
     <div class="section-heading">
         <div><p class="eyebrow">CORE GRAPH</p><h2>核心知识图</h2></div>

@@ -219,9 +219,10 @@ def test_mobile_pwa_assets_are_local_and_do_not_cache_private_api(
     assert "indexedDB" in client.get("/mobile-assets/mobile.js").text
     assert 'url.pathname.startsWith("/api/")' in worker.text
     assert 'url.pathname.startsWith("/knowledge")' in worker.text
-    assert "yubai-mobile-shell-v3" in worker.text
-    assert 'mobile.css?v=3' in worker.text
-    assert 'mobile.js?v=3' in worker.text
+    assert "yubai-mobile-shell-v4" in worker.text
+    assert 'styles/base.css?v=4' in worker.text
+    assert 'styles/knowledge.css?v=4' in worker.text
+    assert 'mobile.js?v=4' in worker.text
     assert 'caches.match("/offline")' in worker.text
     assert "syncCaptures()" in worker.text
     assert "registration.sync.register" in client.get("/mobile-assets/mobile.js").text

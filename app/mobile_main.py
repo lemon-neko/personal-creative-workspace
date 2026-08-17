@@ -478,15 +478,10 @@ def create_mobile_app(
         return response
 
     return mobile_app
-
-
-app = create_mobile_app()
-
-
 def main() -> None:
     os.umask(0o077)
     uvicorn.run(
-        "app.mobile_main:app",
+        "app.mobile_asgi:app",
         host="127.0.0.1",
         port=8766,
         reload=False,

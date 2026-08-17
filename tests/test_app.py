@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -12,10 +15,72 @@ from app.content import load_items
 from app.llm import PolishResult
 from app.knowledge_store import create_knowledge_card, create_knowledge_map
 from app.main import REPO_ROOT, create_app
+from app.runtime import DESKTOP_LABEL, MAX_LOG_BYTES, build_launch_agent, restart_service
 from app.workspace import create_item, items_directory, set_item_status
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def test_importing_factories_does_not_initialize_private_data(tmp_path: Path) -> None:
+    untouched = tmp_path / "must-not-exist"
+    environment = os.environ.copy()
+    environment["WORKSPACE_DATA_DIR"] = str(untouched)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from app.main import create_app; "
+            "from app.mobile_main import create_mobile_app; "
+            "print(create_app.__name__, create_mobile_app.__name__)",
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert not untouched.exists()
+
+
+def test_launch_agent_contains_only_non_secret_local_configuration(
+    tmp_path: Path,
+) -> None:
+    value = build_launch_agent(
+        label=DESKTOP_LABEL,
+        module="app",
+        python=tmp_path / ".venv" / "bin" / "python",
+        repository_root=tmp_path / "repository",
+        data_root=tmp_path / "private-data",
+    )
+    assert value["ProgramArguments"][-2:] == ["-m", "app"]
+    assert value["EnvironmentVariables"] == {
+        "WORKSPACE_DATA_DIR": str(tmp_path / "private-data")
+    }
+    serialized = json.dumps(value).casefold()
+    assert "api_key" not in serialized
+    assert "llm_api_key" not in serialized
+
+
+def test_runtime_restart_rotates_oversized_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "logs" / f"{DESKTOP_LABEL}.log"
+    log.parent.mkdir()
+    with log.open("wb") as handle:
+        handle.truncate(MAX_LOG_BYTES + 1)
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        "app.runtime._launchctl",
+        lambda *arguments, **_kwargs: calls.append(arguments),
+    )
+
+    restart_service("desktop", data_root=tmp_path)
+
+    assert not log.exists()
+    assert log.with_suffix(".log.1").stat().st_size == MAX_LOG_BYTES + 1
+    assert calls == [("kickstart", "-k", f"gui/{os.getuid()}/{DESKTOP_LABEL}")]
 
 
 class FakeStyleClient:
@@ -56,6 +121,7 @@ def client(tmp_path: Path) -> TestClient:
         ("/learning", "技能与学习任务"),
         ("/learning/campaigns/agent-reliability-arena", "30-DAY PROJECT CAMPAIGN"),
         ("/settings/backups", "私有备份"),
+        ("/settings/runtime", "本机运行状态"),
         ("/trash", "回收站"),
         ("/settings", "本地内容"),
     ],
@@ -72,7 +138,8 @@ def test_all_workspace_pages_render(
 
 def test_static_assets_are_local_and_available(client: TestClient) -> None:
     for path, marker in (
-        ("/static/styles.css", "--cyan"),
+        ("/static/styles/base.css", "--cyan"),
+        ("/static/styles/knowledge-system.css", ".knowledge"),
         ("/static/publishing.css", ".publish-layout"),
         ("/static/publishing.js", "ClipboardItem"),
         ("/static/knowledge.js", "forceSimulation"),
@@ -170,6 +237,27 @@ def test_workspace_groups_search_and_partial(tmp_path: Path) -> None:
     assert '<section id="workspace-feed"' in partial.text
     assert "<!doctype html>" not in partial.text.lower()
     assert partial.headers["HX-Push-Url"] == "/?view=articles&q=%E5%8F%82%E6%95%B0"
+
+
+def test_global_search_is_synced_on_start_and_after_successful_write(
+    tmp_path: Path,
+) -> None:
+    create_item(tmp_path, body="启动前就存在的银河。", title="银河")
+    application = create_app(content_root=tmp_path, enable_scheduler=False)
+    with TestClient(application) as browser:
+        before = browser.get("/search", params={"q": "银河"})
+        created = browser.post(
+            "/ideas",
+            data={"body": "后来又出现一颗流星。", "title": "流星"},
+            follow_redirects=False,
+        )
+        after = browser.get("/search", params={"q": "流星"})
+        settings = browser.get("/settings/search")
+
+    assert before.status_code == 200 and "银河" in before.text
+    assert created.status_code == 303
+    assert after.status_code == 200 and "流星" in after.text
+    assert "检索索引" in settings.text
 
 
 def test_workspace_status_actions_support_htmx_and_plain_forms(tmp_path: Path) -> None:
