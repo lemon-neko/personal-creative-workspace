@@ -194,6 +194,15 @@ def test_mobile_offline_queue_and_online_knowledge(browser_workspace) -> None:
         expect(page.locator("#queue-count")).to_have_text("0")
         page.goto(f"{browser_workspace['mobile_url']}/knowledge")
         expect(page.get_by_text("Agent 可靠性")).to_be_visible()
+        expect(page.locator("#knowledge-cache-status")).to_contain_text("已缓存")
+        page.goto(
+            f"{browser_workspace['mobile_url']}/knowledge/cards/"
+            f"{browser_workspace['card_id']}"
+        )
+        expect(page.get_by_text("每次关键动作都需要留下可验证的轨迹。")).to_be_visible()
+        context.set_offline(True)
+        page.goto(f"{browser_workspace['mobile_url']}/knowledge")
+        expect(page.get_by_text("Agent 可靠性")).to_be_visible()
         page.goto(
             f"{browser_workspace['mobile_url']}/knowledge/cards/"
             f"{browser_workspace['card_id']}"

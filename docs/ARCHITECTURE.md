@@ -42,7 +42,7 @@ flowchart LR
 ### Android PWA
 
 - 独立移动模板和静态资源，不复用桌面管理页面。
-- Service Worker 只缓存应用外壳，不缓存私人知识、最近记录或 API 响应。
+- Service Worker 缓存应用外壳，以及服务端明确标记为安全的知识地图和知识卡 HTML 投影；不缓存原始想法、附件、最近记录或 API 响应。
 - IndexedDB 只保存尚未同步的新记录和图片 Blob，收到成功回执后立即删除。
 
 ## 领域与服务

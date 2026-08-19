@@ -28,7 +28,64 @@
   const allCaptures = () => transact("readonly", store => store.getAll());
   const saveCapture = capture => transact("readwrite", store => store.put(capture));
   const removeCapture = key => transact("readwrite", store => store.delete(key));
-  const message = text => { const target = document.querySelector("#sync-message"); if (target) target.textContent = text; };
+  const message = text => {
+    const target = document.querySelector("#sync-message");
+    if (target) target.textContent = text;
+  };
+
+  async function serviceWorkerTarget() {
+    if (!("serviceWorker" in navigator)) return null;
+    const registration = await navigator.serviceWorker.ready;
+    return navigator.serviceWorker.controller || registration.active || registration.waiting;
+  }
+
+  async function sendToServiceWorker(payload) {
+    try {
+      const target = await serviceWorkerTarget();
+      target?.postMessage(payload);
+    } catch (_) {
+      // The page remains fully usable without offline enhancement.
+    }
+  }
+
+  function offlineKnowledgePaths() {
+    const manifest = document.querySelector("#knowledge-offline-manifest");
+    if (!manifest) return [];
+    try {
+      const paths = JSON.parse(manifest.textContent || "[]");
+      return Array.isArray(paths) ? paths.filter(path => typeof path === "string") : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function renderKnowledgeCacheStatus({ count = 0, updatedAt = null } = {}) {
+    const target = document.querySelector("#knowledge-cache-status");
+    if (!target) return;
+    if (!count) {
+      target.textContent = "尚未保存离线知识";
+      return;
+    }
+    const suffix = updatedAt
+      ? ` · ${new Date(updatedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}`
+      : "";
+    target.textContent = `已缓存 ${count} 个知识页面${suffix}`;
+  }
+
+  async function refreshOfflineKnowledge() {
+    const paths = offlineKnowledgePaths();
+    if (paths.length && navigator.onLine) {
+      const target = document.querySelector("#knowledge-cache-status");
+      if (target) target.textContent = "正在更新离线知识……";
+      await sendToServiceWorker({ type: "CACHE_KNOWLEDGE_PATHS", paths });
+      return;
+    }
+    await sendToServiceWorker({ type: "GET_KNOWLEDGE_CACHE_STATUS" });
+  }
+
+  async function clearOfflineKnowledge() {
+    await sendToServiceWorker({ type: "CLEAR_KNOWLEDGE_CACHE" });
+  }
 
   async function updateQueueCount() {
     const captures = await allCaptures();
@@ -42,19 +99,24 @@
     try {
       const registration = await navigator.serviceWorker.ready;
       if ("sync" in registration) await registration.sync.register("sync-captures");
-    } catch (_) { /* foreground retry remains available */ }
+    } catch (_) {
+      // Foreground retry remains available.
+    }
   }
 
   function updateNetwork() {
     const target = document.querySelector("#network-state");
     if (!target) return;
-    target.textContent = navigator.onLine ? "网络可用" : "离线排队中";
+    target.textContent = navigator.onLine ? "网络可用" : "离线模式";
     target.className = navigator.onLine ? "online" : "offline";
   }
 
   async function session() {
     const response = await fetch("/api/session", { credentials: "same-origin", cache: "no-store" });
-    if (!response.ok) throw new Error("手机会话已失效，请重新配对。");
+    if (!response.ok) {
+      await clearOfflineKnowledge();
+      throw new Error("手机会话已失效，请重新配对。");
+    }
     const data = await response.json();
     csrfToken = data.csrf_token;
     return data;
@@ -73,16 +135,25 @@
   }
 
   async function syncQueue() {
-    if (!navigator.onLine) { message("Mac 暂时不可达，内容已安全留在手机队列。"); return; }
+    if (!navigator.onLine) {
+      message("Mac 暂时不可达，内容已安全留在手机队列。");
+      return;
+    }
     const captures = await updateQueueCount();
-    if (!captures.length) { message("没有待同步内容。"); return; }
+    if (!captures.length) {
+      message("没有待同步内容。");
+      return;
+    }
     try {
       if (!csrfToken) await session();
       let synced = 0;
       for (const capture of captures) {
         const response = await fetch("/api/captures", {
-          method: "POST", credentials: "same-origin", cache: "no-store",
-          headers: { "X-CSRF-Token": csrfToken }, body: formDataFor(capture),
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { "X-CSRF-Token": csrfToken },
+          body: formDataFor(capture),
         });
         if (!response.ok) {
           const error = await response.json().catch(() => ({ detail: "同步失败" }));
@@ -107,17 +178,31 @@
       if (!response.ok) throw new Error();
       const { items } = await response.json();
       target.replaceChildren();
-      if (!items.length) { target.innerHTML = '<p class="quiet-note">Mac 上还没有待整理记录。</p>'; return; }
+      if (!items.length) {
+        target.innerHTML = '<p class="quiet-note">Mac 上还没有待整理记录。</p>';
+        return;
+      }
       items.forEach(item => {
-        const article = document.createElement("article"); article.className = "recent-item";
-        const title = document.createElement("strong"); title.textContent = item.title;
-        const summary = document.createElement("div"); summary.textContent = item.summary;
-        const meta = document.createElement("small"); meta.textContent = new Date(item.created_at).toLocaleString("zh-CN");
+        const article = document.createElement("article");
+        article.className = "recent-item";
+        const title = document.createElement("strong");
+        title.textContent = item.title;
+        const summary = document.createElement("div");
+        summary.textContent = item.summary;
+        const meta = document.createElement("small");
+        meta.textContent = new Date(item.created_at).toLocaleString("zh-CN");
         article.append(title, summary, meta);
-        item.tags.forEach(value => { const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = value; article.append(tag); });
+        item.tags.forEach(value => {
+          const tag = document.createElement("span");
+          tag.className = "tag";
+          tag.textContent = value;
+          article.append(tag);
+        });
         target.append(article);
       });
-    } catch (_) { target.innerHTML = '<p class="quiet-note">暂时读不到 Mac，离线记录仍然可用。</p>'; }
+    } catch (_) {
+      target.innerHTML = '<p class="quiet-note">暂时读不到 Mac，离线记录仍然可用。</p>';
+    }
   }
 
   async function queueForm(event) {
@@ -127,12 +212,16 @@
     const files = [...form.elements.images.files];
     const total = files.reduce((sum, file) => sum + file.size, 0);
     if (files.length > 5 || files.some(file => file.size > 10 * 1024 * 1024) || total > 25 * 1024 * 1024) {
-      message("图片限制：最多 5 张、单张 10 MB、合计 25 MB。"); return;
+      message("图片限制：最多 5 张、单张 10 MB、合计 25 MB。");
+      return;
     }
     const capture = {
-      idempotencyKey: crypto.randomUUID(), body: String(data.get("body") || "").trim(),
-      title: String(data.get("title") || ""), tags: String(data.get("tags") || ""),
-      category: String(data.get("category") || ""), createdAt: new Date().toISOString(),
+      idempotencyKey: crypto.randomUUID(),
+      body: String(data.get("body") || "").trim(),
+      title: String(data.get("title") || ""),
+      tags: String(data.get("tags") || ""),
+      category: String(data.get("category") || ""),
+      createdAt: new Date().toISOString(),
       images: files.map(file => ({ name: file.name, type: file.type, blob: file })),
     };
     if (!capture.body) return;
@@ -148,36 +237,68 @@
   async function revoke() {
     if (!confirm("解除后需要新的配对码才能再次连接。确定吗？")) return;
     if (!csrfToken) await session();
-    const response = await fetch("/api/session/revoke", { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken } });
-    if (response.ok) location.reload();
+    const response = await fetch("/api/session/revoke", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "X-CSRF-Token": csrfToken },
+    });
+    if (response.ok) {
+      await clearOfflineKnowledge();
+      location.reload();
+    }
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
     updateNetwork();
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/service-worker.js");
+    if ("serviceWorker" in navigator) {
+      try {
+        await navigator.serviceWorker.register("/service-worker.js");
+      } catch (_) {
+        // Online use remains available if service worker registration fails.
+      }
+    }
     const captureForm = document.querySelector("#capture-form");
     captureForm?.addEventListener("submit", queueForm);
     document.querySelector("#sync-now")?.addEventListener("click", syncQueue);
     document.querySelector("#refresh-recent")?.addEventListener("click", loadRecent);
     document.querySelector("#revoke-session")?.addEventListener("click", revoke);
+    document.querySelector("#clear-knowledge-cache")?.addEventListener("click", async () => {
+      if (confirm("清除这台手机保存的离线知识副本？联网后可以重新生成。")) {
+        await clearOfflineKnowledge();
+      }
+    });
     document.querySelector('input[name="images"]')?.addEventListener("change", event => {
-      const files = [...event.target.files]; document.querySelector("#image-summary").textContent = files.length ? `已选择 ${files.length} 张，共 ${(files.reduce((s,f)=>s+f.size,0)/1024/1024).toFixed(1)} MB` : "";
+      const files = [...event.target.files];
+      document.querySelector("#image-summary").textContent = files.length
+        ? `已选择 ${files.length} 张，共 ${(files.reduce((sum, file) => sum + file.size, 0) / 1024 / 1024).toFixed(1)} MB`
+        : "";
     });
     if (captureForm) {
       await updateQueueCount();
-      try { await session(); } catch (error) { message(error.message); }
+      try {
+        await session();
+      } catch (error) {
+        message(error.message);
+      }
       await syncQueue();
       await loadRecent();
     }
+    if (document.querySelector("#knowledge-offline-manifest")) await refreshOfflineKnowledge();
   });
+
   window.addEventListener("online", () => {
     updateNetwork();
     if (document.querySelector("#capture-form")) syncQueue();
+    if (document.querySelector("#knowledge-offline-manifest")) refreshOfflineKnowledge();
   });
   window.addEventListener("offline", updateNetwork);
   navigator.serviceWorker?.addEventListener("message", event => {
     if (event.data?.type === "SYNC_COMPLETE" && document.querySelector("#capture-form")) {
-      updateQueueCount(); loadRecent(); message("后台同步已完成。");
+      updateQueueCount();
+      loadRecent();
+      message("后台同步已完成。");
+    } else if (event.data?.type === "KNOWLEDGE_CACHE_STATUS") {
+      renderKnowledgeCacheStatus(event.data);
     }
   });
 })();

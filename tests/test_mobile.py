@@ -218,11 +218,16 @@ def test_mobile_pwa_assets_are_local_and_do_not_cache_private_api(
     assert manifest.json()["display"] == "standalone"
     assert "indexedDB" in client.get("/mobile-assets/mobile.js").text
     assert 'url.pathname.startsWith("/api/")' in worker.text
-    assert 'url.pathname.startsWith("/knowledge")' in worker.text
-    assert "yubai-mobile-shell-v4" in worker.text
-    assert 'styles/base.css?v=4' in worker.text
-    assert 'styles/knowledge.css?v=4' in worker.text
-    assert 'mobile.js?v=4' in worker.text
+    assert "isKnowledgePath(url.pathname)" in worker.text
+    assert "yubai-mobile-shell-v5" in worker.text
+    assert "yubai-mobile-knowledge-v1" in worker.text
+    assert 'styles/base.css?v=5' in worker.text
+    assert 'styles/knowledge.css?v=5' in worker.text
+    assert 'mobile.js?v=5' in worker.text
+    assert "CACHE_KNOWLEDGE_PATHS" in worker.text
+    assert "CLEAR_KNOWLEDGE_CACHE" in worker.text
+    assert "self.skipWaiting()" in worker.text
+    assert "self.clients.claim()" in worker.text
     assert 'caches.match("/offline")' in worker.text
     assert "syncCaptures()" in worker.text
     assert "registration.sync.register" in client.get("/mobile-assets/mobile.js").text
@@ -265,6 +270,7 @@ def test_mobile_knowledge_overview_shows_layered_active_content(
 
     assert page.status_code == 200
     assert page.headers["cache-control"] == "no-store"
+    assert page.headers["x-pcw-offline-knowledge"] == "1"
     assert "羽白工作台" in page.text
     assert "随手记" in page.text and "知识库" in page.text
     assert "2</strong><span>学科" in page.text
@@ -272,6 +278,10 @@ def test_mobile_knowledge_overview_shows_layered_active_content(
     assert "1</strong><span>有效卡片" in page.text
     assert "Agent 记忆" in page.text
     assert "可靠性来自可验证的边界" in page.text
+    assert f"/knowledge/maps/{fixture['memory'].id}" in page.text
+    assert f"/knowledge/cards/{fixture['current_card'].id}" in page.text
+    assert "knowledge-offline-manifest" in page.text
+    assert "清除离线副本" in page.text
     assert fixture["old_card"].title not in page.text
 
 
@@ -288,6 +298,7 @@ def test_mobile_subject_map_aggregates_multi_parent_topic_cards(
 
     for page in (technology, philosophy, topic):
         assert page.status_code == 200
+        assert page.headers["x-pcw-offline-knowledge"] == "1"
         assert "可靠性来自可验证的边界" in page.text
         assert "旧的可靠性判断" not in page.text
     assert "聚合知识卡" in technology.text
@@ -306,6 +317,7 @@ def test_mobile_card_projects_safe_markdown_and_minimal_sources(
     page = client.get(f"/knowledge/cards/{current.id}")
 
     assert page.status_code == 200
+    assert page.headers["x-pcw-offline-knowledge"] == "1"
     assert "可靠性不是相信模型" in page.text
     assert f"/knowledge/cards/{fixture['old_card'].id}" in page.text
     assert "关于可靠性的原始想法" in page.text
@@ -340,6 +352,8 @@ def test_mobile_knowledge_unknown_ids_use_private_404(tmp_path: Path) -> None:
 
     assert missing_map.status_code == 404
     assert missing_card.status_code == 404
+    assert "x-pcw-offline-knowledge" not in missing_map.headers
+    assert "x-pcw-offline-knowledge" not in missing_card.headers
     assert "这条知识不在这里" in missing_map.text
     assert "这条知识不在这里" in missing_card.text
 
@@ -488,7 +502,7 @@ def test_desktop_mobile_settings_manage_config_and_devices(tmp_path: Path) -> No
     pairing = desktop.post("/settings/mobile/pairing-code")
 
     assert page.status_code == 200 and "Android 羽白工作台" in page.text
-    assert "知识阅读边界" in page.text
+    assert "知识阅读边界" in page.text and "只读知识快照" in page.text
     assert saved.status_code == 200 and "手机同步配置已保存" in saved.text
     assert pairing.status_code == 200 and "十分钟内有效" in pairing.text
 

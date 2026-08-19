@@ -213,7 +213,7 @@ def create_mobile_app(
         return MOBILE_TEMPLATES.TemplateResponse(
             request=request,
             name="offline.html",
-            context={"paired": False, "active_page": "capture"},
+            context={"paired": True, "active_page": "capture"},
         )
 
     def paired_or_redirect(request: Request) -> MobileSession | RedirectResponse:
@@ -229,6 +229,17 @@ def create_mobile_app(
             context={"paired": True, "active_page": "knowledge"},
             status_code=404,
         )
+
+    def knowledge_page(
+        request: Request, name: str, context: dict[str, object]
+    ) -> HTMLResponse:
+        response = MOBILE_TEMPLATES.TemplateResponse(
+            request=request,
+            name=name,
+            context={"paired": True, "active_page": "knowledge", **context},
+        )
+        response.headers["X-PCW-Offline-Knowledge"] = "1"
+        return response
 
     @mobile_app.get("/knowledge", response_class=HTMLResponse)
     async def mobile_knowledge(request: Request) -> Response:
@@ -246,12 +257,19 @@ def create_mobile_app(
             }
             for item in subjects
         )
-        return MOBILE_TEMPLATES.TemplateResponse(
-            request=request,
-            name="knowledge.html",
-            context={
-                "paired": True,
-                "active_page": "knowledge",
+        offline_paths = (
+            "/knowledge",
+            *(f"/knowledge/maps/{item.id}" for item in knowledge.maps),
+            *(
+                f"/knowledge/cards/{card.id}"
+                for card in knowledge.cards
+                if card.status != "archived"
+            ),
+        )
+        return knowledge_page(
+            request,
+            "knowledge.html",
+            {
                 "subjects": subject_rows,
                 "topics": topics,
                 "cards": cards,
@@ -259,6 +277,7 @@ def create_mobile_app(
                 "latest_update": latest_knowledge_update(knowledge),
                 "diagnostic_count": len(knowledge.diagnostics),
                 "card_type_labels": CARD_TYPE_LABELS,
+                "offline_paths": offline_paths,
             },
         )
 
@@ -271,12 +290,10 @@ def create_mobile_app(
         if item is None:
             return knowledge_not_found(request)
         maps = {candidate.id: candidate for candidate in knowledge.maps}
-        return MOBILE_TEMPLATES.TemplateResponse(
-            request=request,
-            name="knowledge_map.html",
-            context={
-                "paired": True,
-                "active_page": "knowledge",
+        return knowledge_page(
+            request,
+            "knowledge_map.html",
+            {
                 "item": item,
                 "parents": tuple(
                     maps[parent_id]
@@ -307,12 +324,10 @@ def create_mobile_app(
             return knowledge_not_found(request)
         maps = {item.id: item for item in knowledge.maps}
         replacement = knowledge.card(card.superseded_by) if card.superseded_by else None
-        return MOBILE_TEMPLATES.TemplateResponse(
-            request=request,
-            name="knowledge_card.html",
-            context={
-                "paired": True,
-                "active_page": "knowledge",
+        return knowledge_page(
+            request,
+            "knowledge_card.html",
+            {
                 "card": card,
                 "body_html": render_mobile_markdown(
                     card.body,

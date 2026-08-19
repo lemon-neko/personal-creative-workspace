@@ -4,7 +4,7 @@
 <header class="knowledge-hero paper-card">
   <p class="eyebrow">KNOWLEDGE LIBRARY</p>
   <h1>从学科进入，再沿着主题往下走。</h1>
-  <p>这里实时读取 Mac 上已确认的知识地图与知识卡，只读、不缓存，也不会把原始想法全文带到手机。</p>
+  <p>这里读取 Mac 上已确认的知识地图与知识卡。联网时会刷新一份只读快照，离线也能继续阅读；原始想法全文和附件不会进入手机。</p>
   <div class="knowledge-stats">
     <div><strong>{{ subjects|length }}</strong><span>学科</span></div>
     <div><strong>{{ topics|length }}</strong><span>主题</span></div>
@@ -12,7 +12,12 @@
   </div>
   {% if latest_update %}<p class="quiet-note">最近更新 {{ latest_update.strftime('%Y-%m-%d %H:%M') }}</p>{% endif %}
   {% if diagnostic_count %}<p class="diagnostic-note">有 {{ diagnostic_count }} 个知识文件未通过校验，其他内容仍可正常阅读。</p>{% endif %}
+  <div class="offline-knowledge-status">
+    <span id="knowledge-cache-status">正在检查离线知识……</span>
+    <button id="clear-knowledge-cache" type="button">清除离线副本</button>
+  </div>
 </header>
+<script type="application/json" id="knowledge-offline-manifest">{{ offline_paths|tojson }}</script>
 <section class="paper-card knowledge-section">
   <div class="section-heading"><div><p class="eyebrow">SUBJECT MAPS</p><h2>学科地图</h2></div><span>{{ subjects|length }}</span></div>
   <div class="map-list">

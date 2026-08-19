@@ -3,7 +3,8 @@
 {% block content %}
 <section class="paper-card capture-card">
   <p class="eyebrow">MAC IS SLEEPING</p><h1>它先睡，我先记。</h1>
-  <p>内容会暂存在这台 Android 的浏览器存储中，并依赖设备锁屏与磁盘加密保护；重新连上 Mac 后再同步。知识库不会保存在手机，Mac 在线后才能阅读。</p>
+  <p>新记录会暂存在这台 Android 的浏览器存储中，重新连上 Mac 后再同步。最近一次成功保存的知识库快照仍可离线阅读；未访问过或已清除的知识内容需要联网后重新获取。</p>
+  <p><a class="back-link" href="/knowledge">打开离线知识库 →</a></p>
   <form id="capture-form">
     <label class="body-field"><span>突然想到……</span><textarea name="body" rows="5" maxlength="50000" placeholder="先写下来，不急着完整。" required></textarea></label>
     <details><summary>标题、标签和分类</summary><label>标题<input name="title" maxlength="120"></label><label>标签<input name="tags"></label><label>分类<input name="category" maxlength="40"></label></details>

@@ -67,7 +67,8 @@ flowchart TB
 - 使用禁止嵌入和 MIME 嗅探保护，降低点击劫持和内容类型混淆风险。
 - 桌面 POST 使用 CSRF 与同源校验。
 - 移动设备令牌只以哈希形式保存在服务端；Cookie 使用 `Secure`、`HttpOnly` 和 `SameSite=Strict`。
-- Service Worker 不缓存知识页、最近记录、API 响应或私人图片。
+- Service Worker 只缓存服务端明确标记的知识地图与知识卡安全 HTML 投影；不缓存原始想法、附件、最近记录、API 响应或私人图片。
+- 离线知识依赖 Android 锁屏与设备加密保护。桌面撤销设备需要手机重新联网后才能清除该设备已有的离线快照。
 - IndexedDB 只保存尚未同步的移动捕获，成功回执后删除。
 
 ## 私有存储
