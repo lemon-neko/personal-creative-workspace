@@ -82,7 +82,7 @@ WORKSPACE_DATA_DIR=/tmp/pcw-test-runtime .venv/bin/pytest -q
 WORKSPACE_DATA_DIR=/tmp/pcw-import .venv/bin/python -c "from app.asgi import app; print(app.title)"
 ```
 
-CI 使用锁定依赖和虚构数据，以 Python 3.11 为主版本并保留 Python 3.10 兼容验证；另有高风险模块覆盖率与 Playwright 浏览器验收。测试数量会随功能变化，以实际收集结果为准。
+CI 使用锁定依赖和虚构数据，以 Python 3.13 为主版本并保留 Python 3.11 兼容验证；另有高风险模块覆盖率与 Playwright 浏览器验收。测试数量会随功能变化，以实际收集结果为准。
 
 ## 明确不做
 

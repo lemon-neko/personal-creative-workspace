@@ -153,7 +153,7 @@ WORKSPACE_DATA_DIR=/tmp/pcw-test-runtime .venv/bin/pytest -q
 WORKSPACE_DATA_DIR=/tmp/pcw-import .venv/bin/python -c "from app.asgi import app; print(app.title)"
 ```
 
-定位问题时可以先运行相关测试文件，但交付前仍需运行完整验证。CI 以 Python 3.11 为主，保留 Python 3.10 兼容，独立执行 Ruff、高风险覆盖率和 Playwright。
+定位问题时可以先运行相关测试文件，但交付前仍需运行完整验证。CI 以 Python 3.13 为主，保留 Python 3.11 兼容，独立执行 Ruff、高风险覆盖率和 Playwright。
 
 ## 扩展检查表
 

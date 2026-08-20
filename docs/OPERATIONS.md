@@ -5,7 +5,7 @@
 ## 运行要求
 
 - macOS，建议开启 FileVault。
-- Python 3.11 为推荐和主验证版本；CI 额外保留 Python 3.10 兼容验证。
+- Python 3.13 为推荐和主验证版本；CI 额外保留 Python 3.11 兼容验证。
 - Android PWA 可选，需要 Mac 和 Android 加入同一个私人 Tailnet。
 - Obsidian 可选，只使用内置 Templates、Properties、Backlinks 和 Graph View。
 - 完整运行不需要 Node.js、前端构建系统、云数据库或模型 API Key。
@@ -219,7 +219,7 @@ WORKSPACE_DATA_DIR=/tmp/pcw-test-runtime .venv/bin/pytest -q
 WORKSPACE_DATA_DIR=/tmp/pcw-import .venv/bin/python -c "from app.asgi import app; print(app.title)"
 ```
 
-CI 以 Python 3.11 为主并保留 Python 3.10 兼容测试，另有独立 Ruff 和私有数据守卫。Python 3.11 任务还会检查高风险模块逐个达到 80% 覆盖率，并执行 Playwright 桌面与移动关键流程。
+CI 以 Python 3.13 为主并保留 Python 3.11 兼容测试，另有独立 Ruff 和私有数据守卫。Python 3.13 任务还会检查高风险模块逐个达到 80% 覆盖率，并执行 Playwright 桌面与移动关键流程。
 
 ## 常见故障
 

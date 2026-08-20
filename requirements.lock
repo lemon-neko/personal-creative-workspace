@@ -1,4 +1,4 @@
-# Generated from the tested dependency set. Regenerate on Python 3.11 whenever
+# Generated from the tested dependency set. Regenerate on Python 3.13 whenever
 # requirements.txt or requirements-dev.txt changes.
 Jinja2==3.1.6
 MarkupSafe==3.0.3
