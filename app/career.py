@@ -15,6 +15,12 @@ from uuid import uuid4
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
+from app.database import (
+    WORKSPACE_REGISTRY,
+    apply_migrations,
+    connect_database,
+)
+
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
@@ -304,25 +310,26 @@ class CareerRepository:
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return connect_database(self.database_path)
 
     def _initialize(self) -> None:
-        with self.connect() as connection:
-            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version > SCHEMA_VERSION:
-                raise RuntimeError("本地数据库版本高于当前应用，请先升级应用")
-            if version == 0:
-                connection.executescript(SCHEMA)
-                connection.executescript(CAMPAIGN_SCHEMA)
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            elif version == 1:
-                connection.executescript(CAMPAIGN_SCHEMA)
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        self.database_path.chmod(0o600)
+        legacy_version = 0
+        if self.database_path.exists():
+            with sqlite3.connect(self.database_path) as connection:
+                legacy_version = int(
+                    connection.execute("PRAGMA user_version").fetchone()[0]
+                )
+        apply_migrations(
+            self.database_path,
+            registry=WORKSPACE_REGISTRY,
+            subsystem="career",
+            snapshot_root=self.data_root / "working" / "db-migrations",
+            legacy_version=legacy_version,
+            migrations={
+                1: f"{SCHEMA}\nPRAGMA user_version = 1;",
+                2: f"{CAMPAIGN_SCHEMA}\nPRAGMA user_version = {SCHEMA_VERSION};",
+            },
+        )
 
     def profile(self) -> CareerProfile:
         with self.connect() as connection:

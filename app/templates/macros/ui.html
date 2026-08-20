@@ -1,0 +1,7 @@
+{% macro csrf_input(request) -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+{%- endmacro %}
+
+{% macro setting_row(label, value, code=false) -%}
+<div><dt>{{ label }}</dt><dd>{% if code %}<code>{{ value }}</code>{% else %}{{ value }}{% endif %}</dd></div>
+{%- endmacro %}

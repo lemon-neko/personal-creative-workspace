@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}编辑冲突 · {{ item.title }}{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <a class="back-link" href="{{ url_for('idea_detail', item_id=item.id) }}">← 返回最新版本</a>
+    <p class="eyebrow">EDIT CONFLICT</p>
+    <h1>这条内容刚刚在别处发生了变化</h1>
+    <p>工作台没有覆盖 Obsidian 中的新内容。请比较两版，再把需要保留的部分合并到最新版本。</p>
+    <a class="secondary-button inline-button" href="{{ obsidian_url }}">在 Obsidian 中查看最新版本</a>
+</header>
+
+<div class="conflict-grid">
+    <section class="paper-panel">
+        <p class="eyebrow">CURRENT</p>
+        <h2>磁盘上的最新版本</h2>
+        <h3>{{ item.title }}</h3>
+        <article class="markdown-body">{{ current_html|safe }}</article>
+    </section>
+    <section class="paper-panel">
+        <p class="eyebrow">YOUR FORM</p>
+        <h2>本次尚未保存的版本</h2>
+        <h3>{{ submitted.title or '未填写标题' }}</h3>
+        <article class="markdown-body">{{ submitted_html|safe }}</article>
+        <details>
+            <summary>复制本次表单原文</summary>
+            <textarea rows="16" readonly>{{ submitted.body }}</textarea>
+        </details>
+    </section>
+</div>
+{% endblock %}

@@ -18,6 +18,7 @@ PLATFORM_WECHAT = "wechat"
 BLOCK_MATH = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 INLINE_MATH = re.compile(r"\\\((.+?)\\\)", re.DOTALL)
 MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*]\([^)]+\)")
+MARKDOWN_LINK = re.compile(r"(?<!!)\[([^\]]+)]\(([^)]+)\)")
 
 
 @dataclass(frozen=True)
@@ -224,6 +225,25 @@ def _protect_formulas(markdown: str) -> tuple[str, tuple[tuple[str, str, str], .
     return protected, tuple(formulas)
 
 
+def _strip_private_vault_links(markdown: str) -> tuple[str, bool]:
+    stripped = False
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal stripped
+        destination = match.group(2).strip().strip("<>").split("#", 1)[0]
+        parsed = urlparse(destination)
+        if not parsed.scheme and (
+            destination.lower().endswith(".md")
+            or destination.lstrip("/").split("/", 1)[0]
+            in {"sources", "knowledge", "outputs", "archive", "trash"}
+        ):
+            stripped = True
+            return match.group(1)
+        return match.group(0)
+
+    return MARKDOWN_LINK.sub(replace, markdown), stripped
+
+
 def _restore_formulas(
     html: str,
     formulas: tuple[tuple[str, str, str], ...],
@@ -265,7 +285,10 @@ class WeChatRenderer:
     platform = PLATFORM_WECHAT
 
     def render(self, source: PublishingSource) -> RenderedArticle:
-        protected_markdown, formulas = _protect_formulas(source.markdown)
+        portable_markdown, stripped_private_links = _strip_private_vault_links(
+            source.markdown,
+        )
+        protected_markdown, formulas = _protect_formulas(portable_markdown)
         body_html = _restore_formulas(
             _inline_styles(render_markdown(protected_markdown)),
             formulas,
@@ -291,6 +314,8 @@ class WeChatRenderer:
             warnings.append(
                 "包含图片：复制时会尝试内嵌，请粘贴后确认公众号已重新托管。",
             )
+        if stripped_private_links:
+            warnings.append("已移除仅在私人 Obsidian Vault 内可用的笔记链接。")
         return RenderedArticle(
             platform=self.platform,
             title=source.title,

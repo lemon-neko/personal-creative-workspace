@@ -16,6 +16,7 @@ from app.content import (
     ContentCollection,
     ContentItem,
     KnowledgeRelation,
+    semantic_revision,
 )
 from app.workspace import SHANGHAI
 
@@ -112,7 +113,14 @@ def stale_items(collection: ContentCollection) -> tuple[ContentItem, ...]:
         item
         for item in eligible_items(collection)
         if item.knowledge_updated_at is None
-        or item.knowledge_updated_at < item.updated_at
+        or (
+            item.knowledge_source_revision is not None
+            and item.knowledge_source_revision != semantic_revision(item)
+        )
+        or (
+            item.knowledge_source_revision is None
+            and item.knowledge_updated_at < item.updated_at
+        )
     )
 
 
@@ -217,6 +225,7 @@ def save_pending_suggestions(
 ) -> None:
     path = _working_path(content_root)
     updated_times = {item.id: item.updated_at.isoformat() for item in items}
+    revisions = {item.id: semantic_revision(item) for item in items}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(
@@ -226,6 +235,7 @@ def save_pending_suggestions(
                     {
                         "item_id": suggestion.item_id,
                         "source_updated_at": updated_times.get(suggestion.item_id),
+                        "source_revision": revisions.get(suggestion.item_id),
                         "subjects": list(suggestion.subjects),
                         "concepts": list(suggestion.concepts),
                         "relations": [
@@ -259,16 +269,27 @@ def load_pending_suggestions(
         payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         suggestions = validate_suggestions(payload, items)
         updated_times = {item.id: item.updated_at.isoformat() for item in items}
+        revisions = {item.id: semantic_revision(item) for item in items}
         saved_times = {
             value.get("item_id"): value.get("source_updated_at")
+            for value in payload.get("suggestions", [])
+            if isinstance(value, dict)
+        }
+        saved_revisions = {
+            value.get("item_id"): value.get("source_revision")
             for value in payload.get("suggestions", [])
             if isinstance(value, dict)
         }
         return tuple(
             suggestion
             for suggestion in suggestions
-            if saved_times.get(suggestion.item_id)
-            == updated_times.get(suggestion.item_id)
+            if (
+                saved_revisions.get(suggestion.item_id)
+                == revisions.get(suggestion.item_id)
+                if saved_revisions.get(suggestion.item_id)
+                else saved_times.get(suggestion.item_id)
+                == updated_times.get(suggestion.item_id)
+            )
         )
     except (OSError, UnicodeError, ValueError, yaml.YAMLError):
         return ()

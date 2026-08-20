@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}Obsidian 知识后台 · 羽白工作台{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <a class="back-link" href="{{ url_for('settings') }}">← 返回设置</a>
+    <p class="eyebrow">OBSIDIAN KNOWLEDGE BACKEND</p>
+    <h1>Obsidian 知识后台</h1>
+    <p>Obsidian 负责写地图和知识卡；工作台负责采集、校验、模型建议、发布和核心图。两边读取同一份私有 Markdown。</p>
+</header>
+
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<section class="obsidian-role-map paper-panel">
+    <div><span>01</span><strong>原始记录</strong><p>想法与材料保存当时发生了什么。</p></div>
+    <i>→</i><div><span>02</span><strong>知识地图</strong><p>学科定义边界，主题允许跨学科。</p></div>
+    <i>→</i><div><span>03</span><strong>知识卡</strong><p>每张卡只表达一个可追溯结论。</p></div>
+    <i>→</i><div><span>04</span><strong>创作输出</strong><p>文章和视频使用知识，不反向覆盖来源。</p></div>
+</section>
+
+<div class="settings-grid obsidian-status-grid">
+    <section class="paper-panel">
+        <p class="eyebrow">STATUS</p><h2>本机状态</h2>
+        <dl class="settings-list">
+            <div><dt>Obsidian</dt><dd>{{ '已安装 ' ~ state.version if state.installed else '未检测到' }}</dd></div>
+            <div><dt>Vault</dt><dd>{{ '已登记' if state.vault_registered else '尚未登记' }}</dd></div>
+            <div><dt>已跟踪文件</dt><dd>{{ state.tracked_files }}</dd></div>
+            <div><dt>知识模板收件箱</dt><dd>{{ state.knowledge_inbox_count }}</dd></div>
+            <div><dt>最近扫描</dt><dd>{{ state.last_scan_at or '尚未扫描' }}</dd></div>
+        </dl>
+        <code class="path-block">{{ state.vault_path }}</code>
+        <div class="button-row"><a class="primary-button inline-button" href="{{ knowledge_home_url }}">打开知识首页</a><a class="secondary-button inline-button" href="{{ vault_url }}">打开 Vault</a><a class="secondary-button inline-button" href="obsidian://choose-vault">Vault 管理器</a></div>
+    </section>
+    <section class="paper-panel">
+        <p class="eyebrow">HEALTH</p><h2>扫描与校验</h2>
+        <p>扫描接受合法的 Obsidian 编辑，只保存 Revision 与时间；正文不会进入 SQLite。</p>
+        <div class="button-row">
+            <form action="{{ url_for('scan_obsidian') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="primary-button">扫描外部修改</button></form>
+            <form action="{{ url_for('rebuild_obsidian_links') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="secondary-button">重建分层导航</button></form>
+            <form action="{{ url_for('repair_obsidian_permissions') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="secondary-button">修复私有权限</button></form>
+        </div>
+        {% if state.issues %}<div class="diagnostic-list"><h3>需要处理</h3><ul>{% for issue in state.issues %}<li>{{ issue }}</li>{% endfor %}</ul></div>{% endif %}
+    </section>
+</div>
+
+<section class="paper-panel obsidian-guide">
+    <p class="eyebrow">SIX STEPS</p><h2>一次设置，之后在 Obsidian 直接整理</h2>
+    <ol class="obsidian-steps">
+        <li><span>1</span><div><strong>打开 Vault</strong><p>首次在 Vault 管理器选择上面的 content 目录。</p></div></li>
+        <li><span>2</span><div><strong>初始化模板</strong><p>启用内置 Templates，模板目录设置为 <code>_templates</code>。</p><form action="{{ url_for('initialize_obsidian_templates') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="secondary-button">初始化三种模板</button></form></div></li>
+        <li><span>3</span><div><strong>新建知识</strong><p>在 <code>knowledge/inbox</code> 新建笔记，插入知识卡、主题或学科模板。</p></div></li>
+        <li><span>4</span><div><strong>扫描并确认</strong><p>回到本页确认来源、所属主题和父级，系统再生成稳定 ID。</p></div></li>
+        <li><span>5</span><div><strong>重建导航</strong><p>知识首页只连接学科，学科连接主题，主题连接知识卡。</p></div></li>
+        <li><span>6</span><div><strong>查看图谱</strong><p>全局图看结构，本地图从一张卡向来源和关联观点展开。</p></div></li>
+    </ol>
+</section>
+
+<section class="paper-panel obsidian-inbox">
+    <div class="panel-heading"><div><p class="eyebrow">KNOWLEDGE INBOX</p><h2>知识模板收件箱</h2></div><span>{{ knowledge_inbox|length }} 条</span></div>
+    <p>模板笔记只有在这里确认后，才会进入正式地图与知识卡目录。</p>
+    <div class="inbox-list">
+        {% for draft in knowledge_inbox %}
+        <article class="inbox-draft">
+            <div><code>{{ draft.relative_path }}</code><h3>{{ draft.title }}</h3><p>{{ draft.preview }}</p><span class="status-badge">{{ '知识卡' if draft.workspace_type == 'knowledge-card' else '知识地图' }}</span></div>
+            {% if draft.error %}<div class="message error">{{ draft.error }}</div>{% else %}
+            <details><summary>补充关系并确认导入</summary>
+                <form action="{{ url_for('import_obsidian_knowledge_inbox', draft_id=draft.id) }}" method="post" class="edit-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="expected_revision" value="{{ draft.revision }}">
+                    <label class="field"><span>标题</span><input name="title" value="{{ draft.title }}" required></label>
+                    {% if draft.workspace_type == 'knowledge-card' %}
+                    <div class="field-grid"><label class="field"><span>学科</span><input name="subjects" value="{{ draft.subjects|join('，') }}" required></label><label class="field"><span>概念</span><input name="concepts" value="{{ draft.concepts|join('，') }}"></label></div>
+                    <label class="field"><span>原始来源（至少一个）</span><select name="source_ids" multiple required>{% for source in knowledge_sources %}<option value="{{ source.id }}">{{ source.title }}</option>{% endfor %}</select></label>
+                    <label class="field"><span>所属主题</span><select name="map_ids" multiple>{% for item in knowledge_maps if item.kind == 'topic' %}<option value="{{ item.id }}">{{ item.title }}</option>{% endfor %}</select></label>
+                    {% else %}
+                    <label class="field"><span>摘要</span><textarea name="summary" required>{{ draft.summary }}</textarea></label>
+                    {% if draft.map_kind == 'topic' %}<label class="field"><span>父级学科（可多选）</span><select name="parent_ids" multiple>{% for item in knowledge_maps if item.kind == 'subject' %}<option value="{{ item.id }}">{{ item.title }}</option>{% endfor %}</select></label>{% endif %}
+                    {% endif %}
+                    <button class="primary-button">确认进入正式知识库</button>
+                </form>
+            </details>
+            {% endif %}
+        </article>
+        {% else %}<div class="empty-state compact"><h3>没有待确认的知识模板</h3><p>在 Obsidian 的 knowledge/inbox 新建笔记并插入模板。</p></div>{% endfor %}
+    </div>
+</section>
+
+<section class="paper-panel obsidian-migration">
+    <div class="panel-heading"><div><p class="eyebrow">RECONCILIATION</p><h2>旧结构整理预览</h2></div><span>{{ migration.reconciliations|length }} 条旧元数据 · {{ migration.renames|length }} 个待重命名文件</span></div>
+    <p>只有已经被知识卡完整覆盖的旧字段会被清理；冲突和未拆卡内容原样保留。所有操作先创建本地回滚快照。</p>
+    {% if migration.reconciliations %}
+    <div class="reconciliation-list">{% for row in migration.reconciliations %}<div><span class="reconcile-state state-{{ row.state }}">{{ {'covered':'已覆盖','conflict':'需核对','uncovered':'未拆卡'}[row.state] }}</span><strong>{{ row.title }}</strong><small>{{ row.subjects|join('、') or '无学科' }} · {{ row.concepts|join('、') or '无概念' }} · {{ row.card_ids|length }} 张卡</small></div>{% endfor %}</div>
+    {% else %}<div class="empty-note">没有需要整理的旧版知识字段。</div>{% endif %}
+    {% if migration.renames %}<details><summary>查看文件名迁移</summary><ul class="migration-file-list">{% for row in migration.renames %}<li><code>{{ row.source }}</code><span>→</span><code>{{ row.destination }}</code>{% if row.conflict %}<strong>{{ row.conflict }}</strong>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
+    <div class="migration-actions">
+        <form action="{{ url_for('apply_obsidian_migration') }}" method="post" class="confirm-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label>输入“整理知识库”<input name="confirmation" required></label><button class="primary-button" {{ 'disabled' if not migration.can_apply else '' }}>应用整理</button></form>
+        {% if migration.rollback_available %}<form action="{{ url_for('rollback_obsidian_migration') }}" method="post" class="confirm-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label>输入“恢复整理前版本”<input name="confirmation" required></label><button class="secondary-button">恢复最近快照</button></form>{% endif %}
+    </div>
+</section>
+
+<section class="paper-panel obsidian-graph-guide">
+    <p class="eyebrow">GRAPH VIEW</p><h2>Obsidian 图谱应该怎么看</h2>
+    <div class="graph-guide-grid">
+        <div><strong>全局图：看正式知识结构</strong><p>筛选框粘贴下面内容，排除模板、收件箱和生成索引。</p><code>path:"knowledge" -path:"knowledge/inbox" -path:"knowledge/indexes" -path:"_templates"</code></div>
+        <div><strong>本地图：理解一张卡</strong><p>打开知识卡后使用 Local Graph，深度设为 2，即可看到所属主题、来源和直接关联观点。</p></div>
+    </div>
+    <p class="settings-note">推荐排除 <code>trash</code>、<code>archive</code>、<code>outputs/reviews</code>。不要启用 Obsidian Sync、Local REST API 或社区插件。</p>
+</section>
+
+<section class="paper-panel obsidian-inbox">
+    <div class="panel-heading"><div><p class="eyebrow">THOUGHT INBOX</p><h2>普通笔记收件箱</h2></div><span>{{ inbox|length }} 条</span></div>
+    <p>这里接收没有知识模板的碎碎念，确认后进入原始想法，而不是直接进入图谱。</p>
+    <div class="inbox-list">{% for draft in inbox %}<article class="inbox-draft"><div><code>{{ draft.relative_path }}</code><h3>{{ draft.title }}</h3><p>{{ draft.preview }}</p></div>{% if draft.error %}<div class="message error">{{ draft.error }}</div>{% else %}<details><summary>预览并导入想法</summary><form action="{{ url_for('import_obsidian_inbox', draft_id=draft.id) }}" method="post" class="edit-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="expected_revision" value="{{ draft.revision }}"><label class="field"><span>标题</span><input name="title" maxlength="120" value="{{ draft.title }}"></label><div class="field-grid"><label class="field"><span>标签</span><input name="tags"></label><label class="field"><span>分类</span><input name="category" maxlength="40"></label></div><button class="primary-button">导入原始想法</button></form></details>{% endif %}</article>{% else %}<div class="empty-note">sources/inbox 目前为空。</div>{% endfor %}</div>
+</section>
+{% endblock %}

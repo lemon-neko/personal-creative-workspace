@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+from urllib.parse import unquote, urlsplit
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -26,6 +31,18 @@ REQUIRED_FIELDS = {
     "summary",
     "tags",
 }
+OPTIONAL_FIELDS = {
+    "category",
+    "parent_id",
+    "subjects",
+    "concepts",
+    "relations",
+    "knowledge_updated_at",
+    "knowledge_source_revision",
+}
+RESERVED_FIELDS = REQUIRED_FIELDS | OPTIONAL_FIELDS
+MANAGED_LINKS_START = "<!-- pcw:obsidian-links:start -->"
+MANAGED_LINKS_END = "<!-- pcw:obsidian-links:end -->"
 MARKDOWN = (
     MarkdownIt(
         "commonmark",
@@ -69,6 +86,9 @@ class ContentItem:
     concepts: tuple[str, ...] = ()
     relations: tuple[KnowledgeRelation, ...] = ()
     knowledge_updated_at: datetime | None = None
+    knowledge_source_revision: str | None = None
+    extra_metadata: dict[str, Any] = field(default_factory=dict)
+    managed_links: str = ""
 
     @property
     def date_label(self) -> str:
@@ -158,6 +178,72 @@ def _split_front_matter(text: str) -> tuple[str, str]:
     except StopIteration as error:
         raise ValueError("缺少 YAML front matter 结束标记 `---`") from error
     return "\n".join(lines[1:end]), "\n".join(lines[end + 1 :]).strip()
+
+
+def split_managed_links(body: str) -> tuple[str, str]:
+    """Separate the generated Obsidian relation block from authored Markdown."""
+
+    start = body.rfind(MANAGED_LINKS_START)
+    if start < 0:
+        return body.strip(), ""
+    end = body.find(MANAGED_LINKS_END, start)
+    if end < 0 or body[end + len(MANAGED_LINKS_END) :].strip():
+        return body.strip(), ""
+    managed = body[start : end + len(MANAGED_LINKS_END)].strip()
+    return body[:start].strip(), managed
+
+
+def combine_managed_links(body: str, managed_links: str) -> str:
+    authored = body.strip()
+    managed = managed_links.strip()
+    return f"{authored}\n\n{managed}" if managed else authored
+
+
+def semantic_revision(item: ContentItem) -> str:
+    """Hash only author-controlled semantics, excluding generated projections."""
+
+    payload = {
+        "id": item.id,
+        "title": item.title,
+        "status": item.status,
+        "kind": item.kind,
+        "tags": list(item.tags),
+        "category": item.category,
+        "parent_id": item.parent_id,
+        "subjects": list(item.subjects),
+        "concepts": list(item.concepts),
+        "relations": [
+            {
+                "target_id": relation.target_id,
+                "type": relation.relation,
+                "note": relation.note,
+            }
+            for relation in item.relations
+        ],
+        "body": item.body,
+        "extra_metadata": item.extra_metadata,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _extra_metadata(metadata: dict) -> dict[str, Any]:
+    extras = {str(key): value for key, value in metadata.items() if key not in RESERVED_FIELDS}
+    if len(extras) > 50:
+        raise ValueError("Obsidian 自定义属性不能超过 50 项")
+    try:
+        rendered = yaml.safe_dump(extras, allow_unicode=True)
+    except yaml.YAMLError as error:
+        raise ValueError("Obsidian 自定义属性无法安全保存") from error
+    if len(rendered.encode("utf-8")) > 20_000:
+        raise ValueError("Obsidian 自定义属性总大小不能超过 20 KB")
+    return extras
 
 
 def _required_text(metadata: dict, field: str) -> str:
@@ -254,7 +340,8 @@ def _optional_relations(metadata: dict) -> tuple[KnowledgeRelation, ...]:
 def parse_item(path: Path) -> ContentItem:
     """Parse and validate one Markdown content item."""
 
-    front_matter, body = _split_front_matter(path.read_text(encoding="utf-8"))
+    front_matter, raw_body = _split_front_matter(path.read_text(encoding="utf-8"))
+    body, managed_links = split_managed_links(raw_body)
     metadata = yaml.safe_load(front_matter)
     if not isinstance(metadata, dict):
         raise TypeError("front matter 必须是键值映射")
@@ -308,6 +395,12 @@ def parse_item(path: Path) -> ContentItem:
         concepts=concepts,
         relations=_optional_relations(metadata),
         knowledge_updated_at=_optional_datetime(metadata, "knowledge_updated_at"),
+        knowledge_source_revision=_optional_text(
+            metadata,
+            "knowledge_source_revision",
+        ),
+        extra_metadata=_extra_metadata(metadata),
+        managed_links=managed_links,
     )
 
 
@@ -340,6 +433,8 @@ def load_items(directory: Path) -> ContentCollection:
         )
     paths = sorted(set(paths))
     for path in paths:
+        if path.parent == directory and path.name == "知识首页.md":
+            continue
         try:
             item = parse_item(path)
             if item.id in seen_ids:
@@ -353,7 +448,69 @@ def load_items(directory: Path) -> ContentCollection:
     return ContentCollection(tuple(items), tuple(diagnostics))
 
 
-def render_markdown(markdown: str) -> str:
+def _inside(root: Path, candidate: Path) -> bool:
+    try:
+        candidate.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _rewrite_markdown_urls(
+    tokens: list,
+    *,
+    source: Path | None,
+    content_root: Path | None,
+) -> None:
+    for token in tokens:
+        children = getattr(token, "children", None)
+        if children:
+            _rewrite_markdown_urls(children, source=source, content_root=content_root)
+        attribute = "src" if token.type == "image" else "href" if token.type == "link_open" else ""
+        if not attribute:
+            continue
+        raw = token.attrGet(attribute) or ""
+        parsed = urlsplit(raw)
+        if parsed.scheme or parsed.netloc:
+            continue
+        path_value = unquote(parsed.path)
+        asset_match = re.fullmatch(r"/?assets/([^/]+)", path_value)
+        if asset_match and Path(asset_match.group(1)).name == asset_match.group(1):
+            token.attrSet(attribute, f"/assets/{asset_match.group(1)}")
+            continue
+        if content_root is None or not path_value.lower().endswith(".md"):
+            continue
+        candidate = (
+            content_root / path_value.lstrip("/")
+            if path_value.startswith("/") or not path_value.startswith(".")
+            else (source.parent if source else content_root) / path_value
+        ).resolve()
+        if not _inside(content_root, candidate) or not candidate.is_file():
+            continue
+        suffix = f"#{parsed.fragment}" if parsed.fragment else ""
+        try:
+            if candidate.parent == content_root / "knowledge" / "cards":
+                from app.knowledge_store import parse_card
+
+                token.attrSet(attribute, f"/knowledge/cards/{parse_card(candidate).id}{suffix}")
+            elif candidate.parent == content_root / "knowledge" / "maps":
+                from app.knowledge_store import parse_map
+
+                token.attrSet(attribute, f"/knowledge/maps/{parse_map(candidate).id}{suffix}")
+            else:
+                token.attrSet(attribute, f"/ideas/{parse_item(candidate).id}{suffix}")
+        except (OSError, TypeError, UnicodeError, ValueError, yaml.YAMLError):
+            continue
+
+
+def render_markdown(
+    markdown: str,
+    *,
+    source: Path | None = None,
+    content_root: Path | None = None,
+) -> str:
     """Render repository-authored Markdown with raw HTML disabled."""
 
-    return MARKDOWN.render(markdown)
+    tokens = MARKDOWN.parse(markdown)
+    _rewrite_markdown_urls(tokens, source=source, content_root=content_root)
+    return MARKDOWN.renderer.render(tokens, MARKDOWN.options, {})

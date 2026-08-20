@@ -33,6 +33,7 @@ ENV/
 # IDE
 .vscode/
 .idea/
+.obsidian/
 *.swp
 *.swo
 *~
@@ -84,10 +85,17 @@ content/assets/
 app/static/images/
 content/workspace.yaml
 private_data/
+# Explicit compatibility entries plus generic database protection.
 workspace.db
 workspace.db-*
 mobile.db
 mobile.db-*
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
 mobile.secret
 documents/
 video-projects/
@@ -98,6 +106,8 @@ rollback-*/
 .env
 .env.*
 !.env.example
+*.canvas
+*.aes
 
 # Trae workspace
 .uploads/

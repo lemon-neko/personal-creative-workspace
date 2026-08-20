@@ -2,11 +2,15 @@
 
 {% block title %}视频创作 · 羽白工作台{% endblock %}
 
+{% block extra_head %}
+<script defer src="{{ url_for('static', path='/video.js') }}?v=20260814-storyboard1"></script>
+{% endblock %}
+
 {% block content %}
 <header class="page-header video-header">
     <p class="eyebrow">VIDEO STUDIO</p>
     <h1>视频创作</h1>
-    <p>把工作台里的文章、正文和配图整理成私有交接包，再交给独立运行的 OpenCut。文字留在文字的世界，时间线留给剪辑器。</p>
+    <p>先把文章变成可编辑的视频规格与分镜，再选择 Remotion 程序化生成、真人口播处理或 OpenCut 人工精修。</p>
 </header>
 
 {% if notice %}<div class="message success" role="status">{{ notice }}</div>{% endif %}
@@ -23,7 +27,7 @@
     <div class="video-main">
         <section class="panel video-create-card">
             <div class="section-heading">
-                <div><p class="eyebrow">NEW HANDOFF</p><h2>创建视频交接包</h2></div>
+                <div><p class="eyebrow">NEW PROJECT</p><h2>创建视频策划项目</h2></div>
                 <span class="local-badge">仅本机</span>
             </div>
             {% if articles %}
@@ -37,13 +41,21 @@
                         {% endfor %}
                     </select>
                 </label>
+                <div class="video-spec-grid">
+                    <label class="field"><span>发布平台</span><select name="platform">{% for value, label in video_platforms.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+                    <label class="field"><span>画面比例</span><select name="aspect_ratio">{% for value in video_aspect_ratios %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+                    <label class="field"><span>目标时长（秒）</span><input name="target_duration" type="number" min="15" max="3600" value="90" required></label>
+                    <label class="field"><span>表达类型</span><select name="video_type">{% for value, label in video_types.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+                </div>
+                <label class="field"><span>目标受众</span><input name="audience" maxlength="300" value="对主题感兴趣的普通读者" required></label>
+                <label class="field"><span>表达风格</span><input name="tone" maxlength="300" value="清晰、克制、保留个人观察" required></label>
                 <label class="field">
                     <span>剪辑备注 <small>可选</small></span>
                     <textarea name="notes" rows="4" maxlength="5000" placeholder="例如：做成 90 秒横屏解释视频；开场先抛出 Vibe Coding 在哪一层。"></textarea>
                 </label>
                 <div class="video-form-footer">
-                    <p>会复制本地文章配图，生成 <code>brief.md</code> 与 <code>manifest.yaml</code>；不会修改原文。</p>
-                    <button class="primary-button" type="submit">生成交接包</button>
+                    <p>会从正文段落生成可编辑的初始分镜，并输出旁白、字幕和两种制作交接文件；不会修改原文。</p>
+                    <button class="primary-button" type="submit">创建并生成初始分镜</button>
                 </div>
             </form>
             {% else %}
@@ -71,11 +83,52 @@
                     <p>来源：<a href="{{ url_for('idea_detail', item_id=project.source_id) }}">{{ project.source_title }}</a></p>
                     {% if project.notes %}<blockquote>{{ project.notes }}</blockquote>{% endif %}
                     <dl class="video-project-meta">
+                        <div><dt>规格</dt><dd>{{ video_platform_labels[project.platform] }} · {{ project.aspect_ratio }} · {{ video_type_labels[project.video_type] }}</dd></div>
+                        <div><dt>时长</dt><dd>目标 {{ project.target_duration }} 秒 · 分镜 {{ project.planned_duration }} 秒</dd></div>
+                        <div><dt>分镜</dt><dd>{{ project.scenes|length }} 个</dd></div>
                         <div><dt>素材</dt><dd>{{ project.assets|length }} 张本地图片</dd></div>
                         <div><dt>目录</dt><dd><code>{{ project.directory }}</code></dd></div>
                     </dl>
+                    <details class="storyboard-editor">
+                        <summary>编辑视频规格与分镜</summary>
+                        <form action="{{ url_for('update_video_project_plan', project_id=project.id) }}" method="post" class="storyboard-form" data-storyboard-form>
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                            <div class="video-spec-grid">
+                                <label class="field"><span>平台</span><select name="platform">{% for value, label in video_platforms.items() %}<option value="{{ value }}" {{ 'selected' if value == project.platform else '' }}>{{ label }}</option>{% endfor %}</select></label>
+                                <label class="field"><span>比例</span><select name="aspect_ratio">{% for value in video_aspect_ratios %}<option value="{{ value }}" {{ 'selected' if value == project.aspect_ratio else '' }}>{{ value }}</option>{% endfor %}</select></label>
+                                <label class="field"><span>目标秒数</span><input name="target_duration" type="number" min="15" max="3600" value="{{ project.target_duration }}" required></label>
+                                <label class="field"><span>表达类型</span><select name="video_type">{% for value, label in video_types.items() %}<option value="{{ value }}" {{ 'selected' if value == project.video_type else '' }}>{{ label }}</option>{% endfor %}</select></label>
+                            </div>
+                            <label class="field"><span>受众</span><input name="audience" maxlength="300" value="{{ project.audience }}" required></label>
+                            <label class="field"><span>风格</span><input name="tone" maxlength="300" value="{{ project.tone }}" required></label>
+                            <label class="field"><span>制作备注</span><textarea name="notes" maxlength="5000" rows="3">{{ project.notes }}</textarea></label>
+                            <div class="storyboard-heading"><div><strong>镜头清单</strong><small>旁白决定说什么，画面说明决定下一秒出现什么。</small></div><button class="text-button" type="button" data-add-scene>＋ 添加镜头</button></div>
+                            <div class="scene-list" data-scene-list>
+                                {% for scene in project.scenes %}
+                                <fieldset class="scene-card" data-scene>
+                                    <legend>镜头 <span data-scene-number>{{ loop.index }}</span></legend>
+                                    <button class="scene-remove" type="button" data-remove-scene aria-label="删除这个镜头">删除</button>
+                                    <label class="field"><span>时长（秒）</span><input name="scene_duration" type="number" min="1" max="600" value="{{ scene.duration_seconds }}" required></label>
+                                    <label class="field"><span>旁白</span><textarea name="scene_narration" rows="3" maxlength="5000" required>{{ scene.narration }}</textarea></label>
+                                    <label class="field"><span>画面说明</span><textarea name="scene_visual" rows="2" maxlength="2000" required>{{ scene.visual }}</textarea></label>
+                                    <label class="field"><span>屏幕字幕</span><textarea name="scene_caption" rows="2" maxlength="500">{{ scene.caption }}</textarea></label>
+                                    <label class="field"><span>素材文件名 <small>逗号分隔</small></span><input name="scene_assets" value="{{ scene.assets|join(', ') }}" placeholder="{% if project.assets %}{{ project.assets[0].stored_name }}{% else %}当前没有本地素材{% endif %}"></label>
+                                </fieldset>
+                                {% endfor %}
+                            </div>
+                            <div class="storyboard-submit"><span>保存会重新生成所有交接文件。</span><button class="primary-button" type="submit">保存分镜</button></div>
+                        </form>
+                    </details>
                     <div class="video-project-actions">
-                        <a class="secondary-button" href="{{ url_for('video_project_file', project_id=project.id, file_path='brief.md') }}">下载交接文稿</a>
+                        <div class="video-export-links">
+                            {% if project.exports_ready %}
+                            <a href="{{ url_for('video_project_file', project_id=project.id, file_path='storyboard.yaml') }}">分镜 YAML</a>
+                            <a href="{{ url_for('video_project_file', project_id=project.id, file_path='narration.md') }}">旁白</a>
+                            <a href="{{ url_for('video_project_file', project_id=project.id, file_path='captions.srt') }}">字幕</a>
+                            <a href="{{ url_for('video_project_file', project_id=project.id, file_path='remotion-props.json') }}">Remotion Props</a>
+                            {% else %}<span>旧项目保存一次分镜后生成新版文件</span>{% endif %}
+                            <a href="{{ url_for('video_project_file', project_id=project.id, file_path='brief.md') }}">OpenCut 文稿</a>
+                        </div>
                         <form action="{{ url_for('update_video_project_status', project_id=project.id) }}" method="post">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
                             <label class="sr-only" for="status-{{ project.id }}">项目状态</label>

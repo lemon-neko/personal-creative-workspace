@@ -10,7 +10,7 @@ import uvicorn
 def main() -> None:
     os.umask(0o077)
     uvicorn.run(
-        "app.main:app",
+        "app.asgi:app",
         host="127.0.0.1",
         port=8765,
         reload=False,

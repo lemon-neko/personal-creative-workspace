@@ -65,11 +65,13 @@ def prepare_private_root(root: Path) -> Path:
     for relative in (
         "content",
         "content/sources",
+        "content/sources/inbox",
         "content/sources/thoughts",
         "content/sources/materials",
         "content/knowledge/cards",
         "content/knowledge/maps",
         "content/knowledge/indexes",
+        "content/knowledge/indexes/obsidian",
         "content/outputs/articles",
         "content/outputs/reviews",
         "content/archive",

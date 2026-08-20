@@ -1,0 +1,967 @@
+"""Workspace, ideas, knowledge landing and review routes."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import replace
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+from urllib.parse import urlencode
+
+from fastapi import APIRouter, Form, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+from app.career import CareerRepository
+from app.content import ContentCollection, ContentItem, render_markdown, semantic_revision
+from app.knowledge import DEFAULT_SUBJECTS, eligible_items, format_relation_lines
+from app.knowledge_quality import inspect_knowledge_quality
+from app.knowledge_store import layered_graph, load_knowledge_store
+from app.model_gateway import POLICIES, ModelTaskKind
+from app.obsidian import obsidian_uri
+from app.web import TEMPLATES, WORKSPACE_VIEWS, collection, not_found
+from app.workspace import (
+    SHANGHAI,
+    WEEKDAYS,
+    ContentConflictError,
+    create_item,
+    current_week_items,
+    load_workspace_settings,
+    move_to_trash,
+    next_summary_run,
+    save_weekly_review,
+    save_workspace_settings,
+    set_item_status,
+    update_item,
+)
+
+
+router = APIRouter()
+
+
+def _collection(request: Request):
+    return collection(request)
+
+
+def _not_found(request: Request, active_page: str = "") -> HTMLResponse:
+    return not_found(request, active_page)
+
+
+def _item_context(item: ContentItem, content_root: Path | None = None) -> dict:
+    context = {
+        "item": item,
+        "item_html": render_markdown(
+            item.body,
+            source=item.source,
+            content_root=content_root,
+        ),
+        "tags_value": "，".join(item.tags),
+        "subjects_value": "，".join(item.subjects),
+        "concepts_value": "，".join(item.concepts),
+        "relations_value": format_relation_lines(item.relations),
+        "source_revision": semantic_revision(item),
+        "obsidian_url": obsidian_uri(item.source),
+    }
+    if content_root is not None:
+        store = load_knowledge_store(content_root)
+        context["derived_cards"] = tuple(
+            card for card in store.cards if item.id in card.source_ids
+        )
+        context["has_legacy_knowledge"] = bool(
+            item.subjects or item.concepts or item.relations
+        )
+    return context
+
+def _refresh_obsidian_links(request: Request) -> None:
+    """Best-effort refresh of derived links; authored writes remain authoritative."""
+
+    try:
+        request.app.state.obsidian.rebuild_links()
+    except (OSError, TypeError, UnicodeError, ValueError):
+        return
+
+def _knowledge_context(
+    request: Request,
+    *,
+    saved: str | None = None,
+    error: str | None = None,
+) -> dict:
+    collection = _collection(request)
+    items = eligible_items(collection)
+    notices = {
+        "card": "知识卡已保存，原始来源没有被覆盖。",
+        "map": "知识地图已保存。",
+        "up-to-date": "当前没有需要重新分析的内容。",
+    }
+    store = load_knowledge_store(request.app.state.content_root)
+    subject_maps = tuple(item for item in store.maps if item.kind == "subject")
+    topic_maps = tuple(item for item in store.maps if item.kind == "topic")
+    card_source_ids = {
+        source_id
+        for card in store.cards
+        if card.status != "archived"
+        for source_id in card.source_ids
+    }
+    pending_sources = tuple(
+        item
+        for item in items
+        if item.id not in card_source_ids and item.kind != "weekly-review"
+    )
+    graph = layered_graph(items, store)
+    quality_issues = inspect_knowledge_quality(items, store)
+    return {
+        "active_page": "knowledge",
+        "knowledge_items": items,
+        "pending_sources": pending_sources,
+        "core_graph": graph,
+        "knowledge_cards": store.cards,
+        "knowledge_maps": store.maps,
+        "subject_maps": subject_maps,
+        "topic_maps": topic_maps,
+        "recent_cards": tuple(
+            card for card in store.cards if card.status == "active"
+        )[:6],
+        "knowledge_store_diagnostics": store.diagnostics,
+        "knowledge_quality_issues": quality_issues,
+        "notice": notices.get(saved or ""),
+        "error": error,
+    }
+
+def _workspace_context(
+    request: Request,
+    *,
+    saved: str | None = None,
+    error: str | None = None,
+    form_data: dict | None = None,
+    query: str | None = None,
+    view: str | None = None,
+) -> dict:
+    collection = _collection(request)
+    today = datetime.now(SHANGHAI).date()
+    today_items = tuple(
+        item for item in collection.items if item.created_at.date() == today
+    )
+    notices = {
+        "created": "想法已落进本地 Markdown。先记下来，整理可以晚一点。",
+        "article": "候选稿已保存为新的文章草稿，原始想法没有被改动。",
+        "status": "内容状态已更新。",
+        "review": "本周回顾草稿已生成。",
+        "existing": "本周回顾已经存在，没有重复生成。",
+        "fallback": "模型未使用，已生成稳定的规则回顾草稿。",
+    }
+    settings = load_workspace_settings(request.app.state.content_root)
+    week_items = current_week_items(request.app.state.content_root)
+    review_items = tuple(
+        item for item in collection.items if item.kind == "weekly-review"
+    )
+    article_drafts = tuple(
+        item
+        for item in collection.items
+        if item.kind == "article" and item.status == "draft"
+    )
+    career: CareerRepository = request.app.state.career
+    video_projects = request.app.state.video.projects()
+    jobs = career.jobs()
+    learning_tasks = career.learning_tasks()
+    return {
+        "active_page": "workspace",
+        "today_items": today_items,
+        "pending_count": len(
+            [item for item in collection.items if item.status == "draft"],
+        ),
+        "published_count": len(collection.published),
+        "week_items": week_items,
+        "latest_review": review_items[0] if review_items else None,
+        "settings": settings,
+        "next_run": next_summary_run(settings),
+        "llm_enabled": request.app.state.llm_client.enabled,
+        "article_drafts": article_drafts[:3],
+        "video_projects": tuple(
+            project for project in video_projects if project.status != "archived"
+        )[:3],
+        "career_jobs": jobs[:4],
+        "career_active_count": sum(
+            job.status not in {"rejected", "withdrawn", "archived"} for job in jobs
+        ),
+        "learning_tasks": tuple(
+            task for task in learning_tasks if task.status in {"backlog", "active"}
+        )[:4],
+        "diagnostics": collection.diagnostics,
+        "notice": notices.get(saved or ""),
+        "error": error,
+        "form_data": form_data or {},
+        **_workspace_feed_context(collection, query=query, view=view),
+    }
+
+def _workspace_feed_context(
+    collection: ContentCollection,
+    *,
+    query: str | None,
+    view: str | None,
+    feed_notice: str | None = None,
+) -> dict:
+    selected_view = view if view in WORKSPACE_VIEWS else "pending"
+    cleaned_query = (query or "").strip()
+    searched = collection.filter(query=cleaned_query)
+
+    def in_view(item: ContentItem, target: str) -> bool:
+        if target == "pending":
+            return item.status == "draft" and item.kind != "article"
+        if target == "articles":
+            return item.status == "draft" and item.kind == "article"
+        if target == "published":
+            return item.status == "published"
+        return True
+
+    counts = {
+        target: sum(in_view(item, target) for item in collection.items)
+        for target in WORKSPACE_VIEWS
+    }
+    return {
+        "workspace_items": tuple(
+            item for item in searched if in_view(item, selected_view)
+        ),
+        "workspace_query": cleaned_query,
+        "workspace_view": selected_view,
+        "workspace_view_counts": counts,
+        "feed_notice": feed_notice,
+    }
+
+def _idea_filters(
+    collection: ContentCollection,
+    *,
+    query: str | None,
+    status: str | None,
+    kind: str | None,
+    tag: str | None,
+    category: str | None,
+    date_from: str | None,
+    date_to: str | None,
+) -> dict:
+    return {
+        "items": collection.filter(
+            query=query,
+            status=status,
+            kind=kind,
+            tag=tag,
+            category=category,
+            date_from=date_from,
+            date_to=date_to,
+        ),
+        "tags": sorted({tag for item in collection.items for tag in item.tags}),
+        "categories": sorted(
+            {item.category for item in collection.items if item.category},
+        ),
+        "selected": {
+            "q": query or "",
+            "status": status or "",
+            "kind": kind or "",
+            "tag": tag or "",
+            "category": category or "",
+            "date_from": date_from or "",
+            "date_to": date_to or "",
+        },
+    }
+
+def _llm_target(request: Request) -> str:
+    config = getattr(request.app.state.llm_client, "config", None)
+    return getattr(config, "base_url", "") if config else "已配置的模型接口"
+
+def _disclosure_context(
+    request: Request,
+    *,
+    purpose: str,
+    source_labels: tuple[str, ...],
+    submit_url,
+    outbound_text: str,
+    back_url,
+    task_type: str = "",
+    hidden_fields: dict[str, str] | None = None,
+    error: str | None = None,
+) -> dict:
+    return {
+        "active_page": "settings",
+        "purpose": purpose,
+        "source_labels": source_labels,
+        "target": _llm_target(request),
+        "submit_url": submit_url,
+        "outbound_text": outbound_text,
+        "back_url": back_url,
+        "task_type": task_type,
+        "hidden_fields": hidden_fields or {},
+        "error": error,
+    }
+
+def _items_payload(items: tuple[ContentItem, ...]) -> str:
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "id": item.id,
+                    "created_at": item.created_at.isoformat(),
+                    "title": item.title,
+                    "body": item.body,
+                }
+                for item in items
+            ],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+def _redacted_items(
+    payload: str, originals: tuple[ContentItem, ...]
+) -> tuple[ContentItem, ...]:
+    try:
+        data = json.loads(payload)
+        rows = data["items"]
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError("外发内容必须保留约定的 JSON 结构") from error
+    if not isinstance(rows, list):
+        raise ValueError("外发内容中的 items 必须是列表")
+    original_map = {item.id: item for item in originals}
+    redacted: list[ContentItem] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("外发内容条目格式无效")
+        item_id = str(row.get("id", ""))
+        if item_id not in original_map or item_id in seen:
+            raise ValueError("外发内容包含未知或重复的内容 ID")
+        title = str(row.get("title", "")).strip()
+        body = str(row.get("body", "")).strip()
+        if not title or not body:
+            raise ValueError("保留的外发条目必须包含标题和正文")
+        redacted.append(
+            replace(original_map[item_id], title=title[:120], body=body[:50_000])
+        )
+        seen.add(item_id)
+    if not redacted:
+        raise ValueError("请至少保留一条要发送的内容")
+    return tuple(redacted)
+
+@router.get("/", response_class=HTMLResponse, name="workspace")
+async def workspace(
+    request: Request,
+    saved: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+    view: Optional[str] = Query(default="pending"),
+) -> HTMLResponse:
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="workspace.html",
+        context=_workspace_context(request, saved=saved, query=q, view=view),
+    )
+
+@router.get(
+    "/partials/workspace-feed",
+    response_class=HTMLResponse,
+    name="workspace_feed_partial",
+)
+async def workspace_feed_partial(
+    request: Request,
+    q: Optional[str] = Query(default=None),
+    view: Optional[str] = Query(default="pending"),
+) -> HTMLResponse:
+    context = _workspace_feed_context(_collection(request), query=q, view=view)
+    response = TEMPLATES.TemplateResponse(
+        request=request,
+        name="partials/workspace_feed.html",
+        context=context,
+    )
+    response.headers["HX-Push-Url"] = (
+        f"/?{urlencode({'view': context['workspace_view'], 'q': context['workspace_query']})}"
+    )
+    return response
+
+@router.post("/ideas", name="create_idea")
+async def create_idea(
+    request: Request,
+    body: str = Form(...),
+    title: str = Form(default=""),
+    tags: str = Form(default=""),
+    category: str = Form(default=""),
+) -> HTMLResponse:
+    try:
+        create_item(
+            request.app.state.content_root,
+            body=body,
+            title=title,
+            tags=tags,
+            category=category,
+        )
+        _refresh_obsidian_links(request)
+    except ValueError as error:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="workspace.html",
+            context=_workspace_context(
+                request,
+                error=str(error),
+                form_data={
+                    "body": body,
+                    "title": title,
+                    "tags": tags,
+                    "category": category,
+                },
+                view="pending",
+            ),
+            status_code=422,
+        )
+    return RedirectResponse(
+        request.url_for("workspace").include_query_params(
+            saved="created",
+            view="pending",
+        ),
+        status_code=303,
+    )
+
+@router.get("/ideas", response_class=HTMLResponse, name="ideas")
+async def ideas(
+    request: Request,
+    q: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    kind: Optional[str] = Query(default=None),
+    tag: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+) -> HTMLResponse:
+    collection = _collection(request)
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="ideas.html",
+        context={
+            "active_page": "ideas",
+            "diagnostics": collection.diagnostics,
+            **_idea_filters(
+                collection,
+                query=q,
+                status=status,
+                kind=kind,
+                tag=tag,
+                category=category,
+                date_from=date_from,
+                date_to=date_to,
+            ),
+        },
+    )
+
+@router.get(
+    "/partials/ideas",
+    response_class=HTMLResponse,
+    name="ideas_partial",
+)
+async def ideas_partial(
+    request: Request,
+    q: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    kind: Optional[str] = Query(default=None),
+    tag: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+) -> HTMLResponse:
+    context = _idea_filters(
+        _collection(request),
+        query=q,
+        status=status,
+        kind=kind,
+        tag=tag,
+        category=category,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    response = TEMPLATES.TemplateResponse(
+        request=request,
+        name="partials/idea_list.html",
+        context=context,
+    )
+    query_string = request.url.query
+    response.headers["HX-Push-Url"] = (
+        f"/ideas{f'?{query_string}' if query_string else ''}"
+    )
+    return response
+
+@router.get(
+    "/ideas/{item_id}",
+    response_class=HTMLResponse,
+    name="idea_detail",
+)
+async def idea_detail(request: Request, item_id: str) -> HTMLResponse:
+    collection = _collection(request)
+    item = collection.get(item_id)
+    if item is None:
+        return _not_found(request, "ideas")
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="idea_detail.html",
+        context={
+            "active_page": "ideas",
+            "knowledge_candidates": tuple(
+                candidate
+                for candidate in eligible_items(collection)
+                if candidate.id != item.id
+            ),
+            **_item_context(item, request.app.state.content_root),
+        },
+    )
+
+@router.post("/ideas/{item_id}", name="update_idea")
+async def update_idea(
+    request: Request,
+    item_id: str,
+    body: str = Form(...),
+    title: str = Form(default=""),
+    tags: str = Form(default=""),
+    category: str = Form(default=""),
+    source_revision: str = Form(default=""),
+) -> HTMLResponse:
+    try:
+        item = update_item(
+            request.app.state.content_root,
+            item_id,
+            body=body,
+            title=title,
+            tags=tags,
+            category=category,
+            expected_revision=source_revision,
+        )
+    except ContentConflictError as error:
+        current = error.current
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="idea_conflict.html",
+            context={
+                "active_page": "ideas",
+                "item": current,
+                "current_html": render_markdown(
+                    current.body,
+                    source=current.source,
+                    content_root=request.app.state.content_root,
+                ),
+                "submitted": {
+                    "title": title,
+                    "body": body,
+                    "tags": tags,
+                    "category": category,
+                },
+                "submitted_html": render_markdown(body),
+                "obsidian_url": obsidian_uri(current.source),
+            },
+            status_code=409,
+        )
+    except KeyError:
+        return _not_found(request, "ideas")
+    except ValueError as error:
+        current = _collection(request).get(item_id)
+        if current is None:
+            return _not_found(request, "ideas")
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="idea_detail.html",
+            context={
+                "active_page": "ideas",
+                **_item_context(current, request.app.state.content_root),
+                "error": str(error),
+            },
+            status_code=422,
+        )
+    return RedirectResponse(
+        request.url_for("idea_detail", item_id=item.id).include_query_params(
+            saved="updated",
+        ),
+        status_code=303,
+    )
+
+@router.post(
+    "/ideas/{item_id}/knowledge",
+    name="update_idea_knowledge",
+)
+async def update_idea_knowledge(
+    request: Request,
+    item_id: str,
+    subjects: str = Form(...),
+    concepts: str = Form(default=""),
+    relations: str = Form(default=""),
+) -> HTMLResponse:
+    collection = _collection(request)
+    item = collection.get(item_id)
+    if item is None or item.kind == "weekly-review" or item.status == "archived":
+        return _not_found(request, "ideas")
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="idea_detail.html",
+        context={
+            "active_page": "ideas",
+            **_item_context(item, request.app.state.content_root),
+            "error": (
+                "原始想法的旧版知识字段已停止写入。请在 Obsidian 中创建"
+                "知识卡，并把这条想法选为来源。"
+            ),
+        },
+        status_code=410,
+    )
+
+@router.post("/ideas/{item_id}/status", name="change_idea_status")
+async def change_idea_status(
+    request: Request,
+    item_id: str,
+    status: str = Form(...),
+    return_to: str = Form(default="detail"),
+    view: str = Form(default="pending"),
+    q: str = Form(default=""),
+) -> HTMLResponse:
+    try:
+        item = set_item_status(request.app.state.content_root, item_id, status)
+        _refresh_obsidian_links(request)
+    except KeyError:
+        return _not_found(request, "ideas")
+    except ValueError:
+        return _not_found(request, "ideas")
+    if return_to == "workspace":
+        if request.headers.get("HX-Request", "").lower() == "true":
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="partials/workspace_feed.html",
+                context=_workspace_feed_context(
+                    _collection(request),
+                    query=q,
+                    view=view,
+                    feed_notice="内容状态已更新。",
+                ),
+            )
+        return RedirectResponse(
+            request.url_for("workspace").include_query_params(
+                saved="status",
+                view=view if view in WORKSPACE_VIEWS else "pending",
+                q=q.strip(),
+            ),
+            status_code=303,
+        )
+    return RedirectResponse(
+        request.url_for("idea_detail", item_id=item.id).include_query_params(
+            saved="status",
+        ),
+        status_code=303,
+    )
+
+@router.post("/ideas/{item_id}/trash", name="trash_idea")
+async def trash_idea(request: Request, item_id: str) -> HTMLResponse:
+    try:
+        move_to_trash(request.app.state.content_root, item_id)
+    except KeyError:
+        return _not_found(request, "ideas")
+    return RedirectResponse(
+        request.url_for("ideas").include_query_params(saved="trashed"),
+        status_code=303,
+    )
+
+@router.get(
+    "/knowledge",
+    response_class=HTMLResponse,
+    name="knowledge",
+)
+async def knowledge(
+    request: Request,
+    saved: Optional[str] = Query(default=None),
+) -> HTMLResponse:
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="knowledge.html",
+        context=_knowledge_context(request, saved=saved),
+    )
+
+@router.post("/knowledge/analyze", name="analyze_knowledge")
+async def analyze_knowledge(
+    request: Request,
+    outbound_text: str = Form(default=""),
+) -> HTMLResponse:
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="knowledge.html",
+        context=_knowledge_context(
+            request,
+            error=(
+                "旧版学科元数据分析已经停用。请使用“人工拆卡任务”或"
+                "Obsidian 知识卡模板，候选结果会写入正式知识卡。"
+            ),
+        ),
+        status_code=410,
+    )
+
+@router.post(
+    "/knowledge/analyze/manual", name="manual_analyze_knowledge"
+)
+async def manual_analyze_knowledge(request: Request) -> HTMLResponse:
+    collection = _collection(request)
+    store = load_knowledge_store(request.app.state.content_root)
+    covered = {
+        source_id
+        for card in store.cards
+        if card.status != "archived"
+        for source_id in card.source_ids
+    }
+    pending_items = tuple(
+        item
+        for item in eligible_items(collection)
+        if item.kind != "weekly-review" and item.id not in covered
+    )
+    if not pending_items:
+        return RedirectResponse(
+            request.url_for("knowledge").include_query_params(saved="up-to-date"),
+            status_code=303,
+        )
+    selected = pending_items[: POLICIES[ModelTaskKind.KNOWLEDGE].max_items]
+    payload = json.dumps(
+        {
+            "sources": [
+                {"id": item.id, "title": item.title, "body": item.body}
+                for item in selected
+            ],
+            "allowed_subjects": list(DEFAULT_SUBJECTS),
+            "allowed_relation_targets": [
+                item.id for item in eligible_items(collection)
+            ],
+            "allowed_map_ids": [
+                item.id
+                for item in load_knowledge_store(
+                    request.app.state.content_root
+                ).maps
+            ],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    try:
+        task = request.app.state.model_tasks.create(
+            task_type=ModelTaskKind.KNOWLEDGE.value,
+            purpose="把原始来源拆成可追溯的原子知识卡候选",
+            source_labels=tuple(item.title for item in selected),
+            payload=payload,
+            return_url=str(request.url_for("knowledge")),
+        )
+    except ValueError as error:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="knowledge.html",
+            context=_knowledge_context(request, error=str(error)),
+            status_code=422,
+        )
+    return RedirectResponse(
+        request.url_for("model_task", task_id=task.id), status_code=303
+    )
+
+@router.post("/knowledge/confirm", name="confirm_knowledge")
+async def confirm_knowledge(request: Request) -> HTMLResponse:
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="knowledge.html",
+        context=_knowledge_context(
+            request,
+            error="旧版来源元数据确认已经停用，原始想法不会再承担正式知识结构。",
+        ),
+        status_code=410,
+    )
+
+@router.get("/reviews", response_class=HTMLResponse, name="reviews")
+async def reviews(
+    request: Request,
+    saved: Optional[str] = Query(default=None),
+) -> HTMLResponse:
+    collection = _collection(request)
+    settings = load_workspace_settings(request.app.state.content_root)
+    notices = {
+        "review": "本周回顾草稿已生成。",
+        "existing": "本周回顾已经存在，没有重复生成。",
+        "schedule": "本地定时设置已保存。",
+        "fallback": "模型未使用，已生成稳定的规则回顾草稿。",
+    }
+    review_items = tuple(
+        item for item in collection.items if item.kind == "weekly-review"
+    )
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="reviews.html",
+        context={
+            "active_page": "reviews",
+            "week_items": current_week_items(request.app.state.content_root),
+            "review_items": review_items,
+            "latest_review": review_items[0] if review_items else None,
+            "settings": settings,
+            "weekdays": WEEKDAYS,
+            "next_run": next_summary_run(settings),
+            "llm_enabled": request.app.state.llm_client.enabled,
+            "notice": notices.get(saved or ""),
+        },
+    )
+
+@router.post("/reviews/generate", name="generate_review")
+async def generate_review(
+    request: Request,
+    return_to: str = Form(default="reviews"),
+    use_ai: str = Form(default=""),
+    outbound_text: str = Form(default=""),
+) -> HTMLResponse:
+    client = request.app.state.llm_client
+    summarizer = None
+    if use_ai == "on" and client.enabled:
+        originals = current_week_items(request.app.state.content_root)
+        if not outbound_text:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="llm_disclosure.html",
+                context=_disclosure_context(
+                    request,
+                    purpose="生成中性、直接的本周记录汇总",
+                    task_type=ModelTaskKind.WEEKLY_REVIEW.value,
+                    source_labels=tuple(item.title for item in originals),
+                    submit_url=request.url_for("generate_review"),
+                    outbound_text=_items_payload(originals),
+                    back_url=request.url_for("reviews"),
+                    hidden_fields={"return_to": return_to, "use_ai": "on"},
+                ),
+            )
+        try:
+            reviewed_items = _redacted_items(outbound_text, originals)
+        except ValueError as error:
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="llm_disclosure.html",
+                context=_disclosure_context(
+                    request,
+                    purpose="生成中性、直接的本周记录汇总",
+                    task_type=ModelTaskKind.WEEKLY_REVIEW.value,
+                    source_labels=tuple(item.title for item in originals),
+                    submit_url=request.url_for("generate_review"),
+                    outbound_text=outbound_text,
+                    back_url=request.url_for("reviews"),
+                    hidden_fields={"return_to": return_to, "use_ai": "on"},
+                    error=str(error),
+                ),
+                status_code=422,
+            )
+
+        def summarize_reviewed(_items):
+            return client.summarize(reviewed_items)
+
+        summarizer = summarize_reviewed
+    try:
+        _, created, used_ai = await asyncio.to_thread(
+            save_weekly_review,
+            request.app.state.content_root,
+            summarizer=summarizer,
+        )
+    except ValueError as error:
+        if return_to == "workspace":
+            return TEMPLATES.TemplateResponse(
+                request=request,
+                name="workspace.html",
+                context=_workspace_context(
+                    request,
+                    error=str(error),
+                    view="pending",
+                ),
+                status_code=422,
+            )
+        collection = _collection(request)
+        settings = load_workspace_settings(request.app.state.content_root)
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="reviews.html",
+            context={
+                "active_page": "reviews",
+                "week_items": (),
+                "review_items": tuple(
+                    item
+                    for item in collection.items
+                    if item.kind == "weekly-review"
+                ),
+                "latest_review": None,
+                "settings": settings,
+                "weekdays": WEEKDAYS,
+                "next_run": next_summary_run(settings),
+                "llm_enabled": client.enabled,
+                "error": str(error),
+            },
+            status_code=422,
+        )
+    saved = "existing" if not created else "review" if used_ai else "fallback"
+    if return_to == "workspace":
+        return RedirectResponse(
+            request.url_for("workspace").include_query_params(
+                saved=saved,
+                view="pending",
+            ),
+            status_code=303,
+        )
+    return RedirectResponse(
+        request.url_for("reviews").include_query_params(saved=saved),
+        status_code=303,
+    )
+
+@router.post("/reviews/manual", name="manual_review_task")
+async def manual_review_task(request: Request) -> HTMLResponse:
+    originals = current_week_items(request.app.state.content_root)
+    if not originals:
+        return RedirectResponse(
+            request.url_for("reviews").include_query_params(saved="fallback"),
+            status_code=303,
+        )
+    try:
+        task = request.app.state.model_tasks.create(
+            task_type=ModelTaskKind.WEEKLY_REVIEW.value,
+            purpose="生成中性、直接、可追溯的本周记录汇总",
+            source_labels=tuple(item.title for item in originals),
+            payload=_items_payload(originals),
+            return_url=str(request.url_for("reviews")),
+        )
+    except ValueError as error:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="reviews.html",
+            context={
+                "active_page": "reviews",
+                "week_items": originals,
+                "review_items": tuple(
+                    item
+                    for item in _collection(request).items
+                    if item.kind == "weekly-review"
+                ),
+                "latest_review": None,
+                "settings": load_workspace_settings(
+                    request.app.state.content_root
+                ),
+                "weekdays": WEEKDAYS,
+                "next_run": next_summary_run(
+                    load_workspace_settings(request.app.state.content_root)
+                ),
+                "llm_enabled": request.app.state.llm_client.enabled,
+                "error": str(error),
+            },
+            status_code=422,
+        )
+    return RedirectResponse(
+        request.url_for("model_task", task_id=task.id), status_code=303
+    )
+
+@router.post("/reviews/schedule", name="save_review_schedule")
+async def save_review_schedule(
+    request: Request,
+    enabled: Optional[str] = Form(default=None),
+    weekday: int = Form(...),
+    time_value: str = Form(..., alias="time"),
+) -> HTMLResponse:
+    try:
+        save_workspace_settings(
+            request.app.state.content_root,
+            enabled=enabled == "on",
+            weekday=weekday,
+            time_value=time_value,
+        )
+    except ValueError:
+        return _not_found(request, "reviews")
+    return RedirectResponse(
+        request.url_for("reviews").include_query_params(saved="schedule"),
+        status_code=303,
+    )

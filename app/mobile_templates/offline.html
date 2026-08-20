@@ -1,1 +1,16 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/mobile-assets/mobile.css"><title>羽白随手记 · 离线</title></head><body><main class="mobile-shell"><header class="mobile-brand"><img src="/mobile-assets/icon.svg" alt=""><div><strong>羽白随手记</strong><small>OFFLINE CAPTURE</small></div><span id="network-state">离线排队中</span></header><section class="paper-card capture-card"><p class="eyebrow">MAC IS SLEEPING</p><h1>它先睡，我先记。</h1><p>内容会暂存在这台 Android 的浏览器存储中，并依赖设备锁屏与磁盘加密保护；重新连上 Mac 后再同步。</p><form id="capture-form"><label class="body-field"><span>突然想到……</span><textarea name="body" rows="8" maxlength="50000" required></textarea></label><details><summary>标题、标签和分类</summary><label>标题<input name="title" maxlength="120"></label><label>标签<input name="tags"></label><label>分类<input name="category" maxlength="40"></label></details><label class="image-picker"><span>添加图片 <small>最多 5 张</small></span><input name="images" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" multiple></label><div id="image-summary" class="quiet-note"></div><button class="primary-button" type="submit">保存在手机待同步</button></form><div class="sync-strip"><span><b id="queue-count">0</b> 条待同步</span><a href="/">重试连接</a></div><p id="sync-message" class="quiet-note" aria-live="polite"></p></section></main><script src="/mobile-assets/mobile.js" defer></script></body></html>
+{% extends "base.html" %}
+{% block title %}离线记录 · 羽白工作台{% endblock %}
+{% block content %}
+<section class="paper-card capture-card">
+  <p class="eyebrow">MAC IS SLEEPING</p><h1>它先睡，我先记。</h1>
+  <p>新记录会暂存在这台 Android 的浏览器存储中，重新连上 Mac 后再同步。最近一次成功保存的知识库快照仍可离线阅读；未访问过或已清除的知识内容需要联网后重新获取。</p>
+  <p><a class="back-link" href="/knowledge">打开离线知识库 →</a></p>
+  <form id="capture-form">
+    <label class="body-field"><span>突然想到……</span><textarea name="body" rows="5" maxlength="50000" placeholder="先写下来，不急着完整。" required></textarea></label>
+    <details><summary>标题、标签和分类</summary><label>标题<input name="title" maxlength="120"></label><label>标签<input name="tags"></label><label>分类<input name="category" maxlength="40"></label></details>
+    <label class="image-picker"><span><b>＋ 添加图片</b><small>最多 5 张 · PNG / JPEG / WebP</small></span><input name="images" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" multiple></label><div id="image-summary" class="quiet-note"></div>
+    <button class="primary-button" type="submit">保存在手机待同步</button>
+  </form>
+  <div class="sync-strip"><span><b id="queue-count">0</b> 条待同步</span><a href="/">重试连接</a></div><p id="sync-message" class="quiet-note" aria-live="polite"></p>
+</section>
+{% endblock %}

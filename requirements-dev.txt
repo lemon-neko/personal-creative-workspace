@@ -1,4 +1,6 @@
 # 羽白的幻想栈 — 开发依赖
 
-pytest>=7.0
-ruff>=0.1
+pytest>=8.4,<9.0
+pytest-cov>=7.1,<8.0
+ruff>=0.16,<1.0
+playwright>=1.61,<2.0

@@ -28,6 +28,18 @@ from app.mobile import (
     OfflineCapture,
     manifest_payload,
 )
+from app.mobile_knowledge import (
+    CARD_STATUS_LABELS,
+    CARD_TYPE_LABELS,
+    active_cards,
+    cards_for_map,
+    child_maps,
+    latest_knowledge_update,
+    relation_projections,
+    render_mobile_markdown,
+    source_summaries,
+)
+from app.knowledge_store import load_knowledge_store
 from app.privacy import default_data_root, prepare_private_root
 
 
@@ -77,10 +89,9 @@ class MobileSecurityMiddleware(BaseHTTPMiddleware):
             forwarded_for = request.headers.get("x-forwarded-for", "")
             try:
                 forwarded_ip = ipaddress.ip_address(forwarded_for)
-                is_tailnet = (
-                    forwarded_ip in ipaddress.ip_network("100.64.0.0/10")
-                    or forwarded_ip in ipaddress.ip_network("fd7a:115c:a1e0::/48")
-                )
+                is_tailnet = forwarded_ip in ipaddress.ip_network(
+                    "100.64.0.0/10"
+                ) or forwarded_ip in ipaddress.ip_network("fd7a:115c:a1e0::/48")
             except ValueError:
                 is_tailnet = False
             if not is_tailnet:
@@ -152,7 +163,7 @@ def create_mobile_app(
     store = MobileStore(resolved_data_root)
     service = MobileCaptureService(resolved_data_root, resolved_content_root, store)
     mobile_app = FastAPI(
-        title="羽白随手记",
+        title="羽白工作台",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -173,11 +184,17 @@ def create_mobile_app(
     @mobile_app.get("/", response_class=HTMLResponse)
     async def mobile_home(request: Request) -> HTMLResponse:
         session = _session(request)
-        pair_csrf = request.cookies.get(PAIR_CSRF_COOKIE, "") or secrets.token_urlsafe(32)
+        pair_csrf = request.cookies.get(PAIR_CSRF_COOKIE, "") or secrets.token_urlsafe(
+            32
+        )
         response = MOBILE_TEMPLATES.TemplateResponse(
             request=request,
             name="index.html",
-            context={"paired": session is not None, "pair_csrf": pair_csrf},
+            context={
+                "paired": session is not None,
+                "pair_csrf": pair_csrf,
+                "active_page": "capture",
+            },
         )
         if session is None:
             response.set_cookie(
@@ -194,7 +211,141 @@ def create_mobile_app(
     @mobile_app.get("/offline", response_class=HTMLResponse)
     async def offline(request: Request) -> HTMLResponse:
         return MOBILE_TEMPLATES.TemplateResponse(
-            request=request, name="offline.html", context={}
+            request=request,
+            name="offline.html",
+            context={"paired": True, "active_page": "capture"},
+        )
+
+    def paired_or_redirect(request: Request) -> MobileSession | RedirectResponse:
+        session = _session(request)
+        if session is None:
+            return RedirectResponse("/", status_code=303)
+        return session
+
+    def knowledge_not_found(request: Request) -> HTMLResponse:
+        return MOBILE_TEMPLATES.TemplateResponse(
+            request=request,
+            name="knowledge_404.html",
+            context={"paired": True, "active_page": "knowledge"},
+            status_code=404,
+        )
+
+    def knowledge_page(
+        request: Request, name: str, context: dict[str, object]
+    ) -> HTMLResponse:
+        response = MOBILE_TEMPLATES.TemplateResponse(
+            request=request,
+            name=name,
+            context={"paired": True, "active_page": "knowledge", **context},
+        )
+        response.headers["X-PCW-Offline-Knowledge"] = "1"
+        return response
+
+    @mobile_app.get("/knowledge", response_class=HTMLResponse)
+    async def mobile_knowledge(request: Request) -> Response:
+        if isinstance(paired_or_redirect(request), RedirectResponse):
+            return RedirectResponse("/", status_code=303)
+        knowledge = load_knowledge_store(resolved_content_root)
+        cards = active_cards(knowledge)
+        subjects = tuple(item for item in knowledge.maps if item.kind == "subject")
+        topics = tuple(item for item in knowledge.maps if item.kind == "topic")
+        subject_rows = tuple(
+            {
+                "map": item,
+                "children": child_maps(knowledge, item.id),
+                "card_count": len(cards_for_map(knowledge, item)),
+            }
+            for item in subjects
+        )
+        offline_paths = (
+            "/knowledge",
+            *(f"/knowledge/maps/{item.id}" for item in knowledge.maps),
+            *(
+                f"/knowledge/cards/{card.id}"
+                for card in knowledge.cards
+                if card.status != "archived"
+            ),
+        )
+        return knowledge_page(
+            request,
+            "knowledge.html",
+            {
+                "subjects": subject_rows,
+                "topics": topics,
+                "cards": cards,
+                "recent_cards": cards[:12],
+                "latest_update": latest_knowledge_update(knowledge),
+                "diagnostic_count": len(knowledge.diagnostics),
+                "card_type_labels": CARD_TYPE_LABELS,
+                "offline_paths": offline_paths,
+            },
+        )
+
+    @mobile_app.get("/knowledge/maps/{map_id}", response_class=HTMLResponse)
+    async def mobile_knowledge_map(request: Request, map_id: str) -> Response:
+        if isinstance(paired_or_redirect(request), RedirectResponse):
+            return RedirectResponse("/", status_code=303)
+        knowledge = load_knowledge_store(resolved_content_root)
+        item = knowledge.map(map_id)
+        if item is None:
+            return knowledge_not_found(request)
+        maps = {candidate.id: candidate for candidate in knowledge.maps}
+        return knowledge_page(
+            request,
+            "knowledge_map.html",
+            {
+                "item": item,
+                "parents": tuple(
+                    maps[parent_id]
+                    for parent_id in item.parent_ids
+                    if parent_id in maps
+                ),
+                "children": child_maps(knowledge, item.id),
+                "cards": cards_for_map(knowledge, item),
+                "body_html": render_mobile_markdown(
+                    item.body,
+                    source=item.source,
+                    content_root=resolved_content_root,
+                    store=knowledge,
+                )
+                if item.body
+                else "",
+                "card_type_labels": CARD_TYPE_LABELS,
+            },
+        )
+
+    @mobile_app.get("/knowledge/cards/{card_id}", response_class=HTMLResponse)
+    async def mobile_knowledge_card(request: Request, card_id: str) -> Response:
+        if isinstance(paired_or_redirect(request), RedirectResponse):
+            return RedirectResponse("/", status_code=303)
+        knowledge = load_knowledge_store(resolved_content_root)
+        card = knowledge.card(card_id)
+        if card is None:
+            return knowledge_not_found(request)
+        maps = {item.id: item for item in knowledge.maps}
+        replacement = knowledge.card(card.superseded_by) if card.superseded_by else None
+        return knowledge_page(
+            request,
+            "knowledge_card.html",
+            {
+                "card": card,
+                "body_html": render_mobile_markdown(
+                    card.body,
+                    source=card.source,
+                    content_root=resolved_content_root,
+                    store=knowledge,
+                ),
+                "maps": tuple(
+                    maps[map_id] for map_id in card.map_ids if map_id in maps
+                ),
+                "sources": source_summaries(resolved_content_root, card),
+                "relations": relation_projections(
+                    resolved_content_root, knowledge, card
+                ),
+                "replacement": replacement,
+                "card_type_labels": CARD_TYPE_LABELS,
+                "card_status_labels": CARD_STATUS_LABELS,
+            },
         )
 
     @mobile_app.get("/manifest.webmanifest")
@@ -342,15 +493,10 @@ def create_mobile_app(
         return response
 
     return mobile_app
-
-
-app = create_mobile_app()
-
-
 def main() -> None:
     os.umask(0o077)
     uvicorn.run(
-        "app.mobile_main:app",
+        "app.mobile_asgi:app",
         host="127.0.0.1",
         port=8766,
         reload=False,
