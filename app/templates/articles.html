@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}文章创作 · 羽白工作台{% endblock %}
+
+{% block content %}
+<header class="page-header split-header">
+    <div>
+        <p class="eyebrow">WRITING DESK</p>
+        <h1>文章创作</h1>
+        <p>文章是独立创作产物。可以参考随想和知识，但不要求建立强关联。</p>
+    </div>
+    <div class="detail-actions">
+        <a class="secondary-button" href="{{ url_for('publish_index') }}">公众号发布台</a>
+        <a class="secondary-button" href="{{ url_for('video_studio') }}">视频工作台</a>
+    </div>
+</header>
+
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<section class="paper-panel">
+    <div class="panel-heading">
+        <div><p class="eyebrow">NEW ARTICLE</p><h2>新建文章草稿</h2></div>
+        <span class="status-badge status-draft">草稿</span>
+    </div>
+    <form class="edit-form" action="{{ url_for('create_article') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <label class="field"><span>正文或写作提纲</span><textarea name="body" rows="9" maxlength="50000" required placeholder="先写一个提纲也可以。">{{ form_data.body if form_data else '' }}</textarea></label>
+        <details>
+            <summary>标题、标签与分类</summary>
+            <div class="field-grid">
+                <label class="field"><span>标题</span><input name="title" maxlength="120" value="{{ form_data.title if form_data else '' }}" placeholder="留空则从正文生成"></label>
+                <label class="field"><span>分类</span><input name="category" maxlength="40" value="{{ form_data.category if form_data else '' }}"></label>
+            </div>
+            <label class="field"><span>标签</span><input name="tags" value="{{ form_data.tags if form_data else '' }}" placeholder="逗号分隔"></label>
+        </details>
+        <button class="primary-button" type="submit">创建文章草稿</button>
+    </form>
+</section>
+
+<section class="section-block">
+    <div class="panel-heading"><div><p class="eyebrow">ARTICLES</p><h2>文章草稿与成稿</h2></div><span>{{ articles|length }} 篇</span></div>
+    {% if articles %}
+    <div class="archive-list">
+        {% for item in articles %}
+        <article class="archive-item">
+            <div class="archive-date"><strong>{{ item.created_at.strftime('%m.%d') }}</strong><span>{{ item.created_at.year }}</span></div>
+            <div>
+                <div class="meta-line"><span class="kind-badge">文章</span><span class="status-badge status-{{ item.status }}">{{ content_status_labels('article')[item.status] }}</span></div>
+                <h2><a href="{{ url_for('article_detail', item_id=item.id) }}">{{ item.title }}</a></h2>
+                <p>{{ item.summary }}</p>
+                {% if item.tags %}<div class="tag-row">{% for tag in item.tags %}<span># {{ tag }}</span>{% endfor %}</div>{% endif %}
+            </div>
+            <div class="archive-actions"><a href="{{ url_for('publish_item', item_id=item.id) }}">公众号排版</a><a href="{{ url_for('article_detail', item_id=item.id) }}">编辑 →</a></div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}<div class="empty-state compact"><h3>还没有文章</h3><p>随想可以保持碎片，文章等真正想写时再创建。</p></div>{% endif %}
+</section>
+
+{% if diagnostics %}<details class="diagnostics"><summary>内容诊断 · {{ diagnostics|length }}</summary>{% for diagnostic in diagnostics %}<p><code>{{ diagnostic.source.name }}</code> · {{ diagnostic.message }}</p>{% endfor %}</details>{% endif %}
+{% endblock %}

@@ -1,15 +1,23 @@
 (() => {
   "use strict";
 
-  const preview = document.querySelector("#publish-preview");
-  const plainText = document.querySelector("#publish-plain-text");
+  const previewFrame = document.querySelector(".preview-frame");
   const copyButton = document.querySelector("#copy-rich-text");
   const downloadButton = document.querySelector("#download-html");
   const status = document.querySelector("#publish-status");
+  const contextLabel = document.querySelector("#preview-context-label");
+  const tabButtons = Array.from(document.querySelectorAll("[data-preview-target]"));
+  const widthButtons = Array.from(document.querySelectorAll("[data-preview-width]"));
 
-  if (!preview || !plainText || !copyButton || !downloadButton || !status) {
+  if (!previewFrame || !copyButton || !downloadButton || !status) {
     return;
   }
+
+  const activePane = () =>
+    previewFrame.querySelector(".preview-pane:not([hidden])");
+  const activePreview = () => activePane()?.querySelector(".publish-preview");
+  const activePlainText = () =>
+    activePane()?.querySelector(".publish-plain-text")?.value || "";
 
   const setStatus = (message, tone = "") => {
     status.textContent = message;
@@ -110,12 +118,93 @@
     return { embeddedImageCount, imageFallbackCount };
   };
 
+  const cleanInlineStyle = (value) =>
+    value
+      .split(";")
+      .map((part) => part.trim())
+      .filter((part) => {
+        if (!part || !part.includes(":")) {
+          return false;
+        }
+        const cssValue = part.slice(part.indexOf(":") + 1).trim();
+        return (
+          cssValue &&
+          !/\b(?:undefined|null|expression)\b/i.test(cssValue) &&
+          !/var\s*\(/i.test(cssValue) &&
+          !/javascript\s*:/i.test(cssValue)
+        );
+      })
+      .join(";");
+
+  const normalizeExportNode = (root) => {
+    const nodes = [root, ...root.querySelectorAll("*")];
+    nodes.forEach((node) => {
+      Array.from(node.attributes || []).forEach((attribute) => {
+        const name = attribute.name.toLowerCase();
+        if (
+          name === "class" ||
+          name === "id" ||
+          name === "contenteditable" ||
+          name.startsWith("on") ||
+          (name.startsWith("data-") && name !== "data-platform")
+        ) {
+          node.removeAttribute(attribute.name);
+        }
+      });
+      const style = cleanInlineStyle(node.getAttribute("style") || "");
+      if (style) {
+        node.setAttribute("style", style);
+      } else {
+        node.removeAttribute("style");
+      }
+    });
+
+    root.querySelectorAll("a[href]").forEach((link) => {
+      const href = link.getAttribute("href") || "";
+      if (!/^(?:https?:|mailto:)/i.test(href)) {
+        link.removeAttribute("href");
+      }
+    });
+    root.querySelectorAll("table").forEach((table) => {
+      table.style.width = "100%";
+      table.style.maxWidth = "100%";
+      table.style.tableLayout = "fixed";
+    });
+    root.querySelectorAll("th, td").forEach((cell) => {
+      cell.style.whiteSpace = "normal";
+      cell.style.wordBreak = "break-word";
+      cell.style.overflowWrap = "anywhere";
+    });
+    root.querySelectorAll("pre, pre code").forEach((code) => {
+      code.style.maxWidth = "100%";
+      code.style.overflow = "visible";
+      code.style.whiteSpace = "pre-wrap";
+      code.style.wordBreak = "break-all";
+    });
+  };
+
+  const emptyBoundary = () => {
+    const node = document.createElement("p");
+    node.style.fontSize = "0";
+    node.style.lineHeight = "0";
+    node.style.margin = "0";
+    node.innerHTML = "&nbsp;";
+    return node;
+  };
+
   const prepareExport = async () => {
     await waitForMathJax();
-    const clone = preview.cloneNode(true);
-    clone.removeAttribute("id");
+    const preview = activePreview();
+    if (!preview) {
+      throw new Error("没有可复制的正文预览");
+    }
+    const article = preview.firstElementChild;
+    if (!article) {
+      throw new Error("正文结构不完整");
+    }
+    const clone = article.cloneNode(true);
     const originalFormulas = Array.from(
-      preview.querySelectorAll("[data-formula-source]"),
+      article.querySelectorAll("[data-formula-source]"),
     );
     const clonedFormulas = Array.from(
       clone.querySelectorAll("[data-formula-source]"),
@@ -160,6 +249,9 @@
       }
     }
     const imageResult = await embedImages(clone);
+    normalizeExportNode(clone);
+    clone.insertBefore(emptyBoundary(), clone.firstChild);
+    clone.appendChild(emptyBoundary());
     return {
       node: clone,
       formulaFallbackCount: fallbackCount,
@@ -223,7 +315,7 @@
       if (navigator.clipboard?.write && window.ClipboardItem) {
         const item = new ClipboardItem({
           "text/html": new Blob([html], { type: "text/html" }),
-          "text/plain": new Blob([plainText.value], { type: "text/plain" }),
+          "text/plain": new Blob([activePlainText()], { type: "text/plain" }),
         });
         await navigator.clipboard.write([item]);
       } else {
@@ -243,10 +335,11 @@
     setStatus("正在生成包含公式与内嵌图片的正文 HTML……");
     try {
       const prepared = await prepareExport();
+      const preview = activePreview();
       const documentHtml = [
         "<!doctype html>",
         '<html lang="zh-CN"><head><meta charset="utf-8">',
-        `<title>${escapeHtml(preview.dataset.exportTitle || "公众号文章")}</title>`,
+        `<title>${escapeHtml(preview?.dataset.exportTitle || "公众号文章")}</title>`,
         "</head><body>",
         prepared.node.outerHTML,
         "</body></html>",
@@ -254,7 +347,7 @@
       const blob = new Blob([documentHtml], { type: "text/html;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
-      const safeTitle = (preview.dataset.exportTitle || "wechat-article")
+      const safeTitle = (preview?.dataset.exportTitle || "wechat-article")
         .replace(/[\\/:*?"<>|]/g, "-")
         .slice(0, 80);
       anchor.href = url;
@@ -274,4 +367,35 @@
 
   copyButton.addEventListener("click", copyArticle);
   downloadButton.addEventListener("click", downloadArticle);
+
+  widthButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const isEditor = button.dataset.previewWidth === "editor";
+      previewFrame.classList.toggle("is-editor", isEditor);
+      previewFrame.classList.toggle("is-mobile", !isEditor);
+      widthButtons.forEach((candidate) => {
+        const active = candidate === button;
+        candidate.classList.toggle("active", active);
+        candidate.setAttribute("aria-pressed", String(active));
+      });
+    });
+  });
+
+  tabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.dataset.previewTarget;
+      previewFrame.querySelectorAll("[data-preview-pane]").forEach((pane) => {
+        pane.hidden = pane.dataset.previewPane !== target;
+      });
+      tabButtons.forEach((candidate) => {
+        const active = candidate === button;
+        candidate.classList.toggle("active", active);
+        candidate.setAttribute("aria-selected", String(active));
+      });
+      if (contextLabel) {
+        contextLabel.textContent = target === "candidate" ? "幻想栈候选正文" : "忠实正文";
+      }
+      setStatus("已切换预览，复制将使用当前标签页正文。");
+    });
+  });
 })();

@@ -41,8 +41,9 @@ PROJECT_STATUSES = {"draft", "active", "archived"}
 RESUME_STATUSES = {"draft", "active", "archived"}
 LEARNING_STATUSES = {"backlog", "active", "done", "paused"}
 QUEST_STATUSES = {"locked", "available", "active", "cleared"}
-CAMPAIGN_STATUSES = {"planned", "active", "completed"}
-SCHEMA_VERSION = 2
+CAMPAIGN_STATUSES = {"planned", "active", "completed", "archived"}
+REFERENCE_STATUSES = {"backlog", "reading", "building", "verified", "paused"}
+SCHEMA_VERSION = 3
 
 
 def _now() -> str:
@@ -120,6 +121,9 @@ class JobOpportunity:
     notes: str
     created_at: str
     updated_at: str
+    captured_at: str = ""
+    is_primary: int = 0
+    capability_summary: str = ""
 
 
 @dataclass(frozen=True)
@@ -160,6 +164,43 @@ class LearningTask:
     linked_content_id: str
     linked_project_id: str
     notes: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class CapabilityDomain:
+    id: str
+    title: str
+    priority: str
+    summary: str
+    sort_order: int
+
+
+@dataclass(frozen=True)
+class JobCapability:
+    job_id: str
+    capability_id: str
+    requirement_summary: str
+    importance: int
+
+
+@dataclass(frozen=True)
+class LearningReference:
+    id: str
+    name: str
+    repo_url: str
+    snapshot_date: str
+    week: int
+    study_focus: str
+    target_modules: str
+    deliverable: str
+    acceptance_command: str
+    status: str
+    commit_sha: str
+    test_result: str
+    reflection: str
+    is_optional: int
     created_at: str
     updated_at: str
 
@@ -299,6 +340,52 @@ CREATE TABLE IF NOT EXISTS quest_evidence (
 """
 
 
+CAREER_RADAR_SCHEMA = """
+ALTER TABLE jobs ADD COLUMN captured_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE jobs ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE jobs ADD COLUMN capability_summary TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS career_radar_state (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    baseline_version TEXT NOT NULL, applied_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS capability_domains (
+    id TEXT PRIMARY KEY, title TEXT NOT NULL, priority TEXT NOT NULL,
+    summary TEXT NOT NULL, sort_order INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_capabilities (
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    capability_id TEXT NOT NULL REFERENCES capability_domains(id) ON DELETE CASCADE,
+    requirement_summary TEXT NOT NULL, importance INTEGER NOT NULL,
+    PRIMARY KEY(job_id, capability_id)
+);
+CREATE TABLE IF NOT EXISTS capability_skills (
+    capability_id TEXT NOT NULL REFERENCES capability_domains(id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    PRIMARY KEY(capability_id, skill_id)
+);
+CREATE TABLE IF NOT EXISTS learning_references (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, repo_url TEXT NOT NULL,
+    snapshot_date TEXT NOT NULL, week INTEGER NOT NULL,
+    study_focus TEXT NOT NULL, target_modules TEXT NOT NULL,
+    deliverable TEXT NOT NULL, acceptance_command TEXT NOT NULL,
+    status TEXT NOT NULL, commit_sha TEXT NOT NULL DEFAULT '',
+    test_result TEXT NOT NULL DEFAULT '', reflection TEXT NOT NULL DEFAULT '',
+    is_optional INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS learning_reference_capabilities (
+    reference_id TEXT NOT NULL REFERENCES learning_references(id) ON DELETE CASCADE,
+    capability_id TEXT NOT NULL REFERENCES capability_domains(id) ON DELETE CASCADE,
+    PRIMARY KEY(reference_id, capability_id)
+);
+CREATE TABLE IF NOT EXISTS learning_reference_tasks (
+    reference_id TEXT NOT NULL REFERENCES learning_references(id) ON DELETE CASCADE,
+    learning_task_id TEXT NOT NULL REFERENCES learning_tasks(id) ON DELETE CASCADE,
+    PRIMARY KEY(reference_id, learning_task_id)
+);
+"""
+
+
 class CareerRepository:
     """Small transaction-oriented repository for one local author."""
 
@@ -327,7 +414,8 @@ class CareerRepository:
             legacy_version=legacy_version,
             migrations={
                 1: f"{SCHEMA}\nPRAGMA user_version = 1;",
-                2: f"{CAMPAIGN_SCHEMA}\nPRAGMA user_version = {SCHEMA_VERSION};",
+                2: f"{CAMPAIGN_SCHEMA}\nPRAGMA user_version = 2;",
+                3: f"{CAREER_RADAR_SCHEMA}\nPRAGMA user_version = {SCHEMA_VERSION};",
             },
         )
 
@@ -701,6 +789,230 @@ class CareerRepository:
             "SELECT * FROM learning_tasks ORDER BY priority DESC, updated_at DESC",
             LearningTask,
         )
+
+    def capability_domains(self) -> tuple[CapabilityDomain, ...]:
+        return self._rows(
+            "SELECT * FROM capability_domains ORDER BY sort_order", CapabilityDomain
+        )
+
+    def job_capabilities(self) -> tuple[JobCapability, ...]:
+        return self._rows(
+            "SELECT * FROM job_capabilities ORDER BY importance DESC, capability_id",
+            JobCapability,
+        )
+
+    def capability_skill_ids(self) -> dict[str, tuple[str, ...]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT capability_id,skill_id FROM capability_skills ORDER BY skill_id"
+            ).fetchall()
+        result: dict[str, list[str]] = {}
+        for row in rows:
+            result.setdefault(row["capability_id"], []).append(row["skill_id"])
+        return {key: tuple(values) for key, values in result.items()}
+
+    def learning_references(self) -> tuple[LearningReference, ...]:
+        return self._rows(
+            "SELECT * FROM learning_references ORDER BY is_optional, week, name",
+            LearningReference,
+        )
+
+    def learning_reference(self, reference_id: str) -> LearningReference | None:
+        rows = self._rows(
+            "SELECT * FROM learning_references WHERE id = ?",
+            LearningReference,
+            (reference_id,),
+        )
+        return rows[0] if rows else None
+
+    def reference_capability_ids(self) -> dict[str, tuple[str, ...]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT reference_id,capability_id FROM learning_reference_capabilities ORDER BY capability_id"
+            ).fetchall()
+        result: dict[str, list[str]] = {}
+        for row in rows:
+            result.setdefault(row["reference_id"], []).append(row["capability_id"])
+        return {key: tuple(values) for key, values in result.items()}
+
+    def reference_task_ids(self) -> dict[str, tuple[str, ...]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT reference_id,learning_task_id FROM learning_reference_tasks ORDER BY learning_task_id"
+            ).fetchall()
+        result: dict[str, list[str]] = {}
+        for row in rows:
+            result.setdefault(row["reference_id"], []).append(row["learning_task_id"])
+        return {key: tuple(values) for key, values in result.items()}
+
+    def update_learning_reference(
+        self,
+        reference_id: str,
+        *,
+        status: str,
+        commit_sha: str = "",
+        test_result: str = "",
+        reflection: str = "",
+    ) -> LearningReference:
+        if status not in REFERENCE_STATUSES:
+            raise ValueError("研读状态无效")
+        if self.learning_reference(reference_id) is None:
+            raise KeyError(reference_id)
+        values = (
+            status,
+            commit_sha.strip()[:120],
+            test_result.strip()[:20_000],
+            reflection.strip()[:20_000],
+            _now(),
+            reference_id,
+        )
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE learning_references
+                SET status=?,commit_sha=?,test_result=?,reflection=?,updated_at=?
+                WHERE id=?""",
+                values,
+            )
+        return self.learning_reference(reference_id)  # type: ignore[return-value]
+
+    def seed_career_radar(self) -> None:
+        """Install the dated manual baseline without resetting mutable progress."""
+
+        from app.career_radar import (
+            BASELINE_VERSION,
+            CAPABILITY_DOMAINS,
+            CAPABILITY_SKILL_NAMES,
+            JOB_CAPABILITIES,
+            JOB_SNAPSHOTS,
+            REFERENCE_PROJECTS,
+            SNAPSHOT_DATE,
+        )
+
+        stamp = _now()
+        with self.connect() as connection:
+            state = connection.execute(
+                "SELECT baseline_version FROM career_radar_state WHERE singleton=1"
+            ).fetchone()
+            first_application = state is None
+            if first_application:
+                connection.execute(
+                    "UPDATE learning_campaigns SET status='archived',updated_at=? WHERE id='agent-reliability-arena'",
+                    (stamp,),
+                )
+                connection.execute(
+                    "UPDATE learning_tasks SET status='paused',updated_at=? WHERE status IN ('backlog','active')",
+                    (stamp,),
+                )
+
+            for capability_id, title, priority, summary, sort_order in CAPABILITY_DOMAINS:
+                connection.execute(
+                    """INSERT INTO capability_domains(id,title,priority,summary,sort_order)
+                    VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                    title=excluded.title,priority=excluded.priority,
+                    summary=excluded.summary,sort_order=excluded.sort_order""",
+                    (capability_id, title, priority, summary, sort_order),
+                )
+
+            for snapshot in JOB_SNAPSHOTS:
+                connection.execute(
+                    """INSERT INTO jobs(
+                    id,company,title,location,source_url,jd_text,status,notes,
+                    created_at,updated_at,captured_at,is_primary,capability_summary)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                    company=excluded.company,title=excluded.title,
+                    source_url=excluded.source_url,jd_text=excluded.jd_text,
+                    captured_at=excluded.captured_at,is_primary=excluded.is_primary,
+                    capability_summary=excluded.capability_summary""",
+                    (
+                        snapshot["id"], snapshot["company"], snapshot["title"], "",
+                        snapshot["source_url"], snapshot["jd_text"], "saved", "",
+                        stamp, stamp, SNAPSHOT_DATE, snapshot["is_primary"],
+                        snapshot["capability_summary"],
+                    ),
+                )
+                for capability_id, requirement in JOB_CAPABILITIES[snapshot["id"]].items():
+                    connection.execute(
+                        """INSERT INTO job_capabilities(job_id,capability_id,requirement_summary,importance)
+                        VALUES(?,?,?,?) ON CONFLICT(job_id,capability_id) DO UPDATE SET
+                        requirement_summary=excluded.requirement_summary,importance=excluded.importance""",
+                        (snapshot["id"], capability_id, requirement, 5 if snapshot["is_primary"] else 3),
+                    )
+
+            skill_ids: dict[str, str] = {}
+            existing = {
+                row["name"].casefold(): row["id"]
+                for row in connection.execute("SELECT id,name FROM skills").fetchall()
+            }
+            for names in CAPABILITY_SKILL_NAMES.values():
+                for name in names:
+                    skill_id = existing.get(name.casefold())
+                    if skill_id is None:
+                        skill_id = f"radar-skill-{hashlib.sha256(name.encode()).hexdigest()[:10]}"
+                        connection.execute(
+                            """INSERT OR IGNORE INTO skills(id,name,category,current_level,target_level,notes)
+                            VALUES(?,?,?,?,?,?)""",
+                            (skill_id, name, "岗位雷达", 0, 3, "由 2026-08-21 岗位基线关联。"),
+                        )
+                    skill_ids[name] = skill_id
+            for capability_id, names in CAPABILITY_SKILL_NAMES.items():
+                for name in names:
+                    connection.execute(
+                        "INSERT OR IGNORE INTO capability_skills(capability_id,skill_id) VALUES(?,?)",
+                        (capability_id, skill_ids[name]),
+                    )
+
+            for reference in REFERENCE_PROJECTS:
+                connection.execute(
+                    """INSERT INTO learning_references(
+                    id,name,repo_url,snapshot_date,week,study_focus,target_modules,
+                    deliverable,acceptance_command,status,commit_sha,test_result,
+                    reflection,is_optional,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,'backlog','','','',?,?,?)
+                    ON CONFLICT(id) DO UPDATE SET
+                    name=excluded.name,repo_url=excluded.repo_url,
+                    snapshot_date=excluded.snapshot_date,week=excluded.week,
+                    study_focus=excluded.study_focus,target_modules=excluded.target_modules,
+                    deliverable=excluded.deliverable,
+                    acceptance_command=excluded.acceptance_command,is_optional=excluded.is_optional""",
+                    (
+                        reference["id"], reference["name"], reference["repo_url"],
+                        SNAPSHOT_DATE, reference["week"], reference["study_focus"],
+                        reference["target_modules"], reference["deliverable"],
+                        reference["acceptance_command"], reference.get("is_optional", 0),
+                        stamp, stamp,
+                    ),
+                )
+                for capability_id in reference["capabilities"]:
+                    connection.execute(
+                        "INSERT OR IGNORE INTO learning_reference_capabilities(reference_id,capability_id) VALUES(?,?)",
+                        (reference["id"], capability_id),
+                    )
+                if reference.get("is_optional"):
+                    continue
+                task_id = f"radar-week-{reference['week']}"
+                connection.execute(
+                    """INSERT INTO learning_tasks(
+                    id,skill_id,title,status,priority,linked_content_id,
+                    linked_project_id,notes,created_at,updated_at)
+                    VALUES(?,?,?,'backlog',5,'','',?,?,?) ON CONFLICT(id) DO UPDATE SET
+                    skill_id=excluded.skill_id,title=excluded.title,
+                    priority=excluded.priority,notes=excluded.notes""",
+                    (
+                        task_id, skill_ids[reference["skill"]],
+                        f"第 {reference['week']} 周：{reference['name']}",
+                        reference["deliverable"], stamp, stamp,
+                    ),
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO learning_reference_tasks(reference_id,learning_task_id) VALUES(?,?)",
+                    (reference["id"], task_id),
+                )
+
+            connection.execute(
+                """INSERT INTO career_radar_state(singleton,baseline_version,applied_at)
+                VALUES(1,?,?) ON CONFLICT(singleton) DO UPDATE SET baseline_version=excluded.baseline_version""",
+                (BASELINE_VERSION, stamp),
+            )
 
     def update_learning_task_status(self, task_id: str, status: str) -> None:
         if status not in LEARNING_STATUSES:

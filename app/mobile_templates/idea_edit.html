@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}编辑想法 · 羽白工作台{% endblock %}
+{% block content %}
+<section class="paper-card idea-editor" id="idea-editor" data-idea-id="{{ idea_id }}">
+  <a class="back-link" href="/ideas">← 返回想法</a>
+  <p class="eyebrow">EDIT THOUGHT</p>
+  <h1 id="idea-heading">加载想法中……</h1>
+  <form id="idea-edit-form">
+    <label>标题<input name="title" maxlength="120"></label>
+    <label>正文<textarea name="body" rows="10" maxlength="50000" required></textarea></label>
+    <label>标签<input name="tags" placeholder="生活，技术，观察"></label>
+    <label>分类<input name="category" maxlength="40"></label>
+    <label class="image-picker"><span><b>＋ 追加图片</b><small>最多 5 张，不删除已有附件</small></span><input name="images" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" multiple></label>
+    <button class="primary-button" type="submit">保存修改</button>
+  </form>
+  <p id="idea-edit-message" class="quiet-note" aria-live="polite"></p>
+</section>
+
+<section class="paper-card conflict-card" id="idea-conflict" hidden>
+  <p class="eyebrow">REVISION CONFLICT</p>
+  <h2>Mac 版本已经变化</h2>
+  <p>系统没有覆盖任何一边。先比较正文，再决定丢弃手机稿，或把合并后的内容保存到最新版本。</p>
+  <div class="conflict-grid">
+    <label>Mac / Obsidian 最新正文<textarea id="conflict-server-body" readonly></textarea></label>
+    <label>手机待同步正文<textarea id="conflict-local-body"></textarea></label>
+  </div>
+  <div class="button-row">
+    <button id="discard-mobile-edit" type="button">使用 Mac 版本</button>
+    <button id="save-merged-edit" class="primary-button compact" type="button">保存合并稿</button>
+  </div>
+</section>
+
+<section class="paper-card distill-card">
+  <details>
+    <summary>整理为知识卡</summary>
+    <p class="quiet-note">只新增一张独立知识卡，不修改这条随想。手机端只做手工拆卡，不调用模型。</p>
+    <form id="mobile-distill-form">
+      <label>卡片类型
+        <select name="card_type">
+          <option value="claim">观点</option>
+          <option value="concept">概念</option>
+          <option value="question">问题</option>
+          <option value="method">方法</option>
+          <option value="observation">观察</option>
+        </select>
+      </label>
+      <label>标题<input name="title" maxlength="160" required></label>
+      <label>原子结论<textarea name="body" rows="6" required></textarea></label>
+      <label>概念<input name="concepts" placeholder="记忆，认知，Agent"></label>
+      <fieldset>
+        <legend>归入主题地图（可多选）</legend>
+        <div id="mobile-topic-options" class="topic-options"></div>
+      </fieldset>
+      <button class="primary-button" type="submit">创建知识卡</button>
+    </form>
+    <p id="distill-message" class="quiet-note" aria-live="polite"></p>
+  </details>
+</section>
+{% endblock %}

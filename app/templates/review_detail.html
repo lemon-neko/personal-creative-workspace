@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}{{ item.title }} · 周回顾{% endblock %}
+
+{% block content %}
+<div class="detail-topbar"><a class="back-link" href="{{ url_for('reviews') }}">← 返回周回顾</a><div class="detail-actions"><a class="secondary-button" href="{{ obsidian_url }}">在 Obsidian 中打开</a></div></div>
+{% if request.query_params.get('notice') == 'article-required' %}<div class="message warning">周回顾用于中性总结，不直接进入公众号。需要发布时，请在“创作”中新建独立文章。</div>{% endif %}
+{% if request.query_params.get('saved') == 'updated' %}<div class="message success">周回顾已保存。</div>{% endif %}
+{% if request.query_params.get('saved') == 'status' %}<div class="message success">回顾状态已更新。</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<div class="editor-layout">
+    <section class="editor-panel">
+        <div class="panel-heading"><div><p class="eyebrow">WEEKLY REVIEW</p><h1>整理周回顾</h1></div><span class="status-badge status-{{ item.status }}">{{ content_status_labels('weekly-review')[item.status] }}</span></div>
+        <form action="{{ url_for('update_review', item_id=item.id) }}" method="post" class="edit-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="source_revision" value="{{ source_revision }}">
+            <label class="field"><span>标题</span><input name="title" maxlength="120" value="{{ item.title }}"></label>
+            <label class="field"><span>正文 <small>Markdown</small></span><textarea name="body" rows="20" maxlength="50000" required>{{ item.body }}</textarea></label>
+            <div class="field-grid"><label class="field"><span>标签</span><input name="tags" value="{{ tags_value }}"></label><label class="field"><span>分类</span><input name="category" maxlength="40" value="{{ item.category or '' }}"></label></div>
+            <button class="primary-button" type="submit">保存回顾</button>
+        </form>
+    </section>
+    <aside class="preview-panel"><p class="eyebrow">PREVIEW</p><article class="prose"><h1>{{ item.title }}</h1>{{ item_html|safe }}</article></aside>
+</div>
+
+<section class="status-actions"><div><h2>回顾状态</h2><p>回顾只负责整理一段时间的记录，不自动成为知识卡或公众号文章。</p></div><div>{% for value, label in content_status_labels('weekly-review').items() %}<form action="{{ url_for('change_review_status', item_id=item.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="status" value="{{ value }}"><button class="{{ 'active' if item.status == value else '' }}" type="submit">{{ label }}</button></form>{% endfor %}</div></section>
+{% endblock %}

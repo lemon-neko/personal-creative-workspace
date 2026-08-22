@@ -74,6 +74,17 @@
             <p>数字不是 KPI，只是证明这些念头来过。</p>
         </section>
 
+        <section class="rail-card assistant-rail-card">
+            <div class="rail-heading"><div><p class="eyebrow">DECISION COMPANION</p><h2>问问助手</h2></div><span class="light-spark" aria-hidden="true">✦</span></div>
+            <p>让它先读一份脱敏后的当前状态，再帮你判断最应该推进的一件事。</p>
+            <form action="{{ url_for('assistant_preview') }}" method="post" class="assistant-quick-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <textarea name="question" rows="3" maxlength="2000" placeholder="基于我现在的情况，应该先做什么？" required></textarea>
+                <button class="secondary-button full-button">检查上下文</button>
+            </form>
+            <div class="rail-footer"><span>不会立即调用模型</span><a href="{{ url_for('assistant') }}">完整对话 →</a></div>
+        </section>
+
         <section class="rail-card review-rail-card">
             <div class="rail-heading">
                 <div><p class="eyebrow">THIS WEEK</p><h2>本周回顾</h2></div>
@@ -81,7 +92,7 @@
             </div>
             <div class="week-progress"><strong>{{ week_items|length }}</strong><span>条本周记录</span></div>
             {% if latest_review %}
-            <p class="rail-note">最近回顾：<a href="{{ url_for('idea_detail', item_id=latest_review.id) }}">{{ latest_review.title }}</a></p>
+            <p class="rail-note">最近回顾：<a href="{{ url_for('review_detail', item_id=latest_review.id) }}">{{ latest_review.title }}</a></p>
             {% else %}
             <p class="rail-note">还没有本周回顾。先让这一周发生点什么。</p>
             {% endif %}
@@ -103,14 +114,14 @@
                 {% for item in article_drafts %}
                 <article>
                     <div><time>{{ item.date_label }}</time><h3>{{ item.title }}</h3></div>
-                    <a href="{{ url_for('publish_item', item_id=item.id) }}" aria-label="打开 {{ item.title }} 的公众号预览">↗</a>
+                    <a href="{{ url_for('article_detail', item_id=item.id) }}" aria-label="打开文章 {{ item.title }}">↗</a>
                 </article>
                 {% endfor %}
             </div>
             {% else %}
             <p class="rail-note">还没有文章草稿。碎片们正在角落里偷偷长大。</p>
             {% endif %}
-            <a class="text-link rail-link" href="{{ url_for('publish_index') }}">打开发布工作台 →</a>
+            <a class="text-link rail-link" href="{{ url_for('articles') }}">打开文章创作 →</a>
         </section>
 
         <section class="rail-card video-rail-card">

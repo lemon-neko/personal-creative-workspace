@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}助手人工桥接 · 羽白工作台{% endblock %}
+{% block content %}
+<header class="page-header"><p class="eyebrow">MANUAL BRIDGE</p><h1>把这一轮交给 ChatGPT / Codex</h1><p>任务包会在私有临时目录保留七天，不进入备份。复制出去前仍可以再次检查。</p></header>
+{% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
+<div class="assistant-preview-layout"><aside class="paper-panel"><h2>任务边界</h2><dl class="settings-list"><div><dt>预计输入</dt><dd>{{ task.estimated_input_tokens }} Token</dd></div><div><dt>输出上限</dt><dd>{{ task.max_output_tokens }} Token</dd></div><div><dt>到期时间</dt><dd>{{ task.expires_at[:16] }}</dd></div></dl><a class="text-link" href="{{ url_for('assistant') }}">返回助手</a></aside><section class="paper-panel"><label class="field"><span>完整任务包</span><textarea id="assistant-manual-prompt" rows="24" readonly>{{ task.prompt }}</textarea></label><button class="secondary-button" type="button" data-copy-target="assistant-manual-prompt">复制任务包</button><form action="{{ url_for('assistant_manual_import', task_id=task.id) }}" method="post" class="edit-form assistant-import"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label class="field"><span>粘贴模型返回的 JSON</span><textarea name="result" rows="16" required></textarea></label><button class="primary-button">校验并保存回答摘要</button></form></section></div>
+{% endblock %}

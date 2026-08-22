@@ -5,18 +5,19 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.content import load_items
+from app.content import load_items, semantic_revision
 from app.knowledge_store import (
     KnowledgeEdge,
     create_knowledge_card,
     create_knowledge_map,
+    load_knowledge_store,
     supersede_knowledge_card,
 )
 from app.main import create_app
 from app.mobile import MobileCaptureService, MobileStore, OfflineCapture
 from app.mobile_launcher import _funnel_enabled, validate_mobile_environment
 from app.mobile_main import _is_same_tailnet_origin, create_mobile_app
-from app.workspace import create_item, items_directory
+from app.workspace import create_item, items_directory, set_item_status, update_item
 
 
 TAILNET_HOST = "yubai-mac.example.ts.net"
@@ -219,17 +220,19 @@ def test_mobile_pwa_assets_are_local_and_do_not_cache_private_api(
     assert "indexedDB" in client.get("/mobile-assets/mobile.js").text
     assert 'url.pathname.startsWith("/api/")' in worker.text
     assert "isKnowledgePath(url.pathname)" in worker.text
-    assert "yubai-mobile-shell-v5" in worker.text
+    assert "yubai-mobile-shell-v6" in worker.text
     assert "yubai-mobile-knowledge-v1" in worker.text
-    assert 'styles/base.css?v=5' in worker.text
-    assert 'styles/knowledge.css?v=5' in worker.text
-    assert 'mobile.js?v=5' in worker.text
+    assert 'styles/base.css?v=6' in worker.text
+    assert 'styles/knowledge.css?v=6' in worker.text
+    assert 'mobile.js?v=6' in worker.text
     assert "CACHE_KNOWLEDGE_PATHS" in worker.text
     assert "CLEAR_KNOWLEDGE_CACHE" in worker.text
     assert "self.skipWaiting()" in worker.text
     assert "self.clients.claim()" in worker.text
     assert 'caches.match("/offline")' in worker.text
-    assert "syncCaptures()" in worker.text
+    assert "syncWorkspace()" in worker.text
+    assert "ideaEdits" in worker.text
+    assert 'isIdeaPath(url.pathname)' in worker.text
     assert "registration.sync.register" in client.get("/mobile-assets/mobile.js").text
     assert "capture-form" in client.get("/offline").text
 
@@ -475,6 +478,133 @@ def test_capture_is_idempotent_and_writes_private_markdown_and_image(
     assert oct(images[0].stat().st_mode & 0o777) == "0o600"
 
 
+def test_mobile_idea_snapshot_only_contains_unarchived_thoughts(
+    tmp_path: Path,
+) -> None:
+    content_root = tmp_path / "content"
+    visible = create_item(content_root, body="可以在手机继续修改的随想。")
+    archived = create_item(content_root, body="已经归档的随想。")
+    set_item_status(content_root, archived.id, "archived")
+    create_item(content_root, body="文章正文。", kind="article")
+    create_item(content_root, body="周回顾正文。", kind="weekly-review")
+    client, store = mobile_client(tmp_path)
+    pair(client, store)
+
+    response = client.get("/api/ideas/snapshot")
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [visible.id]
+    assert response.json()["items"][0]["revision"] == semantic_revision(visible)
+    assert client.get("/ideas").status_code == 200
+    assert "想法会长大" in client.get("/ideas").text
+    assert client.get(f"/ideas/{visible.id}").status_code == 200
+
+
+def test_mobile_idea_edit_is_idempotent_and_detects_revision_conflict(
+    tmp_path: Path,
+) -> None:
+    content_root = tmp_path / "content"
+    item = create_item(content_root, body="最初版本。", title="一条想法")
+    client, store = mobile_client(tmp_path)
+    csrf = pair(client, store)
+    payload = {
+        "operation_key": "edit-operation-001",
+        "expected_revision": semantic_revision(item),
+        "body": "手机离线编辑后的版本。",
+        "title": "手机编辑",
+        "tags": "生活,观察",
+        "category": "通勤",
+    }
+    png = b"\x89PNG\r\n\x1a\n" + b"mobile-edit"
+
+    first = client.post(
+        f"/api/ideas/{item.id}",
+        data=payload,
+        files=[("images", ("new.png", png, "image/png"))],
+        headers={"x-csrf-token": csrf},
+    )
+    replay = client.post(
+        f"/api/ideas/{item.id}",
+        data=payload,
+        headers={"x-csrf-token": csrf},
+    )
+    saved = load_items(items_directory(content_root)).get(item.id)
+
+    assert first.status_code == 200 and first.json()["applied"] is True
+    assert replay.status_code == 200 and replay.json()["applied"] is False
+    assert saved.title == "手机编辑"
+    assert "手机离线编辑后的版本" in saved.body
+    assert saved.body.count("/assets/mobile-edit-") == 1
+
+    stale_revision = first.json()["revision"]
+    update_item(content_root, item.id, body="Obsidian 后来又更新了正文。")
+    conflict = client.post(
+        f"/api/ideas/{item.id}",
+        data={
+            **payload,
+            "operation_key": "edit-operation-002",
+            "expected_revision": stale_revision,
+            "body": "另一个手机版本。",
+        },
+        headers={"x-csrf-token": csrf},
+    )
+
+    assert conflict.status_code == 409
+    assert conflict.json()["current"]["body"] == "Obsidian 后来又更新了正文。"
+    assert load_items(items_directory(content_root)).get(item.id).body == (
+        "Obsidian 后来又更新了正文。"
+    )
+
+    merged = client.post(
+        f"/api/ideas/{item.id}/resolve",
+        data={
+            **payload,
+            "operation_key": "edit-operation-003",
+            "expected_revision": conflict.json()["current"]["revision"],
+            "body": "人工对比后保存的合并版本。",
+        },
+        headers={"x-csrf-token": csrf},
+    )
+    assert merged.status_code == 200 and merged.json()["applied"] is True
+    assert load_items(items_directory(content_root)).get(item.id).body == (
+        "人工对比后保存的合并版本。"
+    )
+
+
+def test_mobile_manual_distill_requires_topic_and_records_source_revision(
+    tmp_path: Path,
+) -> None:
+    fixture = knowledge_fixture(tmp_path)
+    source = fixture["source"]
+    client, store = mobile_client(tmp_path)
+    csrf = pair(client, store)
+    payload = {
+        "title": "可靠性需要逐步验证",
+        "body": "把每一步变成可验证的状态，而不是依赖一次性成功。",
+        "card_type": "method",
+        "concepts": "可靠性,验证",
+    }
+
+    missing_topic = client.post(
+        f"/api/ideas/{source.id}/knowledge/cards",
+        data=payload,
+        headers={"x-csrf-token": csrf},
+    )
+    created = client.post(
+        f"/api/ideas/{source.id}/knowledge/cards",
+        data={**payload, "map_ids": [fixture["memory"].id]},
+        headers={"x-csrf-token": csrf},
+    )
+
+    assert missing_topic.status_code == 422
+    assert created.status_code == 201
+    card = load_knowledge_store(tmp_path / "content").card(created.json()["card_id"])
+    assert card.source_ids == (source.id,)
+    assert card.map_ids == (fixture["memory"].id,)
+    assert set(card.subjects) == {"技术", "哲学"}
+    assert card.source_revisions[source.id] == semantic_revision(source)
+
+
 @pytest.mark.parametrize(
     "image",
     [b"<svg><script>alert(1)</script></svg>", b"GIF89a", b"not-an-image"],
@@ -502,7 +632,7 @@ def test_desktop_mobile_settings_manage_config_and_devices(tmp_path: Path) -> No
     pairing = desktop.post("/settings/mobile/pairing-code")
 
     assert page.status_code == 200 and "Android 羽白工作台" in page.text
-    assert "知识阅读边界" in page.text and "只读知识快照" in page.text
+    assert "手机离线边界" in page.text and "未归档随想快照" in page.text
     assert saved.status_code == 200 and "手机同步配置已保存" in saved.text
     assert pairing.status_code == 200 and "十分钟内有效" in pairing.text
 

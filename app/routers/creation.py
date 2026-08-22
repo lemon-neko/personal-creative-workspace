@@ -4,19 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
-from app.content import ContentItem, render_markdown
+from app.content import ContentItem, render_markdown, semantic_revision
 from app.llm import PolishResult
 from app.model_gateway import ModelTaskKind
 from app.publishing import PublishingSource, WECHAT_RENDERER, resolve_publishing_source
+from app.publishing_theme import FONT_LABELS, FONT_SIZES, WechatThemeConfig
+from app.obsidian import obsidian_uri
 from app.video import VIDEO_ASPECT_RATIOS, VIDEO_PLATFORMS, VIDEO_STATUSES, VIDEO_TYPES, VideoScene, inspect_opencut
 from app.web import REPO_ROOT, TEMPLATES, collection, not_found
-from app.workspace import create_item
+from app.workspace import (
+    ContentConflictError,
+    create_item,
+    move_to_trash,
+    set_item_status,
+    update_item,
+)
 
 
 router = APIRouter()
@@ -28,6 +37,45 @@ def _collection(request: Request):
 
 def _not_found(request: Request, active_page: str = "") -> HTMLResponse:
     return not_found(request, active_page)
+
+
+def _article_context(
+    request: Request,
+    item: ContentItem,
+    *,
+    error: str | None = None,
+) -> dict:
+    return {
+        "active_page": "articles",
+        "item": item,
+        "item_html": render_markdown(
+            item.body,
+            source=item.source,
+            content_root=request.app.state.content_root,
+        ),
+        "tags_value": "，".join(item.tags),
+        "source_revision": semantic_revision(item),
+        "obsidian_url": obsidian_uri(item.source),
+        "error": error,
+    }
+
+
+def _refresh_search_item(request: Request, item: ContentItem) -> None:
+    try:
+        request.app.state.search.upsert_content_item(item)
+    except (AttributeError, OSError, RuntimeError, sqlite3.Error):
+        return
+
+
+def _refresh_obsidian_links(request: Request) -> None:
+    try:
+        request.app.state.obsidian.rebuild_links()
+    except (OSError, TypeError, UnicodeError, ValueError):
+        return
+
+
+def _is_active_article(item: ContentItem | None) -> bool:
+    return item is not None and item.kind == "article" and item.status != "archived"
 
 
 def _video_context(request: Request, *, saved: str | None = None, error: str | None = None) -> dict:
@@ -49,10 +97,19 @@ def _video_context(request: Request, *, saved: str | None = None, error: str | N
         "video_types": VIDEO_TYPES,
         "notice": notices.get(saved or ""),
         "error": error,
+        "selected_source_id": request.query_params.get("source_id", ""),
     }
 
 
 def _publish_context(request: Request, item: ContentItem, *, candidate: PolishResult | None = None, error: str | None = None) -> dict:
+    theme = WechatThemeConfig.from_mapping(request.query_params)
+    original_source = PublishingSource(
+        source_id=item.id,
+        kind=item.kind,
+        title=item.title,
+        summary=item.summary,
+        markdown=item.body,
+    )
     source = PublishingSource(
         source_id=item.id,
         kind=item.kind,
@@ -60,21 +117,41 @@ def _publish_context(request: Request, item: ContentItem, *, candidate: PolishRe
         summary=item.summary,
         markdown=candidate.markdown if candidate else item.body,
     )
+    rendered = WECHAT_RENDERER.render(source, theme)
     return {
         "active_page": "publish",
         "item": item,
         "source": source,
-        "rendered": WECHAT_RENDERER.render(source),
-        "original_html": render_markdown(item.body),
+        "rendered": rendered,
+        "original_rendered": (
+            WECHAT_RENDERER.render(original_source, theme) if candidate else rendered
+        ),
         "candidate": candidate,
         "error": error,
         "llm_enabled": request.app.state.llm_client.enabled,
+        "wechat_theme": theme,
+        "wechat_font_labels": FONT_LABELS,
+        "wechat_font_sizes": FONT_SIZES,
     }
 
 
 def _llm_target(request: Request) -> str:
     config = getattr(request.app.state.llm_client, "config", None)
     return getattr(config, "base_url", "") if config else "已配置的模型接口"
+
+
+def _publish_url(request: Request, item_id: str):
+    theme = WechatThemeConfig.from_mapping(request.query_params)
+    return request.url_for("publish_item", item_id=item_id).include_query_params(
+        **theme.query_params,
+    )
+
+
+def _polish_url(request: Request, item_id: str):
+    theme = WechatThemeConfig.from_mapping(request.query_params)
+    return request.url_for("polish_item", item_id=item_id).include_query_params(
+        **theme.query_params,
+    )
 
 
 def _disclosure_context(request: Request, *, purpose: str, source_labels: tuple[str, ...], submit_url, outbound_text: str, back_url, task_type: str = "", hidden_fields: dict[str, str] | None = None, error: str | None = None) -> dict:
@@ -92,14 +169,220 @@ def _disclosure_context(request: Request, *, purpose: str, source_labels: tuple[
     }
 
 
+@router.get("/articles", response_class=HTMLResponse, name="articles")
+async def articles(
+    request: Request,
+    saved: Optional[str] = Query(default=None),
+) -> HTMLResponse:
+    authored = _collection(request)
+    notices = {
+        "created": "文章草稿已创建，可以独立组织正文。",
+        "updated": "文章修改已保存。",
+        "status": "文章状态已更新。",
+        "trashed": "文章已移入回收站。",
+        "version": "候选稿已保存为新的文章版本，原文章没有被覆盖。",
+    }
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="articles.html",
+        context={
+            "active_page": "articles",
+            "articles": tuple(
+                item
+                for item in authored.items
+                if item.kind == "article" and item.status != "archived"
+            ),
+            "notice": notices.get(saved or ""),
+            "diagnostics": authored.diagnostics,
+        },
+    )
+
+
+@router.post("/articles", name="create_article")
+async def create_article(
+    request: Request,
+    body: str = Form(...),
+    title: str = Form(default=""),
+    tags: str = Form(default=""),
+    category: str = Form(default=""),
+) -> HTMLResponse:
+    try:
+        item = create_item(
+            request.app.state.content_root,
+            body=body,
+            title=title,
+            tags=tags,
+            category=category,
+            kind="article",
+        )
+        _refresh_search_item(request, item)
+        _refresh_obsidian_links(request)
+    except ValueError as error:
+        authored = _collection(request)
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="articles.html",
+            context={
+                "active_page": "articles",
+                "articles": tuple(
+                    item
+                    for item in authored.items
+                    if item.kind == "article" and item.status != "archived"
+                ),
+                "error": str(error),
+                "form_data": {
+                    "body": body,
+                    "title": title,
+                    "tags": tags,
+                    "category": category,
+                },
+                "diagnostics": authored.diagnostics,
+            },
+            status_code=422,
+        )
+    return RedirectResponse(
+        request.url_for("article_detail", item_id=item.id).include_query_params(
+            saved="created"
+        ),
+        status_code=303,
+    )
+
+
+@router.get(
+    "/articles/{item_id}",
+    response_class=HTMLResponse,
+    name="article_detail",
+)
+async def article_detail(request: Request, item_id: str) -> HTMLResponse:
+    item = _collection(request).get(item_id)
+    if item is None or item.kind != "article":
+        return _not_found(request, "articles")
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="article_detail.html",
+        context=_article_context(request, item),
+    )
+
+
+@router.post("/articles/{item_id}", name="update_article")
+async def update_article(
+    request: Request,
+    item_id: str,
+    body: str = Form(...),
+    title: str = Form(default=""),
+    tags: str = Form(default=""),
+    category: str = Form(default=""),
+    source_revision: str = Form(default=""),
+) -> HTMLResponse:
+    existing = _collection(request).get(item_id)
+    if existing is None or existing.kind != "article":
+        return _not_found(request, "articles")
+    try:
+        item = update_item(
+            request.app.state.content_root,
+            item_id,
+            body=body,
+            title=title,
+            tags=tags,
+            category=category,
+            expected_revision=source_revision,
+        )
+    except ContentConflictError as error:
+        current = error.current
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="idea_conflict.html",
+            context={
+                "active_page": "articles",
+                "item": current,
+                "detail_url": request.url_for(
+                    "article_detail", item_id=current.id
+                ),
+                "current_html": render_markdown(
+                    current.body,
+                    source=current.source,
+                    content_root=request.app.state.content_root,
+                ),
+                "submitted": {
+                    "title": title,
+                    "body": body,
+                    "tags": tags,
+                    "category": category,
+                },
+                "submitted_html": render_markdown(body),
+                "obsidian_url": obsidian_uri(current.source),
+            },
+            status_code=409,
+        )
+    except (KeyError, ValueError) as error:
+        current = _collection(request).get(item_id)
+        if current is None or current.kind != "article":
+            return _not_found(request, "articles")
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="article_detail.html",
+            context=_article_context(request, current, error=str(error)),
+            status_code=422,
+        )
+    _refresh_search_item(request, item)
+    return RedirectResponse(
+        request.url_for("article_detail", item_id=item.id).include_query_params(
+            saved="updated"
+        ),
+        status_code=303,
+    )
+
+
+@router.post("/articles/{item_id}/status", name="change_article_status")
+async def change_article_status(
+    request: Request,
+    item_id: str,
+    status: str = Form(...),
+) -> HTMLResponse:
+    existing = _collection(request).get(item_id)
+    if existing is None or existing.kind != "article":
+        return _not_found(request, "articles")
+    try:
+        item = set_item_status(request.app.state.content_root, item_id, status)
+        _refresh_obsidian_links(request)
+    except (KeyError, ValueError):
+        return _not_found(request, "articles")
+    return RedirectResponse(
+        request.url_for("article_detail", item_id=item.id).include_query_params(
+            saved="status"
+        ),
+        status_code=303,
+    )
+
+
+@router.post("/articles/{item_id}/trash", name="trash_article")
+async def trash_article(request: Request, item_id: str) -> HTMLResponse:
+    existing = _collection(request).get(item_id)
+    if existing is None or existing.kind != "article":
+        return _not_found(request, "articles")
+    try:
+        move_to_trash(request.app.state.content_root, item_id)
+    except KeyError:
+        return _not_found(request, "articles")
+    return RedirectResponse(
+        request.url_for("articles").include_query_params(saved="trashed"),
+        status_code=303,
+    )
+
+
 @router.get("/publish", response_class=HTMLResponse, name="publish_index")
 async def publish_index(request: Request) -> HTMLResponse:
+    authored = _collection(request)
     return TEMPLATES.TemplateResponse(
         request=request,
         name="publish_index.html",
         context={
             "active_page": "publish",
-            "items": _collection(request).items,
+            "items": tuple(
+                item
+                for item in authored.items
+                if item.kind == "article" and item.status != "archived"
+            ),
             "llm_enabled": request.app.state.llm_client.enabled,
         },
     )
@@ -111,14 +394,30 @@ async def publish_index(request: Request) -> HTMLResponse:
 )
 async def publish_item(request: Request, item_id: str) -> HTMLResponse:
     item = _collection(request).get(item_id)
-    if (
-        item is None
-        or resolve_publishing_source(
-            request.app.state.content_root,
-            item_id,
+    if item is None:
+        return _not_found(request, "publish")
+    if item.kind == "thought":
+        return RedirectResponse(
+            request.url_for("idea_detail", item_id=item.id).include_query_params(
+                notice="article-required"
+            ),
+            status_code=303,
         )
-        is None
-    ):
+    if item.kind == "weekly-review":
+        return RedirectResponse(
+            request.url_for("review_detail", item_id=item.id).include_query_params(
+                notice="article-required"
+            ),
+            status_code=303,
+        )
+    if not _is_active_article(item):
+        return RedirectResponse(
+            request.url_for("article_detail", item_id=item.id).include_query_params(
+                notice="archived"
+            ),
+            status_code=303,
+        )
+    if resolve_publishing_source(request.app.state.content_root, item_id) is None:
         return _not_found(request, "publish")
     return TEMPLATES.TemplateResponse(
         request=request,
@@ -138,7 +437,7 @@ async def polish_item(
     outbound_text: str = Form(default=""),
 ) -> HTMLResponse:
     item = _collection(request).get(item_id)
-    if item is None:
+    if not _is_active_article(item):
         return _not_found(request, "publish")
     client = request.app.state.llm_client
     if not client.enabled:
@@ -161,13 +460,13 @@ async def polish_item(
                 purpose="生成公众号幻想栈风格候选稿",
                 task_type=ModelTaskKind.PUBLISH.value,
                 source_labels=(item.title,),
-                submit_url=request.url_for("polish_item", item_id=item.id),
+                submit_url=_polish_url(request, item.id),
                 outbound_text=json.dumps(
                     {"title": item.title, "body": item.body},
                     ensure_ascii=False,
                     indent=2,
                 ),
-                back_url=request.url_for("publish_item", item_id=item.id),
+                back_url=_publish_url(request, item.id),
                 hidden_fields={"mode": mode},
             ),
         )
@@ -212,7 +511,7 @@ async def manual_publish_task(
     mode: str = Form(default="auto"),
 ) -> HTMLResponse:
     item = _collection(request).get(item_id)
-    if item is None or mode not in {"auto", "essay", "explainer"}:
+    if not _is_active_article(item) or mode not in {"auto", "essay", "explainer"}:
         return _not_found(request, "publish")
     payload = json.dumps(
         {"title": item.title, "body": item.body, "mode": mode},
@@ -225,7 +524,7 @@ async def manual_publish_task(
             purpose="生成幻想栈风格公众号候选稿，不覆盖原文",
             source_labels=(item.title,),
             payload=payload,
-            return_url=str(request.url_for("publish_item", item_id=item.id)),
+            return_url=str(_publish_url(request, item.id)),
         )
     except ValueError as error:
         return TEMPLATES.TemplateResponse(
@@ -246,7 +545,7 @@ async def save_polished_article(
     markdown: str = Form(...),
 ) -> HTMLResponse:
     source = _collection(request).get(item_id)
-    if source is None:
+    if not _is_active_article(source):
         return _not_found(request, "publish")
     try:
         created = create_item(
@@ -265,11 +564,11 @@ async def save_polished_article(
             context=_publish_context(request, source, error=str(error)),
             status_code=422,
         )
+    _refresh_search_item(request, created)
+    _refresh_obsidian_links(request)
     return RedirectResponse(
-        request.url_for("workspace").include_query_params(
-            saved="article",
-            view="articles",
-            created=created.id,
+        request.url_for("article_detail", item_id=created.id).include_query_params(
+            saved="version"
         ),
         status_code=303,
     )

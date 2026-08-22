@@ -37,7 +37,7 @@
                     <span>来源文章</span>
                     <select name="source_id" required>
                         {% for item in articles %}
-                        <option value="{{ item.id }}">{{ item.title }} · {{ status_labels[item.status] }}</option>
+                        <option value="{{ item.id }}" {{ 'selected' if selected_source_id == item.id else '' }}>{{ item.title }} · {{ content_status_labels('article')[item.status] }}</option>
                         {% endfor %}
                     </select>
                 </label>
@@ -61,7 +61,7 @@
             {% else %}
             <div class="empty-state compact-empty">
                 <p>还没有文章草稿。先把一条想法整理成文章，再把它送进时间线。</p>
-                <a class="secondary-button" href="{{ url_for('publish_index') }}">去发布工作台</a>
+                <a class="secondary-button" href="{{ url_for('articles') }}">去文章创作</a>
             </div>
             {% endif %}
         </section>
@@ -80,7 +80,7 @@
                         <time>{{ project.date_label }}</time>
                     </div>
                     <h3>{{ project.title }}</h3>
-                    <p>来源：<a href="{{ url_for('idea_detail', item_id=project.source_id) }}">{{ project.source_title }}</a></p>
+                    <p>来源：<a href="{{ url_for('article_detail', item_id=project.source_id) }}">{{ project.source_title }}</a></p>
                     {% if project.notes %}<blockquote>{{ project.notes }}</blockquote>{% endif %}
                     <dl class="video-project-meta">
                         <div><dt>规格</dt><dd>{{ video_platform_labels[project.platform] }} · {{ project.aspect_ratio }} · {{ video_type_labels[project.video_type] }}</dd></div>

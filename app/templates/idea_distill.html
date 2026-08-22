@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}整理为知识 · {{ item.title }}{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <a class="back-link" href="{{ url_for('idea_detail', item_id=item.id) }}">← 返回随想</a>
+    <p class="eyebrow">DISTILL ONE SOURCE</p>
+    <h1>把随想整理成可追溯的知识</h1>
+    <p>原文始终保留；这里只新增知识卡，并记录它所依据的原文版本。</p>
+</header>
+
+{% if request.query_params.get('saved') == 'card' %}<div class="message success">知识卡已创建，原始随想没有被修改。</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<div class="settings-grid">
+    <section class="paper-panel">
+        <p class="eyebrow">SOURCE</p><h2>{{ item.title }}</h2>
+        <p>{{ item.summary }}</p>
+        <small>当前 Revision：<code>{{ source_revision[:12] }}</code></small>
+        <form action="{{ url_for('create_idea_distill_model_task', item_id=item.id) }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <button class="secondary-button" type="submit">生成模型候选任务</button>
+        </form>
+        <p class="settings-note">只创建任务包，不会自动调用模型，也不会直接写入知识库。</p>
+    </section>
+    <section class="paper-panel">
+        <p class="eyebrow">MANUAL CARD</p><h2>手工创建原子知识卡</h2>
+        {% if topic_maps %}
+        <form action="{{ url_for('create_distilled_knowledge_card', item_id=item.id) }}" method="post" class="edit-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <label class="field"><span>标题</span><input name="title" maxlength="160" required></label>
+            <label class="field"><span>类型</span><select name="card_type">{% for value in ['concept','claim','question','method','observation'] %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+            <label class="field"><span>正文</span><textarea name="body" rows="8" required></textarea></label>
+            <label class="field"><span>概念</span><input name="concepts" placeholder="多个概念用逗号分隔"></label>
+            <fieldset><legend>所属主题</legend>{% for value in topic_maps %}<label class="checkbox-row"><input type="checkbox" name="map_ids" value="{{ value.id }}"><span>{{ value.title }}</span></label>{% endfor %}</fieldset>
+            {% if active_cards %}<label class="field"><span>形成新结论并替代（可选）</span><select name="supersedes_card_id"><option value="">不替代已有知识</option>{% for value in active_cards if item.id in value.source_ids %}<option value="{{ value.id }}">{{ value.title }}</option>{% endfor %}</select></label>{% endif %}
+            <button class="primary-button" type="submit">确认创建知识卡</button>
+        </form>
+        {% else %}<div class="empty-note">还没有主题地图。请先在 Obsidian 或知识后台创建主题，再回来拆卡。</div>{% endif %}
+    </section>
+</div>
+
+<section class="paper-panel">
+    <div class="panel-heading"><div><p class="eyebrow">DERIVED CARDS</p><h2>这条随想已经形成的知识</h2></div><span>{{ card_rows|length }} 张</span></div>
+    <div class="compact-list">
+        {% for row in card_rows %}<article class="document-choice"><div><strong>{{ row.card.title }}</strong><span>{{ {'current':'来源版本一致','changed':'来源已变化，待复核','unconfirmed':'来源 Revision 尚未确认'}[row.source_state] }}</span></div><a class="text-link" href="{{ url_for('knowledge_card', card_id=row.card.id) }}">查看知识卡</a></article>{% else %}<div class="empty-note">还没有知识卡引用这条随想。</div>{% endfor %}
+    </div>
+</section>
+{% endblock %}

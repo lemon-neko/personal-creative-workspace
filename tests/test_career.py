@@ -100,7 +100,7 @@ def test_career_repository_builds_evidence_to_learning_chain(tmp_path: Path) -> 
         tmp_path / "documents" / document.stored_name
     ).stat().st_mode & 0o777 == 0o600
     with repository.connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
 
 
 def test_campaign_seed_links_existing_tasks_and_unlocks_with_evidence(
@@ -154,9 +154,91 @@ def test_campaign_requires_order_and_evidence(tmp_path: Path) -> None:
         repository.clear_quest(quests[0].id)
 
 
+def test_career_radar_seeds_static_baseline_and_preserves_private_evidence(
+    tmp_path: Path,
+) -> None:
+    repository = CareerRepository(tmp_path)
+    repository.save_profile(target_roles="Agent 应用开发")
+    project = repository.add_project(name="私有真实项目", evidence="本地证据")
+    document = repository.add_document(
+        kind="resume", filename="resume.txt", content=b"private resume"
+    )
+    resume = repository.add_resume(title="主简历", document_id=document.id)
+    old_skill = repository.add_skill(name="旧技能")
+    old_task = repository.add_learning_task(
+        skill_id=old_skill.id, title="旧学习任务"
+    )
+    old_campaign = repository.seed_agent_reliability_campaign("/public/arena")
+
+    repository.seed_career_radar()
+
+    jobs = repository.jobs()
+    references = repository.learning_references()
+    assert len(tuple(job for job in jobs if job.captured_at == "2026-08-21")) == 4
+    assert sum(job.is_primary for job in jobs) == 1
+    assert len(repository.capability_domains()) == 6
+    assert len(references) == 5
+    assert [reference.week for reference in references if not reference.is_optional] == [
+        1,
+        2,
+        3,
+        4,
+    ]
+    assert repository.campaign(old_campaign.id).status == "archived"
+    assert next(task for task in repository.learning_tasks() if task.id == old_task.id).status == "paused"
+    assert repository.profile().target_roles == "Agent 应用开发"
+    assert repository.project(project.id).evidence == "本地证据"
+    assert repository.resumes()[0].id == resume.id
+    assert repository.document(document.id) is not None
+
+    first = references[0]
+    repository.update_learning_reference(
+        first.id,
+        status="building",
+        commit_sha="abc123",
+        test_result="12 passed",
+        reflection="理解状态边界。",
+    )
+    repository.seed_career_radar()
+    saved = repository.learning_reference(first.id)
+    assert saved is not None
+    assert saved.status == "building"
+    assert saved.commit_sha == "abc123"
+
+
+def test_learning_radar_page_and_reference_progress(tmp_path: Path) -> None:
+    client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
+    repository: CareerRepository = client.app.state.career
+
+    page = client.get("/learning")
+    assert page.status_code == 200
+    assert "目标岗位雷达" in page.text
+    assert "Open Deep Research" in page.text
+    assert "静态快照 · 不自动抓取" in page.text
+    assert "B4F6AAF8C5C1FEB7D6C131231EBAB46F" in page.text
+
+    saved = client.post(
+        "/learning/references/open-deep-research",
+        data={
+            "status": "reading",
+            "commit_sha": "deadbee",
+            "test_result": "pytest: green",
+            "reflection": "先读状态图。",
+        },
+        follow_redirects=True,
+    )
+    assert saved.status_code == 200
+    assert "研读进度与验收证据已保存" in saved.text
+    reference = repository.learning_reference("open-deep-research")
+    assert reference is not None
+    assert reference.status == "reading"
+    assert reference.commit_sha == "deadbee"
+
+
 def test_campaign_page_start_evidence_and_clear_forms(tmp_path: Path) -> None:
     client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
     repository: CareerRepository = client.app.state.career
+    repository.seed_agent_reliability_campaign("/public/agent-reliability-arena")
     campaign = repository.campaign("agent-reliability-arena")
     assert campaign is not None
     quest = repository.quests(campaign.id)[0]
@@ -314,7 +396,9 @@ def test_job_skill_ai_requires_disclosure_review_and_confirmation(
     assert "确认技能候选" in analyzed.text
     assert "FastAPI" in analyzed.text
     assert fake.calls == 1
-    assert client.app.state.career.skills() == ()
+    assert "FastAPI" not in {
+        skill.name for skill in client.app.state.career.skills()
+    }
     assert client.app.state.career.gaps() == ()
 
     confirmed = client.post(
@@ -330,5 +414,7 @@ def test_job_skill_ai_requires_disclosure_review_and_confirmation(
     )
     assert confirmed.status_code == 200
     assert "已确认的职位技能要求" in confirmed.text
-    assert client.app.state.career.skills()[0].name == "FastAPI"
+    assert "FastAPI" in {
+        skill.name for skill in client.app.state.career.skills()
+    }
     assert client.app.state.career.gaps()[0].importance == 5

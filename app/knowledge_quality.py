@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.content import ContentItem
+from app.content import ContentItem, semantic_revision
 from app.knowledge_store import KnowledgeStore
 from app.obsidian import obsidian_uri
 
@@ -39,6 +39,8 @@ def inspect_knowledge_quality(
         source_id for card in active_cards for source_id in card.source_ids
     }
     for item in source_lookup.values():
+        if item.kind != "thought":
+            continue
         if item.id not in covered_sources:
             issues.append(
                 KnowledgeQualityIssue(
@@ -86,15 +88,34 @@ def inspect_knowledge_quality(
                     obsidian_uri(card.source),
                 )
             )
-        newest_source = max(
-            (
-                source_lookup[value].updated_at
-                for value in card.source_ids
-                if value in source_lookup
-            ),
-            default=None,
+        known_card_sources = tuple(
+            source_lookup[value]
+            for value in card.source_ids
+            if value in source_lookup
         )
-        if newest_source is not None and newest_source > card.updated_at:
+        unconfirmed = tuple(
+            item.id
+            for item in known_card_sources
+            if item.id not in card.source_revisions
+        )
+        changed = tuple(
+            item.id
+            for item in known_card_sources
+            if item.id in card.source_revisions
+            and card.source_revisions[item.id] != semantic_revision(item)
+        )
+        if unconfirmed:
+            issues.append(
+                KnowledgeQualityIssue(
+                    "unconfirmed-source-revision",
+                    "warning",
+                    f"来源 Revision 尚未确认：{card.title}",
+                    "这张旧知识卡尚未记录来源版本，请人工复核后确认。",
+                    f"/knowledge/cards/{card.id}",
+                    obsidian_uri(card.source),
+                )
+            )
+        elif changed:
             issues.append(
                 KnowledgeQualityIssue(
                     "stale-card",

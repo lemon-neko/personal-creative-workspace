@@ -28,11 +28,7 @@
     </label>
     <label><span>状态</span><select name="status">
         <option value="">全部状态</option>
-        {% for value, label in status_labels.items() %}<option value="{{ value }}" {{ 'selected' if selected.status == value else '' }}>{{ label }}</option>{% endfor %}
-    </select></label>
-    <label><span>类型</span><select name="kind">
-        <option value="">全部类型</option>
-        {% for value, label in kind_labels.items() %}<option value="{{ value }}" {{ 'selected' if selected.kind == value else '' }}>{{ label }}</option>{% endfor %}
+        {% for value, label in content_status_labels('thought').items() %}<option value="{{ value }}" {{ 'selected' if selected.status == value else '' }}>{{ label }}</option>{% endfor %}
     </select></label>
     <label><span>标签</span><select name="tag">
         <option value="">全部标签</option>

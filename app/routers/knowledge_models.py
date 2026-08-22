@@ -13,8 +13,8 @@ import httpx
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.content import ContentItem, render_markdown
-from app.knowledge import eligible_items
+from app.content import ContentItem, render_markdown, semantic_revision
+from app.knowledge import distillable_items, eligible_items
 from app.knowledge_quality import inspect_knowledge_quality
 from app.knowledge_store import (
     KnowledgeEdge,
@@ -22,6 +22,8 @@ from app.knowledge_store import (
     create_knowledge_map,
     layered_graph,
     load_knowledge_store,
+    reconfirm_knowledge_card_sources,
+    subjects_for_topic_maps,
     supersede_knowledge_card,
 )
 from app.model_gateway import POLICIES, ModelGateway, ModelTaskKind
@@ -65,6 +67,7 @@ def _knowledge_context(
 ) -> dict:
     collection = _collection(request)
     items = eligible_items(collection)
+    thought_sources = distillable_items(collection)
     notices = {
         "card": "知识卡已保存，原始来源没有被覆盖。",
         "map": "知识地图已保存。",
@@ -80,15 +83,13 @@ def _knowledge_context(
         for source_id in card.source_ids
     }
     pending_sources = tuple(
-        item
-        for item in items
-        if item.id not in card_source_ids and item.kind != "weekly-review"
+        item for item in thought_sources if item.id not in card_source_ids
     )
     graph = layered_graph(items, store)
     quality_issues = inspect_knowledge_quality(items, store)
     return {
         "active_page": "knowledge",
-        "knowledge_items": items,
+        "knowledge_items": thought_sources,
         "pending_sources": pending_sources,
         "core_graph": graph,
         "knowledge_cards": store.cards,
@@ -365,6 +366,10 @@ async def confirm_model_task(request: Request, task_id: str) -> HTMLResponse:
             if not selected:
                 raise ValueError("请至少选择一张知识卡候选")
             suggestions = result["suggestions"]
+            source_lookup = {
+                item.id: item for item in distillable_items(_collection(request))
+            }
+            store = load_knowledge_store(request.app.state.content_root)
             for key in selected:
                 parts = key.split("-")
                 if len(parts) != 2 or not all(value.isdigit() for value in parts):
@@ -372,6 +377,12 @@ async def confirm_model_task(request: Request, task_id: str) -> HTMLResponse:
                 source_index, card_index = (int(value) for value in parts)
                 suggestion = suggestions[source_index]
                 original = suggestion["cards"][card_index]
+                source_id = str(suggestion["item_id"])
+                if source_id not in source_lookup:
+                    raise ValueError("知识卡候选来源必须是有效随想")
+                selected_maps = tuple(
+                    _comma_values(str(form.get(f"maps_{key}", "")))
+                )
                 relations = tuple(
                     KnowledgeEdge(
                         str(value["target_id"]),
@@ -385,16 +396,12 @@ async def confirm_model_task(request: Request, task_id: str) -> HTMLResponse:
                     title=str(form.get(f"title_{key}", "")),
                     body=str(form.get(f"body_{key}", "")),
                     card_type=str(form.get(f"type_{key}", "")),
-                    subjects=tuple(
-                        _comma_values(str(form.get(f"subjects_{key}", "")))
-                    ),
+                    subjects=subjects_for_topic_maps(store, selected_maps),
                     concepts=tuple(
                         _comma_values(str(form.get(f"concepts_{key}", "")))
                     ),
-                    map_ids=tuple(
-                        _comma_values(str(form.get(f"maps_{key}", "")))
-                    ),
-                    source_ids=(str(suggestion["item_id"]),),
+                    map_ids=selected_maps,
+                    source_ids=(source_id,),
                     relations=relations,
                 )
             redirect_url = str(request.url_for("knowledge"))
@@ -410,9 +417,9 @@ async def confirm_model_task(request: Request, task_id: str) -> HTMLResponse:
         elif task.task_type == ModelTaskKind.PUBLISH.value:
             source_id = _return_path_id(task.return_url, "/publish")
             source = _collection(request).get(source_id or "")
-            if source is None:
-                raise ValueError("公众号候选来源已经不存在")
-            create_item(
+            if source is None or source.kind != "article" or source.status == "archived":
+                raise ValueError("公众号候选只能保存为有效文章的新版本")
+            created = create_item(
                 request.app.state.content_root,
                 title=str(form.get("title", "")),
                 body=str(form.get("markdown", "")),
@@ -421,9 +428,14 @@ async def confirm_model_task(request: Request, task_id: str) -> HTMLResponse:
                 kind="article",
                 parent_id=source.id,
             )
+            try:
+                request.app.state.search.upsert_content_item(created)
+            except (AttributeError, OSError, RuntimeError):
+                pass
+            _refresh_obsidian_links(request)
             redirect_url = str(
-                request.url_for("workspace").include_query_params(
-                    view="articles", saved="article"
+                request.url_for("article_detail", item_id=created.id).include_query_params(
+                    saved="version"
                 )
             )
         elif task.task_type == ModelTaskKind.PROFILE.value:
@@ -512,6 +524,19 @@ async def knowledge_card(request: Request, card_id: str) -> HTMLResponse:
             ),
             "obsidian_url": obsidian_uri(card.source),
             "sources": tuple(source_map[value] for value in card.source_ids if value in source_map),
+            "source_states": {
+                source_id: (
+                    "missing"
+                    if source_id not in source_map
+                    else "unconfirmed"
+                    if source_id not in card.source_revisions
+                    else "current"
+                    if card.source_revisions[source_id]
+                    == semantic_revision(source_map[source_id])
+                    else "changed"
+                )
+                for source_id in card.source_ids
+            },
             "maps": tuple(map_lookup[value] for value in card.map_ids if value in map_lookup),
             "replacement": store.card(card.superseded_by or ""),
             "replacement_candidates": tuple(
@@ -520,6 +545,27 @@ async def knowledge_card(request: Request, card_id: str) -> HTMLResponse:
                 if value.id != card.id and value.status == "active"
             ),
         },
+    )
+
+
+@router.post(
+    "/knowledge/cards/{card_id}/reconfirm",
+    name="reconfirm_knowledge_card",
+)
+async def reconfirm_knowledge_card(
+    request: Request,
+    card_id: str,
+) -> HTMLResponse:
+    try:
+        reconfirm_knowledge_card_sources(request.app.state.content_root, card_id)
+        _refresh_obsidian_links(request)
+    except ValueError:
+        return _not_found(request, "knowledge")
+    return RedirectResponse(
+        request.url_for("knowledge_card", card_id=card_id).include_query_params(
+            saved="reconfirmed"
+        ),
+        status_code=303,
     )
 
 @router.post(
@@ -607,23 +653,25 @@ async def create_knowledge_card_route(
     title: str = Form(...),
     body: str = Form(...),
     card_type: str = Form(...),
-    subjects: str = Form(...),
+    subjects: str = Form(default=""),
     source_ids: list[str] = Form(default=[]),
     map_ids: list[str] = Form(default=[]),
     concepts: str = Form(default=""),
 ) -> HTMLResponse:
-    known_sources = {item.id for item in eligible_items(_collection(request))}
+    known_sources = {item.id for item in distillable_items(_collection(request))}
     if not source_ids or not set(source_ids) <= known_sources:
         return _not_found(request, "knowledge")
     try:
+        store = load_knowledge_store(request.app.state.content_root)
+        selected_maps = tuple(dict.fromkeys(map_ids))
         card = create_knowledge_card(
             request.app.state.content_root,
             title=title,
             body=body,
             card_type=card_type,
-            subjects=tuple(_comma_values(subjects)),
+            subjects=subjects_for_topic_maps(store, selected_maps),
             source_ids=tuple(source_ids),
-            map_ids=tuple(map_ids),
+            map_ids=selected_maps,
             concepts=tuple(_comma_values(concepts)),
         )
         _refresh_obsidian_links(request)

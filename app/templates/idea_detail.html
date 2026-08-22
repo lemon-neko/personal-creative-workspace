@@ -6,8 +6,8 @@
 <div class="detail-topbar">
     <a class="back-link" href="{{ url_for('ideas') }}">← 返回想法库</a>
     <div class="detail-actions">
+        {% if item.kind == 'thought' and item.status != 'archived' %}<a class="primary-button inline-button" href="{{ url_for('distill_idea', item_id=item.id) }}">整理为知识</a>{% endif %}
         <a class="secondary-button" href="{{ obsidian_url }}">在 Obsidian 中打开</a>
-        <a class="secondary-button" href="{{ url_for('publish_item', item_id=item.id) }}">转换为公众号</a>
         <form action="{{ url_for('trash_idea', item_id=item.id) }}" method="post">
             <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button class="danger-link" type="submit">移入回收站</button>
@@ -19,13 +19,14 @@
 {% if request.query_params.get('saved') == 'status' %}<div class="message success">内容状态已更新。</div>{% endif %}
 {% if request.query_params.get('saved') == 'knowledge' %}<div class="message success">知识分类与关联已保存。</div>{% endif %}
 {% if request.query_params.get('saved') == 'imported' %}<div class="message success">Obsidian 收件箱内容已导入想法库。</div>{% endif %}
+{% if request.query_params.get('notice') == 'article-required' %}<div class="message warning">随想用于记录和沉淀知识，不直接进入公众号。需要发布时，请先在“创作”中新建独立文章。</div>{% endif %}
 {% if error %}<div class="message error">{{ error }}</div>{% endif %}
 
 <div class="editor-layout">
     <section class="editor-panel">
         <div class="panel-heading">
             <div><p class="eyebrow">EDIT</p><h1>整理这条想法</h1></div>
-            <span class="status-badge status-{{ item.status }}">{{ status_labels[item.status] }}</span>
+            <span class="status-badge status-{{ item.status }}">{{ content_status_labels('thought')[item.status] }}</span>
         </div>
         <form action="{{ url_for('update_idea', item_id=item.id) }}" method="post" class="edit-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
@@ -53,7 +54,7 @@
     </aside>
 </div>
 
-{% if item.kind != 'weekly-review' and item.status != 'archived' %}
+{% if item.status != 'archived' %}
 <section class="paper-panel knowledge-editor-panel">
     <div class="panel-heading">
         <div><p class="eyebrow">PROVENANCE</p><h2>作为知识来源</h2></div>
@@ -70,9 +71,9 @@
 {% endif %}
 
 <section class="status-actions">
-    <div><h2>它现在应该在哪里？</h2><p>“已成稿”只是本地整理状态，不会发布到任何外部平台。</p></div>
+    <div><h2>这条随想整理到哪一步？</h2><p>“已整理”只表示已经处理过，不代表文章成稿或对外发布。</p></div>
     <div>
-        {% for value, label in status_labels.items() %}
+        {% for value, label in content_status_labels('thought').items() %}
         <form action="{{ url_for('change_idea_status', item_id=item.id) }}" method="post">
             <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <input type="hidden" name="status" value="{{ value }}">

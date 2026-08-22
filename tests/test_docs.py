@@ -4,34 +4,76 @@ import re
 from pathlib import Path
 from urllib.parse import unquote
 
+import yaml
+
 from app.main import create_app
 
 
 ROOT = Path(__file__).resolve().parent.parent
-REQUIRED_DOCS = {
+DOCS_ROOT = ROOT / "docs"
+ROOT_DOCS = {
     ROOT / "README.md",
     ROOT / "PROJECT_STATUS.md",
     ROOT / "AGENTS.md",
     ROOT / "CLAUDE.md",
-    ROOT / "docs" / "README.md",
-    ROOT / "docs" / "FEATURES.md",
-    ROOT / "docs" / "ARCHITECTURE.md",
-    ROOT / "docs" / "USER_GUIDE.md",
-    ROOT / "docs" / "OPERATIONS.md",
-    ROOT / "docs" / "SECURITY.md",
-    ROOT / "docs" / "DEVELOPMENT.md",
+}
+REQUIRED_INDEXES = {
+    DOCS_ROOT / "README.md",
+    DOCS_ROOT / "features" / "README.md",
+    DOCS_ROOT / "architecture" / "README.md",
+    DOCS_ROOT / "guides" / "README.md",
+    DOCS_ROOT / "operations" / "README.md",
+    DOCS_ROOT / "development" / "README.md",
+    DOCS_ROOT / "changes" / "README.md",
+    DOCS_ROOT / "changes" / "TEMPLATE.md",
+}
+REQUIRED_FEATURES = {
+    "workspace-content.md",
+    "knowledge-obsidian.md",
+    "publishing-video.md",
+    "career-learning.md",
+    "assistant.md",
+    "model-cost.md",
+    "mobile-pwa.md",
+    "privacy-recovery.md",
+}
+REQUIRED_ARCHITECTURE = {
+    "content-model.md",
+    "private-vault-folders.md",
+    "storage.md",
+}
+REQUIRED_CHANGE_FIELDS = {
+    "date",
+    "status",
+    "type",
+    "areas",
+    "interfaces",
+    "data_migration",
+    "compatibility",
+    "rollback",
+    "verification",
+    "commit",
 }
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 TAILNET_HOST = re.compile(r"\b[a-z0-9-]+\.tail[a-z0-9]+\.ts\.net\b", re.I)
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
+FRONT_MATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 
 
 def _documents() -> tuple[Path, ...]:
-    return tuple(sorted(REQUIRED_DOCS))
+    docs = set(DOCS_ROOT.rglob("*.md"))
+    return tuple(sorted(ROOT_DOCS | docs))
 
 
 def test_documentation_set_and_local_links_exist() -> None:
-    assert all(path.is_file() for path in REQUIRED_DOCS)
+    assert all(path.is_file() for path in ROOT_DOCS | REQUIRED_INDEXES)
+    assert {
+        path.name for path in (DOCS_ROOT / "features").glob("*.md")
+    } >= REQUIRED_FEATURES | {"README.md"}
+    assert {
+        path.name for path in (DOCS_ROOT / "architecture").glob("*.md")
+    } >= REQUIRED_ARCHITECTURE | {"README.md"}
+
     for document in _documents():
         text = document.read_text(encoding="utf-8")
         for raw_target in MARKDOWN_LINK.findall(text):
@@ -59,6 +101,7 @@ def test_documented_core_routes_exist(tmp_path: Path) -> None:
     expected = {
         "/",
         "/ideas",
+        "/articles",
         "/knowledge",
         "/library",
         "/search",
@@ -67,6 +110,7 @@ def test_documented_core_routes_exist(tmp_path: Path) -> None:
         "/video",
         "/career",
         "/learning",
+        "/assistant",
         "/models",
         "/settings",
         "/settings/obsidian",
@@ -97,3 +141,39 @@ def test_each_document_has_unique_headings() -> None:
         assert len(headings) == len(set(headings)), (
             f"{document.relative_to(ROOT)} 包含重复标题"
         )
+
+
+def test_feature_index_covers_every_feature_document() -> None:
+    index = (DOCS_ROOT / "features" / "README.md").read_text(encoding="utf-8")
+    for filename in REQUIRED_FEATURES:
+        assert f"({filename})" in index
+
+
+def test_change_records_have_required_metadata_and_are_indexed() -> None:
+    change_index = (DOCS_ROOT / "changes" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    records = sorted((DOCS_ROOT / "changes").glob("[0-9][0-9][0-9][0-9]/*.md"))
+    assert records
+
+    for record in records:
+        text = record.read_text(encoding="utf-8")
+        match = FRONT_MATTER.match(text)
+        assert match, f"{record.relative_to(ROOT)} 缺少 YAML front matter"
+        metadata = yaml.safe_load(match.group(1))
+        assert isinstance(metadata, dict)
+        assert REQUIRED_CHANGE_FIELDS <= metadata.keys()
+        assert metadata["status"] == "completed"
+        assert metadata["type"] in {
+            "baseline",
+            "feature",
+            "fix",
+            "refactor",
+            "docs",
+            "security",
+            "migration",
+        }
+        assert isinstance(metadata["areas"], list) and metadata["areas"]
+        assert isinstance(metadata["interfaces"], list) and metadata["interfaces"]
+        assert isinstance(metadata["verification"], list) and metadata["verification"]
+        assert record.name in change_index

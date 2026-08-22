@@ -4,8 +4,8 @@
 
 开始修改前还应阅读：
 
-- [系统架构](docs/ARCHITECTURE.md)
-- [安全说明](docs/SECURITY.md)
-- [开发指南](docs/DEVELOPMENT.md)
+- [系统架构](docs/architecture/README.md)
+- [隐私与恢复](docs/features/privacy-recovery.md)
+- [开发说明](docs/development/README.md)
 
 不要在本文件维护第二套规则。

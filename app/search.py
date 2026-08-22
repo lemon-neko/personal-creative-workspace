@@ -87,6 +87,11 @@ class SearchRepository:
             "article": "创作产物",
             "weekly-review": "周回顾",
         }
+        content_urls = {
+            "thought": "/ideas",
+            "article": "/articles",
+            "weekly-review": "/reviews",
+        }
         rows.extend(
             (
                 item.id,
@@ -94,7 +99,7 @@ class SearchRepository:
                 item.title,
                 item.body,
                 " ".join((*item.tags, *item.subjects, *item.concepts)),
-                f"/ideas/{item.id}",
+                f"{content_urls.get(item.kind, '/ideas')}/{item.id}",
                 kind_labels.get(item.kind, "内容"),
             )
             for item in items
@@ -141,6 +146,7 @@ class SearchRepository:
             ("resumes", "resume", "简历版本", "/career/resumes", ("title", "target_role", "notes")),
             ("skills", "skill", "技能", "/learning", ("name", "category", "notes")),
             ("learning_tasks", "learning-task", "学习任务", "/learning", ("title", "notes")),
+            ("learning_references", "learning-reference", "开源研读", "/learning", ("name", "study_focus", "deliverable", "reflection")),
         ):
             method = getattr(career, method_name, None)
             if not callable(method):
@@ -200,6 +206,49 @@ class SearchRepository:
             connection.execute(
                 "UPDATE workspace_search_meta SET last_synced_at=?, total_rows=? WHERE singleton=1",
                 (now, len(rows)),
+            )
+
+    def upsert_content_item(self, item: ContentItem) -> None:
+        """Incrementally refresh one authored item after a mobile write."""
+
+        kind_labels = {
+            "thought": "原始想法",
+            "article": "创作产物",
+            "weekly-review": "周回顾",
+        }
+        content_urls = {
+            "thought": "/ideas",
+            "article": "/articles",
+            "weekly-review": "/reviews",
+        }
+        row = (
+            item.id,
+            item.kind,
+            item.title,
+            item.body,
+            " ".join((*item.tags, *item.subjects, *item.concepts)),
+            f"{content_urls.get(item.kind, '/ideas')}/{item.id}",
+            kind_labels.get(item.kind, "内容"),
+        )
+        revision = self._revision(row)
+        now = datetime.now(SHANGHAI).replace(microsecond=0).isoformat()
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM workspace_search WHERE item_id=? AND result_type=?",
+                (item.id, item.kind),
+            )
+            connection.execute("INSERT INTO workspace_search VALUES(?,?,?,?,?,?,?)", row)
+            connection.execute(
+                """INSERT INTO workspace_search_state VALUES(?,?,?)
+                ON CONFLICT(item_id,result_type) DO UPDATE SET revision=excluded.revision""",
+                (item.id, item.kind, revision),
+            )
+            total = connection.execute(
+                "SELECT COUNT(*) FROM workspace_search"
+            ).fetchone()[0]
+            connection.execute(
+                "UPDATE workspace_search_meta SET last_synced_at=?, total_rows=? WHERE singleton=1",
+                (now, total),
             )
 
     def sync(self, **sources) -> dict[str, int]:

@@ -32,6 +32,7 @@ class ModelProvider(str, Enum):
 
 
 class ModelTaskKind(str, Enum):
+    ASSISTANT = "assistant"
     KNOWLEDGE = "knowledge"
     WEEKLY_REVIEW = "weekly-review"
     PUBLISH = "publish"
@@ -48,6 +49,7 @@ class ModelPolicy:
 
 
 POLICIES = {
+    ModelTaskKind.ASSISTANT: ModelPolicy(ModelTaskKind.ASSISTANT, 30, 12_000, 2_000),
     ModelTaskKind.KNOWLEDGE: ModelPolicy(ModelTaskKind.KNOWLEDGE, 8, 12_000, 2_000),
     ModelTaskKind.WEEKLY_REVIEW: ModelPolicy(ModelTaskKind.WEEKLY_REVIEW, 100, 12_000, 3_000),
     ModelTaskKind.PUBLISH: ModelPolicy(ModelTaskKind.PUBLISH, 1, 24_000, 6_000),
@@ -197,6 +199,7 @@ def _manual_instructions(task_type: str) -> tuple[str, str]:
         "只完成指定整理任务，不补充材料中没有的事实。仅返回 JSON，不要代码围栏。"
     )
     schemas = {
+        ModelTaskKind.ASSISTANT: '{"user_intent_summary":"","assistant_summary":"","priority_title":"","reason":"","steps":["步骤一","步骤二","步骤三"],"success_criteria":"","evidence":[{"source_id":"允许的来源ID","reason":"引用原因"}],"assumptions":[],"clarifying_question":"","suggested_actions":[{"type":"create-thought|create-learning-task","title":"","body":"","skill_id":"学习任务必须使用允许的技能ID，想法留空","priority":3}]}',
         ModelTaskKind.KNOWLEDGE: '{"suggestions":[{"item_id":"来源ID","cards":[{"title":"标题","card_type":"concept|claim|question|method|observation","body":"原子知识正文","subjects":["学科"],"concepts":["概念"],"map_ids":[],"relations":[]}]}]}',
         ModelTaskKind.WEEKLY_REVIEW: '{"markdown":"中性、直接、可追溯的周回顾 Markdown"}',
         ModelTaskKind.PUBLISH: '{"title":"候选标题","markdown":"完整候选稿","image_suggestions":[]}',
@@ -204,6 +207,7 @@ def _manual_instructions(task_type: str) -> tuple[str, str]:
         ModelTaskKind.JOB_SKILLS: '{"skills":[{"name":"技能","category":"分类","importance":3,"requirement":"原文要求"}]}',
     }
     purposes = {
+        ModelTaskKind.ASSISTANT: "基于作者确认的工作台摘要，给出一个有来源、可执行的优先建议。",
         ModelTaskKind.KNOWLEDGE: "把来源拆成少量可追溯原子知识卡，不覆盖原文。",
         ModelTaskKind.WEEKLY_REVIEW: "生成中性周回顾，不使用公众号文风。",
         ModelTaskKind.PUBLISH: "生成忠于原意的羽白公众号候选稿。",
@@ -229,6 +233,7 @@ def validate_manual_result(task_type: str, raw: str) -> dict[str, Any]:
     if estimate_tokens(cleaned) > POLICIES[kind].max_output_tokens:
         raise ValueError("返回内容超过该任务的输出 Token 上限")
     required = {
+        ModelTaskKind.ASSISTANT: "assistant_summary",
         ModelTaskKind.KNOWLEDGE: "suggestions",
         ModelTaskKind.WEEKLY_REVIEW: "markdown",
         ModelTaskKind.PUBLISH: "markdown",
@@ -241,11 +246,18 @@ def validate_manual_result(task_type: str, raw: str) -> dict[str, Any]:
         payload[required], list
     ):
         raise ValueError(f"`{required}` 必须是列表")
-    if kind in {ModelTaskKind.WEEKLY_REVIEW, ModelTaskKind.PUBLISH} and not isinstance(
+    if kind in {
+        ModelTaskKind.ASSISTANT,
+        ModelTaskKind.WEEKLY_REVIEW,
+        ModelTaskKind.PUBLISH,
+    } and not isinstance(
         payload[required], str
     ):
         raise ValueError(f"`{required}` 必须是文本")
-    if kind == ModelTaskKind.KNOWLEDGE:
+    if kind == ModelTaskKind.ASSISTANT:
+        if not payload[required].strip():
+            raise ValueError("助手回答摘要不能为空")
+    elif kind == ModelTaskKind.KNOWLEDGE:
         suggestions = payload["suggestions"]
         if len(suggestions) > POLICIES[kind].max_items:
             raise ValueError("知识卡建议来源数量超限")
@@ -462,6 +474,18 @@ class ModelTaskStore:
                     }
                     if not targets <= allowed_targets:
                         raise ValueError("返回了虚构的关联目标 ID")
+        elif task.task_type == ModelTaskKind.ASSISTANT.value:
+            from app.assistant import (
+                outbound_allowed_sets,
+                validate_assistant_result,
+            )
+
+            source_ids, skill_ids = outbound_allowed_sets(task.payload)
+            validate_assistant_result(
+                validated,
+                allowed_source_ids=source_ids,
+                allowed_skill_ids=skill_ids,
+            )
         updated = ModelTask(**(asdict(task) | {"status": "imported", "result": json.dumps(validated, ensure_ascii=False)}))
         self._write(updated)
         if self.usage is not None:
@@ -661,4 +685,11 @@ class ModelGateway:
             ModelTaskKind.JOB_SKILLS,
             material,
             lambda: self.client.job_skill_candidate(material),  # type: ignore[union-attr]
+        )
+
+    def assistant_candidate(self, material: str) -> dict[str, Any]:
+        return self._run(
+            ModelTaskKind.ASSISTANT,
+            material,
+            lambda: self.client.assistant_candidate(material),  # type: ignore[union-attr]
         )

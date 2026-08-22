@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}个人助手 · 羽白工作台{% endblock %}
+{% block content %}
+<header class="page-header assistant-header">
+    <div><p class="eyebrow">DECISION COMPANION</p><h1>个人助手</h1><p>先看清现在，再决定下一步。每轮外发都由你检查，建议也必须由你确认。</p></div>
+    <span class="model-state {{ 'online' if gateway.enabled else '' }}">{{ gateway.provider.value }} · {{ gateway.config.model or '人工桥接' }}</span>
+</header>
+{% if notice %}<div class="message success" role="status">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
+
+<div class="assistant-layout">
+    <aside class="assistant-history paper-panel">
+        <div class="panel-heading"><div><p class="eyebrow">CONVERSATIONS</p><h2>会话摘要</h2></div><a class="text-link" href="{{ url_for('assistant') }}">新会话</a></div>
+        <div class="assistant-conversation-list">
+            {% for value in conversations %}
+            <a class="{{ 'active' if conversation and value.id == conversation.id else '' }}" href="{{ url_for('assistant') }}?conversation_id={{ value.id }}">
+                <strong>{{ value.title }}</strong><span>{{ '已归档' if value.status == 'archived' else value.updated_at[:16] }}</span>
+            </a>
+            {% else %}<p class="quiet-note">还没有会话。可以直接问“基于我现在的情况，应该先做什么？”</p>{% endfor %}
+        </div>
+        {% if conversation %}
+        <details class="assistant-history-actions"><summary>管理当前会话</summary>
+            {% if conversation.status == 'active' %}<form action="{{ url_for('assistant_archive', conversation_id=conversation.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="secondary-button">归档摘要</button></form>{% endif %}
+            <form action="{{ url_for('assistant_delete', conversation_id=conversation.id) }}" method="post" class="edit-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label class="field"><span>输入“删除会话”</span><input name="confirmation" required></label><button class="danger-button">永久删除摘要记录</button></form>
+        </details>
+        {% endif %}
+    </aside>
+
+    <div class="assistant-main">
+        {% if not conversation or conversation.status == 'active' %}
+        <section class="paper-panel assistant-ask-card">
+            <p class="eyebrow">ASK WITH CONTEXT</p><h2>{{ '继续追问' if conversation else '现在最想理清什么？' }}</h2>
+            <form action="{{ url_for('assistant_preview') }}" method="post" class="edit-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <input type="hidden" name="conversation_id" value="{{ conversation.id if conversation else '' }}">
+                <label class="field"><span class="sr-only">问题</span><textarea name="question" rows="4" maxlength="2000" placeholder="例如：基于我目前的求职、学习和项目状态，今天最应该先完成什么？" required></textarea></label>
+                <div class="assistant-ask-footer"><span>下一步先进入外发内容预览，不会立即调用模型。</span><button class="primary-button">检查上下文</button></div>
+            </form>
+        </section>
+        {% endif %}
+
+        <section class="assistant-turns" aria-label="助手建议历史">
+            {% for turn in turns|reverse %}
+            <article class="paper-panel assistant-turn">
+                <header><div><p class="eyebrow">{{ turn.created_at[:16] }}</p><h2>{{ turn.user_intent_summary }}</h2></div><span>只保存摘要</span></header>
+                <p class="assistant-summary">{{ turn.assistant_summary }}</p>
+                {% if turn.clarifying_question %}
+                <div class="assistant-clarification"><strong>还需要确认一件事</strong><p>{{ turn.clarifying_question }}</p></div>
+                {% else %}
+                <div class="assistant-priority"><small>最优先</small><h3>{{ turn.priority_title }}</h3><p>{{ turn.reason }}</p></div>
+                <ol class="assistant-steps">{% for step in turn.steps %}<li>{{ step }}</li>{% endfor %}</ol>
+                <div class="assistant-success"><strong>完成标准</strong><p>{{ turn.success_criteria }}</p></div>
+                {% endif %}
+                {% if turn.evidence %}<details open><summary>依据来源 · {{ turn.evidence|length }}</summary><ul class="plain-list assistant-evidence">{% for value in turn.evidence %}<li><a href="{{ value.url or '#' }}">{{ value.title or value.source_id }}</a><span>{{ value.reason }}</span></li>{% endfor %}</ul></details>{% endif %}
+                {% if turn.assumptions %}<details><summary>假设与不确定性</summary><ul>{% for value in turn.assumptions %}<li>{{ value }}</li>{% endfor %}</ul></details>{% endif %}
+                {% if turn.suggestions %}
+                <div class="assistant-actions"><h3>候选操作</h3><p>下面仍然只是候选。逐项确认后才会写入工作台。</p>
+                    {% for action in turn.suggestions %}
+                    {% set decision = decisions.get(turn.id, {}).get(action.id) %}
+                    <article class="assistant-action-card">
+                        <div class="panel-heading"><div><strong>{{ '新想法' if action.action_type == 'create-thought' else '学习任务' }}</strong><span>{{ action.title }}</span></div>{% if decision %}<em>{{ {'confirmed':'已创建','discarded':'已放弃','pending':'处理中','failed':'执行失败'}[decision.status] }}</em>{% endif %}</div>
+                        {% if not decision %}<form action="{{ url_for('assistant_action', turn_id=turn.id, action_id=action.id) }}" method="post" class="edit-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                            <label class="field"><span>标题</span><input name="title" value="{{ action.title }}" maxlength="200" required></label>
+                            <label class="field"><span>{{ '正文' if action.action_type == 'create-thought' else '任务说明' }}</span><textarea name="body" rows="5" required>{{ action.body }}</textarea></label>
+                            {% if action.action_type == 'create-learning-task' %}<div class="field-grid"><label class="field"><span>关联技能</span><select name="skill_id" required>{% for skill in skills %}<option value="{{ skill.id }}" {{ 'selected' if skill.id == action.skill_id else '' }}>{{ skill.name }}</option>{% endfor %}</select></label><label class="field"><span>优先级</span><select name="priority">{% for value in range(1, 6) %}<option value="{{ value }}" {{ 'selected' if value == action.priority else '' }}>{{ value }}</option>{% endfor %}</select></label></div>{% else %}<input type="hidden" name="priority" value="{{ action.priority }}">{% endif %}
+                            <div class="assistant-action-buttons"><button class="primary-button" name="decision" value="confirm">确认创建</button><button class="secondary-button" name="decision" value="discard">放弃候选</button></div>
+                        </form>{% endif %}
+                    </article>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </article>
+            {% else %}<section class="paper-panel assistant-empty"><span aria-hidden="true">✦</span><h2>助手还没有留下建议</h2><p>它会读取一份经过压缩的工作台状态，但不会读取联系方式、简历全文、附件或设备信息。</p></section>{% endfor %}
+        </section>
+    </div>
+</div>
+{% endblock %}

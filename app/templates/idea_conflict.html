@@ -4,7 +4,7 @@
 
 {% block content %}
 <header class="page-header">
-    <a class="back-link" href="{{ url_for('idea_detail', item_id=item.id) }}">← 返回最新版本</a>
+    <a class="back-link" href="{{ detail_url or url_for('idea_detail', item_id=item.id) }}">← 返回最新版本</a>
     <p class="eyebrow">EDIT CONFLICT</p>
     <h1>这条内容刚刚在别处发生了变化</h1>
     <p>工作台没有覆盖 Obsidian 中的新内容。请比较两版，再把需要保留的部分合并到最新版本。</p>

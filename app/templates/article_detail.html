@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}{{ item.title }} · 文章创作{% endblock %}
+
+{% block content %}
+<div class="detail-topbar">
+    <a class="back-link" href="{{ url_for('articles') }}">← 返回文章创作</a>
+    <div class="detail-actions">
+        {% if item.status != 'archived' %}<a class="primary-button inline-button" href="{{ url_for('publish_item', item_id=item.id) }}">公众号排版</a>{% endif %}
+        {% if item.status != 'archived' %}<a class="secondary-button" href="{{ url_for('video_studio').include_query_params(source_id=item.id) }}">创建视频项目</a>{% endif %}
+        <a class="secondary-button" href="{{ obsidian_url }}">在 Obsidian 中打开</a>
+        <form action="{{ url_for('trash_article', item_id=item.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="danger-link" type="submit">移入回收站</button></form>
+    </div>
+</div>
+
+{% if request.query_params.get('saved') in ['created', 'updated'] %}<div class="message success">文章草稿已保存。</div>{% endif %}
+{% if request.query_params.get('saved') == 'version' %}<div class="message success">候选稿已保存为新的文章版本，原文章没有被覆盖。</div>{% endif %}
+{% if request.query_params.get('saved') == 'status' %}<div class="message success">文章状态已更新。</div>{% endif %}
+{% if request.query_params.get('notice') == 'archived' %}<div class="message warning">归档文章不能进入发布台。恢复为草稿或成稿后再继续。</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<div class="editor-layout">
+    <section class="editor-panel">
+        <div class="panel-heading"><div><p class="eyebrow">ARTICLE</p><h1>编辑文章</h1></div><span class="status-badge status-{{ item.status }}">{{ content_status_labels('article')[item.status] }}</span></div>
+        <form action="{{ url_for('update_article', item_id=item.id) }}" method="post" class="edit-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="source_revision" value="{{ source_revision }}">
+            <label class="field"><span>标题</span><input name="title" maxlength="120" value="{{ item.title }}"></label>
+            <label class="field"><span>正文 <small>Markdown</small></span><textarea name="body" rows="20" maxlength="50000" required>{{ item.body }}</textarea></label>
+            <div class="field-grid"><label class="field"><span>标签</span><input name="tags" value="{{ tags_value }}"></label><label class="field"><span>分类</span><input name="category" maxlength="40" value="{{ item.category or '' }}"></label></div>
+            <button class="primary-button" type="submit">保存文章</button>
+        </form>
+    </section>
+    <aside class="preview-panel"><p class="eyebrow">PREVIEW</p><article class="prose"><h1>{{ item.title }}</h1>{{ item_html|safe }}</article></aside>
+</div>
+
+<section class="status-actions">
+    <div><h2>文章状态</h2><p>“已成稿”是本地完成状态，不会自动发布到外部平台。</p></div>
+    <div>{% for value, label in content_status_labels('article').items() %}<form action="{{ url_for('change_article_status', item_id=item.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="status" value="{{ value }}"><button class="{{ 'active' if item.status == value else '' }}" type="submit">{{ label }}</button></form>{% endfor %}</div>
+</section>
+{% endblock %}

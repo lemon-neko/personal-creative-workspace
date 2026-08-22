@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import sqlite3
 from dataclasses import dataclass
@@ -20,8 +21,14 @@ from app.database import (
 )
 
 from app.atomic import atomic_write_bytes, content_lock
-from app.content import ContentItem, load_items
-from app.workspace import create_item, items_directory
+from app.content import ContentItem, load_items, semantic_revision
+from app.search import SearchRepository
+from app.workspace import (
+    ContentConflictError,
+    create_item,
+    items_directory,
+    update_item,
+)
 
 
 PAIRING_TTL = timedelta(minutes=10)
@@ -76,6 +83,43 @@ class CaptureIdempotencyRecord:
     idempotency_key: str
     content_id: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class MobileIdeaSnapshot:
+    id: str
+    title: str
+    body: str
+    summary: str
+    tags: tuple[str, ...]
+    category: str | None
+    status: str
+    created_at: str
+    updated_at: str
+    revision: str
+
+
+@dataclass(frozen=True)
+class IdeaEditReceipt:
+    operation_key: str
+    content_id: str
+    revision: str
+    applied: bool
+    image_count: int
+
+
+@dataclass(frozen=True)
+class IdeaEditIdempotencyRecord:
+    operation_key: str
+    content_id: str
+    revision: str
+    created_at: str
+
+
+class IdeaEditConflict(ValueError):
+    def __init__(self, current: MobileIdeaSnapshot) -> None:
+        super().__init__("随想已在 Mac、Obsidian 或其他设备上修改")
+        self.current = current
 
 
 @dataclass(frozen=True)
@@ -150,6 +194,14 @@ class MobileStore:
                 CREATE TABLE IF NOT EXISTS capture_idempotency (
                     idempotency_key TEXT PRIMARY KEY,
                     content_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                """,
+                2: """
+                CREATE TABLE IF NOT EXISTS idea_edit_idempotency (
+                    operation_key TEXT PRIMARY KEY,
+                    content_id TEXT NOT NULL,
+                    revision TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
                 """,
@@ -313,6 +365,36 @@ class MobileStore:
             )
         return CaptureIdempotencyRecord(key, content_id, created_at)
 
+    def idea_edit_receipt(self, key: str) -> IdeaEditIdempotencyRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM idea_edit_idempotency WHERE operation_key=?", (key,)
+            ).fetchone()
+        return (
+            IdeaEditIdempotencyRecord(
+                row["operation_key"],
+                row["content_id"],
+                row["revision"],
+                row["created_at"],
+            )
+            if row
+            else None
+        )
+
+    def save_idea_edit_receipt(
+        self,
+        key: str,
+        content_id: str,
+        revision: str,
+    ) -> IdeaEditIdempotencyRecord:
+        created_at = _iso(_utc_now())
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO idea_edit_idempotency VALUES (?, ?, ?, ?)",
+                (key, content_id, revision, created_at),
+            )
+        return IdeaEditIdempotencyRecord(key, content_id, revision, created_at)
+
 
 def _detect_image(data: bytes) -> str:
     if data.startswith(IMAGE_SIGNATURES["png"][0][0]):
@@ -325,10 +407,45 @@ def _detect_image(data: bytes) -> str:
 
 
 class MobileCaptureService:
-    def __init__(self, data_root: Path, content_root: Path, store: MobileStore) -> None:
+    def __init__(
+        self,
+        data_root: Path,
+        content_root: Path,
+        store: MobileStore,
+        search: SearchRepository | None = None,
+    ) -> None:
         self.data_root = data_root.resolve()
         self.content_root = content_root.resolve()
         self.store = store
+        self.search = search
+
+    @staticmethod
+    def snapshot(item: ContentItem) -> MobileIdeaSnapshot:
+        return MobileIdeaSnapshot(
+            id=item.id,
+            title=item.title,
+            body=item.body,
+            summary=item.summary,
+            tags=item.tags,
+            category=item.category,
+            status=item.status,
+            created_at=item.created_at.isoformat(),
+            updated_at=item.updated_at.isoformat(),
+            revision=semantic_revision(item),
+        )
+
+    def ideas(self) -> tuple[MobileIdeaSnapshot, ...]:
+        return tuple(
+            self.snapshot(item)
+            for item in load_items(items_directory(self.content_root)).items
+            if item.kind == "thought" and item.status != "archived"
+        )
+
+    def idea(self, item_id: str) -> MobileIdeaSnapshot | None:
+        item = load_items(items_directory(self.content_root)).get(item_id)
+        if item is None or item.kind != "thought" or item.status == "archived":
+            return None
+        return self.snapshot(item)
 
     def recent(self, limit: int = 20) -> tuple[ContentItem, ...]:
         return tuple(
@@ -388,12 +505,105 @@ class MobileCaptureService:
                     item_id=stable_id,
                 )
                 self.store.save_receipt(key, created_item.id)
+                if self.search is not None:
+                    try:
+                        self.search.upsert_content_item(created_item)
+                    except (OSError, RuntimeError, sqlite3.Error):
+                        pass
                 return CaptureReceipt(created_item.id, True, len(written))
             except Exception:
                 if created_item is not None:
                     created_item.source.unlink(missing_ok=True)
                 for path in written:
                     path.unlink(missing_ok=True)
+                raise
+
+    def update_idea(
+        self,
+        item_id: str,
+        *,
+        operation_key: str,
+        expected_revision: str,
+        body: str,
+        title: str = "",
+        tags: str = "",
+        category: str = "",
+        images: Sequence[bytes] = (),
+    ) -> IdeaEditReceipt:
+        key = operation_key.strip()
+        if not key or len(key) > 160:
+            raise ValueError("编辑幂等键无效")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_revision.strip().lower()):
+            raise ValueError("来源 Revision 无效")
+        previous = self.store.idea_edit_receipt(key)
+        if previous:
+            return IdeaEditReceipt(
+                previous.operation_key,
+                previous.content_id,
+                previous.revision,
+                False,
+                0,
+            )
+        if len(images) > MAX_IMAGES:
+            raise ValueError(f"每次编辑最多追加 {MAX_IMAGES} 张图片")
+        if any(len(image) > MAX_IMAGE_BYTES for image in images):
+            raise ValueError("单张图片不能超过 10 MB")
+        if sum(map(len, images)) > MAX_TOTAL_IMAGE_BYTES:
+            raise ValueError("图片总大小不能超过 25 MB")
+        image_specs = [(_detect_image(data), data) for data in images]
+        with content_lock(self.content_root):
+            previous = self.store.idea_edit_receipt(key)
+            if previous:
+                return IdeaEditReceipt(
+                    previous.operation_key,
+                    previous.content_id,
+                    previous.revision,
+                    False,
+                    0,
+                )
+            current = load_items(items_directory(self.content_root)).get(item_id)
+            if current is None or current.kind != "thought" or current.status == "archived":
+                raise KeyError(item_id)
+            if semantic_revision(current) != expected_revision.strip().lower():
+                raise IdeaEditConflict(self.snapshot(current))
+            written: list[Path] = []
+            updated: ContentItem | None = None
+            try:
+                markdown_images: list[str] = []
+                digest = hashlib.sha256(key.encode()).hexdigest()[:24]
+                for index, (suffix, data) in enumerate(image_specs, start=1):
+                    name = f"mobile-edit-{digest}-{index}{suffix}"
+                    path = self.content_root / "assets" / name
+                    atomic_write_bytes(path, data)
+                    written.append(path)
+                    markdown_images.append(f"![手机追加配图 {index}](/assets/{name})")
+                edited_body = body.strip()
+                if markdown_images:
+                    edited_body = f"{edited_body}\n\n" + "\n\n".join(markdown_images)
+                try:
+                    updated = update_item(
+                        self.content_root,
+                        item_id,
+                        body=edited_body,
+                        title=title,
+                        tags=tags,
+                        category=category,
+                        expected_revision=expected_revision,
+                    )
+                except ContentConflictError as error:
+                    raise IdeaEditConflict(self.snapshot(error.current)) from error
+                revision = semantic_revision(updated)
+                self.store.save_idea_edit_receipt(key, updated.id, revision)
+                if self.search is not None:
+                    try:
+                        self.search.upsert_content_item(updated)
+                    except (OSError, RuntimeError, sqlite3.Error):
+                        pass
+                return IdeaEditReceipt(key, updated.id, revision, True, len(written))
+            except Exception:
+                if updated is None:
+                    for path in written:
+                        path.unlink(missing_ok=True)
                 raise
 
 

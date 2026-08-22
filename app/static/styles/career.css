@@ -56,20 +56,81 @@
 .task-status-form select { min-width: 0; padding: 6px; }
 .task-status-form button { border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .document-card .delete-form { margin-top: 10px; }
+.learning-radar-hero { max-width: 820px; }
+.evidence-metrics a, .evidence-metrics small { display: block; margin-top: 9px; color: var(--cyan-dark); font-size: 11px; text-decoration: none; }
+.radar-section { margin-bottom: 46px; }
+.snapshot-badge, .priority-pill { display: inline-flex; align-items: center; width: max-content; border-radius: 99px; font: 700 10px var(--mono); letter-spacing: .08em; }
+.snapshot-badge { padding: 7px 11px; border: 1px solid var(--line); color: var(--muted); }
+.priority-pill { padding: 5px 9px; background: var(--surface); color: var(--muted); }
+.priority-pill.p0 { background: var(--cyan-soft); color: var(--cyan-dark); }
+.priority-pill.p1 { background: #fff3d6; color: #775d1b; }
+.primary-job-card { margin-bottom: 14px; padding: 28px; border: 1px solid var(--cyan); border-radius: 20px; background: linear-gradient(135deg, rgba(30,178,199,.1), rgba(255,255,255,.78)); }
+.primary-job-card > div { display: flex; justify-content: space-between; align-items: center; }
+.primary-job-card h3 { margin: 14px 0 8px; font-size: 25px; }
+.primary-job-card p, .radar-job-card p { color: var(--muted); line-height: 1.7; }
+.primary-job-card a, .radar-job-card a, .study-week a, .optional-reading a { color: var(--cyan-dark); font-weight: 700; text-decoration: none; }
+.radar-job-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.radar-job-card { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.7); }
+.radar-job-card small { color: var(--muted); }
+.radar-job-card h3 { margin: 9px 0; font-size: 17px; }
+.capability-matrix { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
+.capability-card { padding: 22px; border: 1px solid var(--line); border-radius: 17px; background: var(--paper); }
+.capability-card header { display: flex; align-items: center; gap: 10px; }
+.capability-card h3 { margin: 0; }
+.capability-card > p { min-height: 48px; color: var(--muted); line-height: 1.65; }
+.capability-card details { margin-top: 18px; border-top: 1px dotted var(--line); padding-top: 14px; }
+.capability-card summary, .maintenance-panel > summary, .optional-reading > summary { cursor: pointer; font-weight: 750; }
+.capability-card li { margin-bottom: 8px; color: var(--muted); }
+.capability-skills { display: grid; gap: 10px; }
+.capability-skills > div { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-size: 12px; }
+.capability-skills b { color: var(--cyan-dark); font-family: var(--mono); }
+.capability-skills i { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 99px; background: var(--surface); }
+.capability-skills em { display: block; height: 100%; background: var(--cyan); }
+.reference-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.reference-links a { padding: 5px 8px; border-radius: 8px; background: var(--cyan-soft); color: var(--cyan-dark); text-decoration: none; font-size: 11px; }
+.priority-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; color: var(--muted); font-size: 12px; }
+.priority-legend span { padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.study-roadmap { display: grid; gap: 16px; }
+.study-week { display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 16px; }
+.week-marker { display: grid; align-content: start; justify-items: center; padding-top: 20px; color: var(--cyan-dark); }
+.week-marker small { font: 700 9px var(--mono); letter-spacing: .16em; }
+.week-marker strong { font: 700 42px var(--mono); }
+.study-week-body { padding: 24px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); }
+.study-week-body > header { display: flex; justify-content: space-between; gap: 16px; }
+.study-week-body header span { color: var(--muted); font: 700 10px var(--mono); text-transform: uppercase; }
+.study-week-body h3 { margin: 5px 0 14px; font-size: 22px; }
+.study-week-body > p { color: var(--muted); line-height: 1.7; }
+.deliverable-box { display: grid; gap: 7px; margin: 18px 0; padding: 15px; border-left: 3px solid var(--cyan); border-radius: 8px; background: var(--cyan-soft); }
+.deliverable-box span { color: var(--cyan-dark); font-size: 11px; font-weight: 800; }
+.deliverable-box code { width: max-content; max-width: 100%; overflow-wrap: anywhere; }
+.reference-progress-form { display: grid; grid-template-columns: 180px 1fr; gap: 12px; margin-top: 20px; border-top: 1px dotted var(--line); padding-top: 18px; }
+.reference-progress-form .full, .reference-progress-form button { grid-column: 1 / -1; }
+.optional-reading, .maintenance-panel { margin-top: 16px; }
+.maintenance-panel[open] > summary { margin-bottom: 22px; }
+.archive-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-top: 18px; }
+.archived-card { opacity: .8; }
 
 @media (max-width: 1024px) {
   .career-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .skill-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .radar-job-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 768px) {
   .career-grid, .disclosure-grid { grid-template-columns: 1fr; }
   .inline-upload { grid-template-columns: 1fr; }
   .skill-grid { grid-template-columns: 1fr; }
+  .capability-matrix, .archive-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 520px) {
   .career-metrics, .checkbox-grid { grid-template-columns: 1fr; }
   .document-card { display: block; }
   .document-card > div:last-child { margin-top: 14px; text-align: left; }
+  .study-week { grid-template-columns: 48px minmax(0,1fr); gap: 8px; }
+  .week-marker strong { font-size: 30px; }
+  .study-week-body { padding: 17px; }
+  .study-week-body > header { display: block; }
+  .reference-progress-form { grid-template-columns: 1fr; }
+  .reference-progress-form .full, .reference-progress-form button { grid-column: 1; }
 }
 .campaign-entry { margin-bottom: 28px; }
 .campaign-card-grid { display: grid; gap: 16px; }

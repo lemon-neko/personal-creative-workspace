@@ -106,6 +106,16 @@ def eligible_items(collection: ContentCollection) -> tuple[ContentItem, ...]:
     )
 
 
+def distillable_items(collection: ContentCollection) -> tuple[ContentItem, ...]:
+    """Return original thoughts that may enter the formal knowledge workflow."""
+
+    return tuple(
+        item
+        for item in collection.items
+        if item.kind == "thought" and item.status != "archived"
+    )
+
+
 def stale_items(collection: ContentCollection) -> tuple[ContentItem, ...]:
     """Return items never analysed or changed since their last confirmation."""
 

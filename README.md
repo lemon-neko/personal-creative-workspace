@@ -8,15 +8,16 @@
 
 ## 核心能力
 
-- **工作台与想法**：随手记录、搜索筛选、状态流转、回收恢复和规则周回顾。
-- **分层知识库**：以 Obsidian 为主要整理界面，统一维护“知识首页 → 学科地图 → 主题地图 → 知识卡 → 原始来源”。
-- **创作发布**：微信公众号正文排版、富文本复制、可选风格润色，以及视频分镜和 Remotion/OpenCut 交接。
-- **求职与学习**：候选人档案、项目证据、简历版本、职位跟踪、技能差距、学习任务和项目战役。
+- **工作台与想法**：工作台创作流只管理随想；想法、文章和周回顾使用独立页面与各自的状态语义。
+- **分层知识库**：以 Obsidian 为主要整理界面，统一维护“知识首页 → 学科地图 → 主题地图 → 知识卡 → 原始来源”；单条随想可安全拆卡并用来源 Revision 追踪变化。
+- **创作发布**：独立文章草稿才可进入微信公众号排版和视频制作；普通随想、周回顾与知识卡不会误入发布台。
+- **求职与学习**：候选人档案、项目证据和简历版本保持独立；岗位雷达将四条静态 JD 快照归并为六个能力域，并用四周开源研读与手搓证据推进差距。
+- **个人决策助手**：基于经过压缩的工作台状态回答“现在先做什么”；每轮先预览外发内容，引用可回到站内来源，候选行动必须逐项确认。
 - **模型成本治理**：规则、本地模型、人工桥接和默认关闭的外部 API；所有外发先预览再确认。
-- **Android PWA**：经 Tailscale Serve 私网记录文字和图片，并在线只读正式知识库。
+- **Android PWA**：经 Tailscale Serve 私网离线新建和编辑随想、人工处理 Revision 冲突、联网手工拆卡，并保存只读知识快照。
 - **隐私与恢复**：回环监听、CSRF/Host 校验、仓库外数据、安全上传、Git 守卫和 AES-256 备份。
 
-完整功能边界见 [功能清单](docs/FEATURES.md)。
+完整功能边界见 [功能模块](docs/features/README.md)。
 
 ## 五分钟启动
 
@@ -40,7 +41,7 @@ python3 -m venv .venv
 WORKSPACE_DATA_DIR=/absolute/private/path .venv/bin/python -m app
 ```
 
-安装、手机网关、环境变量、迁移和备份步骤见 [运行与维护](docs/OPERATIONS.md)。
+安装、手机网关、环境变量、迁移和备份步骤见 [运行维护](docs/operations/README.md)。
 
 需要让工作台随登录常驻运行时，使用显式本机管理命令：
 
@@ -58,19 +59,19 @@ WORKSPACE_DATA_DIR=/absolute/private/path .venv/bin/python -m app
 - 外部模型默认关闭；任何模型任务都必须先展示即将发送的材料。
 - 磁盘静态数据依赖 macOS FileVault，请保持 FileVault 开启。
 
-详细威胁边界与检查清单见 [安全说明](docs/SECURITY.md)。
+详细威胁边界与检查清单见 [隐私与恢复](docs/features/privacy-recovery.md)。
 
 ## 文档导航
 
 | 文档 | 解决的问题 |
 |---|---|
 | [文档首页](docs/README.md) | 从哪里开始阅读 |
-| [功能清单](docs/FEATURES.md) | 当前到底能做什么、有什么限制 |
-| [系统架构](docs/ARCHITECTURE.md) | 模块、数据和关键流程如何连接 |
-| [使用手册](docs/USER_GUIDE.md) | 日常如何记录、整理、创作和求职 |
-| [运行与维护](docs/OPERATIONS.md) | 如何启动、迁移、备份和排障 |
-| [安全说明](docs/SECURITY.md) | 私人数据如何隔离、什么操作禁止 |
-| [开发指南](docs/DEVELOPMENT.md) | 如何理解代码、测试并安全扩展 |
+| [功能模块](docs/features/README.md) | 每个功能当前能做什么、有什么限制 |
+| [系统架构](docs/architecture/README.md) | 模块、内容模型、存储和关键流程 |
+| [操作指南](docs/guides/README.md) | 日常如何记录、沉淀、创作和求职 |
+| [运行维护](docs/operations/README.md) | 如何启动、迁移、备份和排障 |
+| [开发说明](docs/development/README.md) | 如何理解代码、测试并安全扩展 |
+| [更新档案](docs/changes/README.md) | 每个已完成功能批次改了什么 |
 | [项目状态](PROJECT_STATUS.md) | 当前成熟度、已知限制和近期优先级 |
 
 ## 开发验证

@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 TARGETS = {
+    "app/assistant.py": 80.0,
     "app/backup.py": 80.0,
     "app/database.py": 80.0,
     "app/knowledge_store.py": 80.0,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -13,11 +14,23 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from app.atomic import content_lock
 from app.career import CareerRepository
 from app.content import ContentCollection, ContentItem, render_markdown, semantic_revision
-from app.knowledge import DEFAULT_SUBJECTS, eligible_items, format_relation_lines
+from app.knowledge import (
+    DEFAULT_SUBJECTS,
+    distillable_items,
+    eligible_items,
+    format_relation_lines,
+)
 from app.knowledge_quality import inspect_knowledge_quality
-from app.knowledge_store import layered_graph, load_knowledge_store
+from app.knowledge_store import (
+    create_knowledge_card,
+    layered_graph,
+    load_knowledge_store,
+    subjects_for_topic_maps,
+    supersede_knowledge_card,
+)
 from app.model_gateway import POLICIES, ModelTaskKind
 from app.obsidian import obsidian_uri
 from app.web import TEMPLATES, WORKSPACE_VIEWS, collection, not_found
@@ -73,6 +86,51 @@ def _item_context(item: ContentItem, content_root: Path | None = None) -> dict:
         )
     return context
 
+
+def _review_context(
+    request: Request,
+    item: ContentItem,
+    *,
+    error: str | None = None,
+) -> dict:
+    context = _item_context(item, request.app.state.content_root)
+    context.update({"active_page": "reviews", "error": error})
+    return context
+
+
+def _distill_context(
+    request: Request,
+    item: ContentItem,
+    *,
+    error: str | None = None,
+) -> dict:
+    store = load_knowledge_store(request.app.state.content_root)
+    cards = tuple(card for card in store.cards if item.id in card.source_ids)
+    revision = semantic_revision(item)
+    card_rows = tuple(
+        {
+            "card": card,
+            "source_state": (
+                "unconfirmed"
+                if item.id not in card.source_revisions
+                else "current"
+                if card.source_revisions[item.id] == revision
+                else "changed"
+            ),
+        }
+        for card in cards
+    )
+    return {
+        "active_page": "ideas",
+        "item": item,
+        "source_revision": revision,
+        "card_rows": card_rows,
+        "topic_maps": tuple(value for value in store.maps if value.kind == "topic"),
+        "active_cards": tuple(card for card in store.cards if card.status == "active"),
+        "error": error,
+    }
+
+
 def _refresh_obsidian_links(request: Request) -> None:
     """Best-effort refresh of derived links; authored writes remain authoritative."""
 
@@ -80,6 +138,14 @@ def _refresh_obsidian_links(request: Request) -> None:
         request.app.state.obsidian.rebuild_links()
     except (OSError, TypeError, UnicodeError, ValueError):
         return
+
+
+def _refresh_search_item(request: Request, item: ContentItem) -> None:
+    try:
+        request.app.state.search.upsert_content_item(item)
+    except (AttributeError, OSError, RuntimeError, sqlite3.Error):
+        return
+
 
 def _knowledge_context(
     request: Request,
@@ -89,6 +155,7 @@ def _knowledge_context(
 ) -> dict:
     collection = _collection(request)
     items = eligible_items(collection)
+    thought_sources = distillable_items(collection)
     notices = {
         "card": "知识卡已保存，原始来源没有被覆盖。",
         "map": "知识地图已保存。",
@@ -104,15 +171,13 @@ def _knowledge_context(
         for source_id in card.source_ids
     }
     pending_sources = tuple(
-        item
-        for item in items
-        if item.id not in card_source_ids and item.kind != "weekly-review"
+        item for item in thought_sources if item.id not in card_source_ids
     )
     graph = layered_graph(items, store)
     quality_issues = inspect_knowledge_quality(items, store)
     return {
         "active_page": "knowledge",
-        "knowledge_items": items,
+        "knowledge_items": thought_sources,
         "pending_sources": pending_sources,
         "core_graph": graph,
         "knowledge_cards": store.cards,
@@ -140,7 +205,9 @@ def _workspace_context(
     collection = _collection(request)
     today = datetime.now(SHANGHAI).date()
     today_items = tuple(
-        item for item in collection.items if item.created_at.date() == today
+        item
+        for item in collection.items
+        if item.kind == "thought" and item.created_at.date() == today
     )
     notices = {
         "created": "想法已落进本地 Markdown。先记下来，整理可以晚一点。",
@@ -168,9 +235,16 @@ def _workspace_context(
         "active_page": "workspace",
         "today_items": today_items,
         "pending_count": len(
-            [item for item in collection.items if item.status == "draft"],
+            [
+                item
+                for item in collection.items
+                if item.kind == "thought" and item.status == "draft"
+            ],
         ),
-        "published_count": len(collection.published),
+        "published_count": sum(
+            item.kind == "thought" and item.status == "published"
+            for item in collection.items
+        ),
         "week_items": week_items,
         "latest_review": review_items[0] if review_items else None,
         "settings": settings,
@@ -203,16 +277,14 @@ def _workspace_feed_context(
 ) -> dict:
     selected_view = view if view in WORKSPACE_VIEWS else "pending"
     cleaned_query = (query or "").strip()
-    searched = collection.filter(query=cleaned_query)
+    searched = collection.filter(query=cleaned_query, kind="thought")
 
     def in_view(item: ContentItem, target: str) -> bool:
         if target == "pending":
-            return item.status == "draft" and item.kind != "article"
-        if target == "articles":
-            return item.status == "draft" and item.kind == "article"
-        if target == "published":
-            return item.status == "published"
-        return True
+            return item.kind == "thought" and item.status == "draft"
+        if target == "organized":
+            return item.kind == "thought" and item.status == "published"
+        return item.kind == "thought"
 
     counts = {
         target: sum(in_view(item, target) for item in collection.items)
@@ -233,7 +305,6 @@ def _idea_filters(
     *,
     query: str | None,
     status: str | None,
-    kind: str | None,
     tag: str | None,
     category: str | None,
     date_from: str | None,
@@ -243,20 +314,30 @@ def _idea_filters(
         "items": collection.filter(
             query=query,
             status=status,
-            kind=kind,
+            kind="thought",
             tag=tag,
             category=category,
             date_from=date_from,
             date_to=date_to,
         ),
-        "tags": sorted({tag for item in collection.items for tag in item.tags}),
+        "tags": sorted(
+            {
+                tag
+                for item in collection.items
+                if item.kind == "thought"
+                for tag in item.tags
+            }
+        ),
         "categories": sorted(
-            {item.category for item in collection.items if item.category},
+            {
+                item.category
+                for item in collection.items
+                if item.kind == "thought" and item.category
+            },
         ),
         "selected": {
             "q": query or "",
             "status": status or "",
-            "kind": kind or "",
             "tag": tag or "",
             "category": category or "",
             "date_from": date_from or "",
@@ -383,13 +464,14 @@ async def create_idea(
     category: str = Form(default=""),
 ) -> HTMLResponse:
     try:
-        create_item(
+        item = create_item(
             request.app.state.content_root,
             body=body,
             title=title,
             tags=tags,
             category=category,
         )
+        _refresh_search_item(request, item)
         _refresh_obsidian_links(request)
     except ValueError as error:
         return TEMPLATES.TemplateResponse(
@@ -421,7 +503,6 @@ async def ideas(
     request: Request,
     q: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
-    kind: Optional[str] = Query(default=None),
     tag: Optional[str] = Query(default=None),
     category: Optional[str] = Query(default=None),
     date_from: Optional[str] = Query(default=None),
@@ -438,7 +519,6 @@ async def ideas(
                 collection,
                 query=q,
                 status=status,
-                kind=kind,
                 tag=tag,
                 category=category,
                 date_from=date_from,
@@ -456,7 +536,6 @@ async def ideas_partial(
     request: Request,
     q: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
-    kind: Optional[str] = Query(default=None),
     tag: Optional[str] = Query(default=None),
     category: Optional[str] = Query(default=None),
     date_from: Optional[str] = Query(default=None),
@@ -466,7 +545,6 @@ async def ideas_partial(
         _collection(request),
         query=q,
         status=status,
-        kind=kind,
         tag=tag,
         category=category,
         date_from=date_from,
@@ -493,6 +571,16 @@ async def idea_detail(request: Request, item_id: str) -> HTMLResponse:
     item = collection.get(item_id)
     if item is None:
         return _not_found(request, "ideas")
+    if item.kind == "article":
+        return RedirectResponse(
+            request.url_for("article_detail", item_id=item.id),
+            status_code=303,
+        )
+    if item.kind == "weekly-review":
+        return RedirectResponse(
+            request.url_for("review_detail", item_id=item.id),
+            status_code=303,
+        )
     return TEMPLATES.TemplateResponse(
         request=request,
         name="idea_detail.html",
@@ -500,11 +588,138 @@ async def idea_detail(request: Request, item_id: str) -> HTMLResponse:
             "active_page": "ideas",
             "knowledge_candidates": tuple(
                 candidate
-                for candidate in eligible_items(collection)
+                for candidate in distillable_items(collection)
                 if candidate.id != item.id
             ),
             **_item_context(item, request.app.state.content_root),
         },
+    )
+
+
+@router.get(
+    "/ideas/{item_id}/distill",
+    response_class=HTMLResponse,
+    name="distill_idea",
+)
+async def distill_idea(request: Request, item_id: str) -> HTMLResponse:
+    item = _collection(request).get(item_id)
+    if item is None or item.kind != "thought" or item.status == "archived":
+        return _not_found(request, "ideas")
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="idea_distill.html",
+        context=_distill_context(request, item),
+    )
+
+
+@router.post(
+    "/ideas/{item_id}/distill/cards",
+    name="create_distilled_knowledge_card",
+)
+async def create_distilled_knowledge_card(
+    request: Request,
+    item_id: str,
+    title: str = Form(...),
+    body: str = Form(...),
+    card_type: str = Form(...),
+    map_ids: list[str] = Form(default=[]),
+    concepts: str = Form(default=""),
+    supersedes_card_id: str = Form(default=""),
+) -> HTMLResponse:
+    item = _collection(request).get(item_id)
+    if item is None or item.kind != "thought" or item.status == "archived":
+        return _not_found(request, "ideas")
+    try:
+        with content_lock(request.app.state.content_root):
+            store = load_knowledge_store(request.app.state.content_root)
+            previous = store.card(supersedes_card_id) if supersedes_card_id else None
+            if supersedes_card_id and (
+                previous is None
+                or previous.status != "active"
+                or item.id not in previous.source_ids
+            ):
+                raise ValueError("要替代的知识卡不是这条随想的有效已有结论")
+            selected_maps = tuple(dict.fromkeys(map_ids))
+            card = create_knowledge_card(
+                request.app.state.content_root,
+                title=title,
+                body=body,
+                card_type=card_type,
+                subjects=subjects_for_topic_maps(store, selected_maps),
+                source_ids=(item.id,),
+                map_ids=selected_maps,
+                concepts=tuple(
+                    dict.fromkeys(
+                        value.strip()
+                        for value in concepts.replace("，", ",").split(",")
+                        if value.strip()
+                    )
+                ),
+            )
+            if previous is not None:
+                supersede_knowledge_card(
+                    request.app.state.content_root,
+                    previous.id,
+                    card.id,
+                )
+        _refresh_obsidian_links(request)
+    except ValueError as error:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="idea_distill.html",
+            context=_distill_context(request, item, error=str(error)),
+            status_code=422,
+        )
+    return RedirectResponse(
+        request.url_for("distill_idea", item_id=item.id).include_query_params(
+            saved="card"
+        ),
+        status_code=303,
+    )
+
+
+@router.post(
+    "/ideas/{item_id}/distill/model-task",
+    name="create_idea_distill_model_task",
+)
+async def create_idea_distill_model_task(
+    request: Request,
+    item_id: str,
+) -> HTMLResponse:
+    item = _collection(request).get(item_id)
+    if item is None or item.kind != "thought" or item.status == "archived":
+        return _not_found(request, "ideas")
+    store = load_knowledge_store(request.app.state.content_root)
+    payload = json.dumps(
+        {
+            "sources": [{"id": item.id, "title": item.title, "body": item.body}],
+            "allowed_subjects": list(DEFAULT_SUBJECTS),
+            "allowed_relation_targets": [
+                card.id for card in store.cards if card.status == "active"
+            ],
+            "allowed_map_ids": [value.id for value in store.maps if value.kind == "topic"],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    try:
+        task = request.app.state.model_tasks.create(
+            task_type=ModelTaskKind.KNOWLEDGE.value,
+            purpose=f"把随想《{item.title}》拆成原子知识卡候选",
+            source_labels=(item.title,),
+            payload=payload,
+            return_url=str(request.url_for("distill_idea", item_id=item.id)),
+        )
+    except ValueError as error:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="idea_distill.html",
+            context=_distill_context(request, item, error=str(error)),
+            status_code=422,
+        )
+    return RedirectResponse(
+        request.url_for("model_task", task_id=task.id),
+        status_code=303,
     )
 
 @router.post("/ideas/{item_id}", name="update_idea")
@@ -517,6 +732,9 @@ async def update_idea(
     category: str = Form(default=""),
     source_revision: str = Form(default=""),
 ) -> HTMLResponse:
+    existing = _collection(request).get(item_id)
+    if existing is None or existing.kind != "thought":
+        return _not_found(request, "ideas")
     try:
         item = update_item(
             request.app.state.content_root,
@@ -567,6 +785,7 @@ async def update_idea(
             },
             status_code=422,
         )
+    _refresh_search_item(request, item)
     return RedirectResponse(
         request.url_for("idea_detail", item_id=item.id).include_query_params(
             saved="updated",
@@ -587,7 +806,7 @@ async def update_idea_knowledge(
 ) -> HTMLResponse:
     collection = _collection(request)
     item = collection.get(item_id)
-    if item is None or item.kind == "weekly-review" or item.status == "archived":
+    if item is None or item.kind != "thought" or item.status == "archived":
         return _not_found(request, "ideas")
     return TEMPLATES.TemplateResponse(
         request=request,
@@ -612,6 +831,9 @@ async def change_idea_status(
     view: str = Form(default="pending"),
     q: str = Form(default=""),
 ) -> HTMLResponse:
+    existing = _collection(request).get(item_id)
+    if existing is None or existing.kind != "thought":
+        return _not_found(request, "ideas")
     try:
         item = set_item_status(request.app.state.content_root, item_id, status)
         _refresh_obsidian_links(request)
@@ -648,6 +870,9 @@ async def change_idea_status(
 
 @router.post("/ideas/{item_id}/trash", name="trash_idea")
 async def trash_idea(request: Request, item_id: str) -> HTMLResponse:
+    existing = _collection(request).get(item_id)
+    if existing is None or existing.kind != "thought":
+        return _not_found(request, "ideas")
     try:
         move_to_trash(request.app.state.content_root, item_id)
     except KeyError:
@@ -704,8 +929,8 @@ async def manual_analyze_knowledge(request: Request) -> HTMLResponse:
     }
     pending_items = tuple(
         item
-        for item in eligible_items(collection)
-        if item.kind != "weekly-review" and item.id not in covered
+        for item in distillable_items(collection)
+        if item.id not in covered
     )
     if not pending_items:
         return RedirectResponse(
@@ -963,5 +1188,110 @@ async def save_review_schedule(
         return _not_found(request, "reviews")
     return RedirectResponse(
         request.url_for("reviews").include_query_params(saved="schedule"),
+        status_code=303,
+    )
+
+
+@router.get(
+    "/reviews/{item_id}",
+    response_class=HTMLResponse,
+    name="review_detail",
+)
+async def review_detail(request: Request, item_id: str) -> HTMLResponse:
+    item = _collection(request).get(item_id)
+    if item is None or item.kind != "weekly-review":
+        return _not_found(request, "reviews")
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="review_detail.html",
+        context=_review_context(request, item),
+    )
+
+
+@router.post("/reviews/{item_id}", name="update_review")
+async def update_review(
+    request: Request,
+    item_id: str,
+    body: str = Form(...),
+    title: str = Form(default=""),
+    tags: str = Form(default=""),
+    category: str = Form(default=""),
+    source_revision: str = Form(default=""),
+) -> HTMLResponse:
+    existing = _collection(request).get(item_id)
+    if existing is None or existing.kind != "weekly-review":
+        return _not_found(request, "reviews")
+    try:
+        item = update_item(
+            request.app.state.content_root,
+            item_id,
+            body=body,
+            title=title,
+            tags=tags,
+            category=category,
+            expected_revision=source_revision,
+        )
+    except ContentConflictError as error:
+        current = error.current
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="idea_conflict.html",
+            context={
+                "active_page": "reviews",
+                "item": current,
+                "detail_url": request.url_for("review_detail", item_id=current.id),
+                "current_html": render_markdown(
+                    current.body,
+                    source=current.source,
+                    content_root=request.app.state.content_root,
+                ),
+                "submitted": {
+                    "title": title,
+                    "body": body,
+                    "tags": tags,
+                    "category": category,
+                },
+                "submitted_html": render_markdown(body),
+                "obsidian_url": obsidian_uri(current.source),
+            },
+            status_code=409,
+        )
+    except (KeyError, ValueError) as error:
+        current = _collection(request).get(item_id)
+        if current is None or current.kind != "weekly-review":
+            return _not_found(request, "reviews")
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="review_detail.html",
+            context=_review_context(request, current, error=str(error)),
+            status_code=422,
+        )
+    _refresh_search_item(request, item)
+    return RedirectResponse(
+        request.url_for("review_detail", item_id=item.id).include_query_params(
+            saved="updated"
+        ),
+        status_code=303,
+    )
+
+
+@router.post("/reviews/{item_id}/status", name="change_review_status")
+async def change_review_status(
+    request: Request,
+    item_id: str,
+    status: str = Form(...),
+) -> HTMLResponse:
+    existing = _collection(request).get(item_id)
+    if existing is None or existing.kind != "weekly-review":
+        return _not_found(request, "reviews")
+    try:
+        item = set_item_status(request.app.state.content_root, item_id, status)
+        _refresh_obsidian_links(request)
+    except (KeyError, ValueError):
+        return _not_found(request, "reviews")
+    return RedirectResponse(
+        request.url_for("review_detail", item_id=item.id).include_query_params(
+            saved="status"
+        ),
         status_code=303,
     )

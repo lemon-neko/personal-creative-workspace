@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}检查助手上下文 · 羽白工作台{% endblock %}
+{% block content %}
+<header class="page-header"><p class="eyebrow">OUTBOUND PREVIEW</p><h1>先看清楚，再发送</h1><p>这里是本轮模型实际会收到的全部内容。可以直接删除、修改或脱敏，但必须保持合法 JSON。</p></header>
+{% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
+<div class="assistant-preview-layout">
+    <aside class="paper-panel assistant-boundary">
+        <h2>本轮边界</h2><dl class="settings-list"><div><dt>Provider</dt><dd>{{ gateway.provider.value }}</dd></div><div><dt>模型</dt><dd>{{ gateway.config.model or '未配置' }}</dd></div><div><dt>目标地址</dt><dd><code>{{ target }}</code></dd></div><div><dt>预计输入</dt><dd>{{ estimated_tokens }} Token</dd></div><div><dt>硬上限</dt><dd>{{ policy.max_input_tokens }} / {{ policy.max_output_tokens }}</dd></div></dl>
+        <h3>来源</h3><ul class="plain-list assistant-source-list">{% for value in sources %}<li><a href="{{ value.url }}">{{ value.title }}</a><span>{{ value.kind }}</span></li>{% else %}<li><span>当前预览未保留可引用来源。</span></li>{% endfor %}</ul>
+        <p class="settings-note">不包含联系方式、简历全文、附件、图片、私有路径、密钥或设备信息。</p>
+    </aside>
+    <section class="paper-panel assistant-outbound">
+        <form action="{{ url_for('assistant_ask') }}" method="post" class="edit-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="conversation_id" value="{{ conversation_id }}">
+            <label class="field"><span>将要发送的完整 JSON</span><textarea name="outbound_text" rows="30" required>{{ material }}</textarea></label>
+            <div class="assistant-preview-actions"><a class="secondary-button" href="{{ url_for('assistant') }}{{ '?conversation_id=' ~ conversation_id if conversation_id else '' }}">返回修改问题</a><button class="primary-button" {{ 'disabled' if not gateway.enabled else '' }}>我已检查，调用模型</button></div>
+        </form>
+        {% if not gateway.enabled %}<div class="message warning">尚未配置可直接调用的模型。可以使用下方人工桥接，或者在模型与成本中配置本地模型。</div>{% endif %}
+        <div class="manual-bridge-divider"><span>或者不使用应用 API</span></div>
+        <form action="{{ url_for('assistant_manual') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="conversation_id" value="{{ conversation_id }}"><textarea name="outbound_text" hidden>{{ material }}</textarea><button class="secondary-button full-button">生成 ChatGPT / Codex 人工任务包</button></form>
+    </section>
+</div>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}想法 · 羽白工作台{% endblock %}
+{% block content %}
+<section class="paper-card ideas-head">
+  <p class="eyebrow">EDITABLE THOUGHTS</p>
+  <h1>想法会长大，也允许反悔。</h1>
+  <p>这里保存全部未归档随想。联网时刷新 Mac 快照，离线时编辑会留在本机，恢复网络后再安全同步。</p>
+  <div class="sync-strip">
+    <span><b id="idea-edit-count">0</b> 条待同步修改</span>
+    <button id="sync-idea-edits" type="button">立即同步</button>
+  </div>
+  <p id="idea-list-message" class="quiet-note" aria-live="polite"></p>
+</section>
+<section class="paper-card">
+  <div class="section-heading">
+    <h2>未归档随想</h2>
+    <button id="refresh-ideas" type="button">刷新快照</button>
+  </div>
+  <div id="mobile-idea-list" class="idea-list">
+    <p class="quiet-note">正在读取手机快照……</p>
+  </div>
+</section>
+<button id="clear-mobile-data" class="text-button" type="button">清除这台手机的本地副本</button>
+{% endblock %}

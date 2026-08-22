@@ -10,10 +10,18 @@ import httpx
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
-from app.career import DOCUMENT_KINDS, JOB_STATUSES, LEARNING_STATUSES, PROJECT_STATUSES, RESUME_STATUSES, CareerRepository
+from app.career import (
+    DOCUMENT_KINDS,
+    JOB_STATUSES,
+    LEARNING_STATUSES,
+    PROJECT_STATUSES,
+    REFERENCE_STATUSES,
+    RESUME_STATUSES,
+    CareerRepository,
+)
 from app.knowledge import eligible_items
 from app.model_gateway import ModelTaskKind
-from app.web import REPO_ROOT, TEMPLATES, collection, not_found
+from app.web import TEMPLATES, collection, not_found
 
 
 router = APIRouter()
@@ -709,29 +717,119 @@ async def confirm_job_skills(request: Request, job_id: str) -> HTMLResponse:
     )
 
 @router.get("/learning", response_class=HTMLResponse, name="learning")
-async def learning(request: Request) -> HTMLResponse:
-    repository = request.app.state.career
-    repository.seed_agent_reliability_campaign(
-        str(REPO_ROOT.parent / "agent-reliability-arena"),
+async def learning(
+    request: Request,
+    show_archived: bool = Query(default=False),
+) -> HTMLResponse:
+    repository: CareerRepository = request.app.state.career
+    jobs = repository.jobs()
+    skills = repository.skills()
+    tasks = repository.learning_tasks()
+    campaigns = repository.campaigns()
+    references = repository.learning_references()
+    job_capabilities = repository.job_capabilities()
+    capability_skill_ids = repository.capability_skill_ids()
+    reference_capabilities = repository.reference_capability_ids()
+    reference_tasks = repository.reference_task_ids()
+    skill_map = {skill.id: skill for skill in skills}
+    reference_map = {reference.id: reference for reference in references}
+    capability_rows = tuple(
+        {
+            "domain": domain,
+            "skills": tuple(
+                skill_map[skill_id]
+                for skill_id in capability_skill_ids.get(domain.id, ())
+                if skill_id in skill_map
+            ),
+            "requirements": tuple(
+                requirement
+                for requirement in job_capabilities
+                if requirement.capability_id == domain.id
+            ),
+            "references": tuple(
+                reference
+                for reference in references
+                if domain.id in reference_capabilities.get(reference.id, ())
+            ),
+        }
+        for domain in repository.capability_domains()
     )
+    p0_skill_ids = {
+        skill.id
+        for row in capability_rows
+        if row["domain"].priority == "P0"
+        for skill in row["skills"]
+    }
     return TEMPLATES.TemplateResponse(
         request=request,
         name="learning.html",
         context={
             "active_page": "learning",
-            "skills": repository.skills(),
-            "tasks": repository.learning_tasks(),
+            "skills": skills,
+            "skill_map": skill_map,
+            "tasks": tuple(task for task in tasks if show_archived or task.status != "paused"),
             "gaps": repository.gaps(),
-            "jobs": {job.id: job for job in repository.jobs()},
+            "jobs": {job.id: job for job in jobs},
+            "radar_jobs": tuple(job for job in jobs if job.captured_at),
+            "primary_job": next((job for job in jobs if job.is_primary), None),
+            "capabilities": repository.capability_domains(),
+            "capability_rows": capability_rows,
+            "job_capabilities": job_capabilities,
+            "capability_skill_ids": capability_skill_ids,
+            "references": references,
+            "reference_capabilities": reference_capabilities,
+            "reference_tasks": reference_tasks,
+            "reference_map": reference_map,
+            "reference_statuses": REFERENCE_STATUSES,
             "learning_statuses": LEARNING_STATUSES,
             "projects": repository.projects(),
+            "evidence_project_count": len(repository.projects()),
+            "resume_count": len(repository.resumes()),
+            "p0_gap_count": sum(
+                skill.current_level < skill.target_level
+                for skill in skills
+                if skill.id in p0_skill_ids
+            ),
             "content_items": eligible_items(_collection(request)),
-            "campaigns": repository.campaigns(),
+            "campaigns": tuple(
+                campaign
+                for campaign in campaigns
+                if show_archived or campaign.status != "archived"
+            ),
             "campaign_xp": {
                 campaign.id: repository.campaign_xp(campaign.id)
-                for campaign in repository.campaigns()
+                for campaign in campaigns
             },
+            "show_archived": show_archived,
         },
+    )
+
+
+@router.post(
+    "/learning/references/{reference_id}",
+    name="update_learning_reference",
+)
+async def update_learning_reference(
+    request: Request,
+    reference_id: str,
+    status: str = Form(...),
+    commit_sha: str = Form(default=""),
+    test_result: str = Form(default=""),
+    reflection: str = Form(default=""),
+) -> HTMLResponse:
+    try:
+        request.app.state.career.update_learning_reference(
+            reference_id,
+            status=status,
+            commit_sha=commit_sha,
+            test_result=test_result,
+            reflection=reflection,
+        )
+    except (KeyError, ValueError):
+        return _not_found(request, "learning")
+    return RedirectResponse(
+        request.url_for("learning").include_query_params(saved="reference"),
+        status_code=303,
     )
 
 def campaign_context(

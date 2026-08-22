@@ -41,7 +41,7 @@
 <section class="workspace-section">
     <div class="section-heading"><div><p class="eyebrow">HISTORY</p><h2>过去的回声</h2></div></div>
     {% if review_items %}
-    <div class="archive-list">{% for item in review_items %}<article class="archive-item"><div class="archive-date"><strong>{{ item.created_at.strftime("%m.%d") }}</strong><span>{{ item.created_at.year }}</span></div><div><h2><a href="{{ url_for('idea_detail', item_id=item.id) }}">{{ item.title }}</a></h2><p>{{ item.summary }}</p></div><div class="archive-actions"><a href="{{ url_for('publish_item', item_id=item.id) }}">公众号预览</a></div></article>{% endfor %}</div>
+    <div class="archive-list">{% for item in review_items %}<article class="archive-item"><div class="archive-date"><strong>{{ item.created_at.strftime("%m.%d") }}</strong><span>{{ item.created_at.year }}</span></div><div><div class="meta-line"><span class="status-badge status-{{ item.status }}">{{ content_status_labels('weekly-review')[item.status] }}</span></div><h2><a href="{{ url_for('review_detail', item_id=item.id) }}">{{ item.title }}</a></h2><p>{{ item.summary }}</p></div><div class="archive-actions"><a href="{{ url_for('review_detail', item_id=item.id) }}">查看与编辑 →</a></div></article>{% endfor %}</div>
     {% else %}<div class="empty-state compact"><h3>还没有周回顾</h3><p>先让一周发生，再回来看看。</p></div>{% endif %}
 </section>
 {% endblock %}

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
+from app.assistant import AssistantRepository
 from app.career import CareerRepository
 from app.content import (
     load_items,
@@ -29,6 +30,7 @@ from app.routers.creation import router as creation_router
 from app.routers.career_learning import router as career_learning_router
 from app.routers.knowledge_models import router as knowledge_models_router
 from app.routers.workspace_content import router as workspace_content_router
+from app.routers.assistant import router as assistant_router
 from app.privacy import (
     LocalOnlyMiddleware,
     default_data_root,
@@ -49,6 +51,9 @@ from app.workspace import (
     items_directory,
     run_summary_scheduler,
 )
+
+
+__all__ = ["REPO_ROOT", "create_app"]
 
 
 def _search_sources(application: FastAPI) -> dict:
@@ -144,15 +149,14 @@ def create_app(
         workspace_app.state.content_root,
     )
     workspace_app.state.search = SearchRepository(resolved_data_root)
+    workspace_app.state.assistant = AssistantRepository(resolved_data_root)
     workspace_app.state.search_sync_error = ""
     workspace_app.state.mobile_store = MobileStore(resolved_data_root)
     workspace_app.state.obsidian = ObsidianBridge(
         resolved_data_root,
         workspace_app.state.content_root,
     )
-    workspace_app.state.career.seed_agent_reliability_campaign(
-        str(REPO_ROOT.parent / "agent-reliability-arena"),
-    )
+    workspace_app.state.career.seed_career_radar()
     workspace_app.add_middleware(
         LocalOnlyMiddleware,
         enforce=workspace_app.state.enforce_security,
@@ -189,6 +193,7 @@ def create_app(
         return FileResponse(path)
 
     workspace_app.include_router(workspace_content_router)
+    workspace_app.include_router(assistant_router)
     workspace_app.include_router(knowledge_models_router)
 
     workspace_app.include_router(creation_router)

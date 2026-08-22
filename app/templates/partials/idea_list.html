@@ -10,8 +10,8 @@
             </div>
             <div>
                 <div class="meta-line">
-                    <span class="kind-badge">{{ kind_labels[item.kind] }}</span>
-                    <span class="status-badge status-{{ item.status }}">{{ status_labels[item.status] }}</span>
+                    <span class="kind-badge">随想</span>
+                    <span class="status-badge status-{{ item.status }}">{{ content_status_labels('thought')[item.status] }}</span>
                     {% if item.category %}<span>{{ item.category }}</span>{% endif %}
                 </div>
                 <h2><a href="{{ url_for('idea_detail', item_id=item.id) }}">{{ item.title }}</a></h2>
@@ -19,8 +19,8 @@
                 {% if item.tags %}<div class="tag-row">{% for tag in item.tags %}<span># {{ tag }}</span>{% endfor %}</div>{% endif %}
             </div>
             <div class="archive-actions">
-                <a href="{{ url_for('publish_item', item_id=item.id) }}">公众号预览</a>
-                <a href="{{ url_for('idea_detail', item_id=item.id) }}">整理 →</a>
+                <a href="{{ url_for('distill_idea', item_id=item.id) }}">整理为知识</a>
+                <a href="{{ url_for('idea_detail', item_id=item.id) }}">编辑 →</a>
             </div>
         </article>
         {% endfor %}

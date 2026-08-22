@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hmac
-import os
 import ipaddress
+import os
 import secrets
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +22,7 @@ from app.mobile import (
     MAX_IMAGES,
     MAX_TOTAL_IMAGE_BYTES,
     MOBILE_SESSION_COOKIE,
+    IdeaEditConflict,
     MobileCaptureService,
     MobileSession,
     MobileStore,
@@ -39,8 +40,15 @@ from app.mobile_knowledge import (
     render_mobile_markdown,
     source_summaries,
 )
-from app.knowledge_store import load_knowledge_store
+from app.atomic import content_lock
+from app.knowledge_store import (
+    CARD_TYPES,
+    create_knowledge_card,
+    load_knowledge_store,
+    subjects_for_topic_maps,
+)
 from app.privacy import default_data_root, prepare_private_root
+from app.search import SearchRepository
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -161,7 +169,12 @@ def create_mobile_app(
     prepare_private_root(resolved_data_root)
     resolved_content_root = (content_root or resolved_data_root / "content").resolve()
     store = MobileStore(resolved_data_root)
-    service = MobileCaptureService(resolved_data_root, resolved_content_root, store)
+    service = MobileCaptureService(
+        resolved_data_root,
+        resolved_content_root,
+        store,
+        SearchRepository(resolved_data_root),
+    )
     mobile_app = FastAPI(
         title="羽白工作台",
         docs_url=None,
@@ -240,6 +253,58 @@ def create_mobile_app(
         )
         response.headers["X-PCW-Offline-Knowledge"] = "1"
         return response
+
+    def idea_snapshot_payload(item) -> dict[str, object]:
+        return {
+            "id": item.id,
+            "title": item.title,
+            "body": item.body,
+            "summary": item.summary,
+            "tags": list(item.tags),
+            "category": item.category,
+            "status": item.status,
+            "created_at": item.created_at,
+            "updated_at": item.updated_at,
+            "revision": item.revision,
+        }
+
+    def idea_page(
+        request: Request, item_id: str = "", *, edit_shell: bool = False
+    ) -> Response:
+        if isinstance(paired_or_redirect(request), RedirectResponse):
+            return RedirectResponse("/", status_code=303)
+        if (
+            item_id
+            and not item_id.startswith("local--")
+            and service.idea(item_id) is None
+        ):
+            return MOBILE_TEMPLATES.TemplateResponse(
+                request=request,
+                name="idea_404.html",
+                context={"paired": True, "active_page": "ideas"},
+                status_code=404,
+            )
+        return MOBILE_TEMPLATES.TemplateResponse(
+            request=request,
+            name="idea_edit.html" if item_id or edit_shell else "ideas.html",
+            context={
+                "paired": True,
+                "active_page": "ideas",
+                "idea_id": item_id,
+            },
+        )
+
+    @mobile_app.get("/ideas", response_class=HTMLResponse)
+    async def mobile_ideas(request: Request) -> Response:
+        return idea_page(request)
+
+    @mobile_app.get("/ideas/_shell", response_class=HTMLResponse)
+    async def mobile_idea_offline_shell(request: Request) -> Response:
+        return idea_page(request, "", edit_shell=True)
+
+    @mobile_app.get("/ideas/{item_id}", response_class=HTMLResponse)
+    async def mobile_idea_detail(request: Request, item_id: str) -> Response:
+        return idea_page(request, item_id)
 
     @mobile_app.get("/knowledge", response_class=HTMLResponse)
     async def mobile_knowledge(request: Request) -> Response:
@@ -434,6 +499,180 @@ def create_mobile_app(
             }
         )
 
+    @mobile_app.get("/api/ideas/snapshot")
+    async def ideas_snapshot(request: Request) -> JSONResponse:
+        _require_session(request)
+        knowledge = load_knowledge_store(resolved_content_root)
+        topics = tuple(item for item in knowledge.maps if item.kind == "topic")
+        return JSONResponse(
+            {
+                "items": [idea_snapshot_payload(item) for item in service.ideas()],
+                "topics": [
+                    {"id": item.id, "title": item.title, "summary": item.summary}
+                    for item in topics
+                ],
+            }
+        )
+
+    async def read_images(images: list[UploadFile]) -> list[bytes]:
+        if len(images) > MAX_IMAGES:
+            raise HTTPException(status_code=422, detail="图片数量超过限制")
+        payloads: list[bytes] = []
+        total = 0
+        for upload in images:
+            data = await upload.read(MAX_IMAGE_BYTES + 1)
+            if len(data) > MAX_IMAGE_BYTES:
+                raise HTTPException(status_code=413, detail="单张图片超过 10 MB")
+            total += len(data)
+            if total > MAX_TOTAL_IMAGE_BYTES:
+                raise HTTPException(status_code=413, detail="图片总大小超过 25 MB")
+            payloads.append(data)
+        return payloads
+
+    async def save_mobile_idea(
+        request: Request,
+        item_id: str,
+        operation_key: str,
+        expected_revision: str,
+        body: str,
+        title: str,
+        tags: str,
+        category: str,
+        images: list[UploadFile],
+    ) -> JSONResponse:
+        session = _require_session(request)
+        _require_mobile_csrf(request, session)
+        payloads = await read_images(images)
+        try:
+            receipt = service.update_idea(
+                item_id,
+                operation_key=operation_key,
+                expected_revision=expected_revision,
+                body=body,
+                title=title,
+                tags=tags,
+                category=category,
+                images=payloads,
+            )
+        except IdeaEditConflict as error:
+            return JSONResponse(
+                {
+                    "detail": str(error),
+                    "current": idea_snapshot_payload(error.current),
+                },
+                status_code=409,
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="随想不存在或已归档") from error
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        current = service.idea(item_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="随想不存在或已归档")
+        return JSONResponse(
+            {
+                "operation_key": receipt.operation_key,
+                "content_id": receipt.content_id,
+                "revision": receipt.revision,
+                "applied": receipt.applied,
+                "image_count": receipt.image_count,
+                "item": idea_snapshot_payload(current),
+            }
+        )
+
+    @mobile_app.post("/api/ideas/{item_id}")
+    async def update_mobile_idea(
+        request: Request,
+        item_id: str,
+        operation_key: str = Form(...),
+        expected_revision: str = Form(...),
+        body: str = Form(...),
+        title: str = Form(default=""),
+        tags: str = Form(default=""),
+        category: str = Form(default=""),
+        images: list[UploadFile] = File(default=[]),
+    ) -> JSONResponse:
+        return await save_mobile_idea(
+            request,
+            item_id,
+            operation_key,
+            expected_revision,
+            body,
+            title,
+            tags,
+            category,
+            images,
+        )
+
+    @mobile_app.post("/api/ideas/{item_id}/resolve")
+    async def resolve_mobile_idea(
+        request: Request,
+        item_id: str,
+        operation_key: str = Form(...),
+        expected_revision: str = Form(...),
+        body: str = Form(...),
+        title: str = Form(default=""),
+        tags: str = Form(default=""),
+        category: str = Form(default=""),
+        images: list[UploadFile] = File(default=[]),
+    ) -> JSONResponse:
+        return await save_mobile_idea(
+            request,
+            item_id,
+            operation_key,
+            expected_revision,
+            body,
+            title,
+            tags,
+            category,
+            images,
+        )
+
+    @mobile_app.post("/api/ideas/{item_id}/knowledge/cards")
+    async def create_mobile_knowledge_card(
+        request: Request,
+        item_id: str,
+        title: str = Form(...),
+        body: str = Form(...),
+        card_type: str = Form(...),
+        map_ids: list[str] = Form(default=[]),
+        concepts: str = Form(default=""),
+    ) -> JSONResponse:
+        session = _require_session(request)
+        _require_mobile_csrf(request, session)
+        if service.idea(item_id) is None:
+            raise HTTPException(status_code=404, detail="随想不存在或已归档")
+        if card_type not in CARD_TYPES:
+            raise HTTPException(status_code=422, detail="知识卡类型无效")
+        selected_maps = tuple(dict.fromkeys(map_ids))
+        clean_concepts = tuple(
+            dict.fromkeys(
+                value.strip()
+                for value in concepts.replace("，", ",").split(",")
+                if value.strip()
+            )
+        )
+        try:
+            with content_lock(resolved_content_root):
+                knowledge = load_knowledge_store(resolved_content_root)
+                subjects = subjects_for_topic_maps(knowledge, selected_maps)
+                card = create_knowledge_card(
+                    resolved_content_root,
+                    title=title,
+                    body=body,
+                    card_type=card_type,
+                    subjects=subjects,
+                    source_ids=(item_id,),
+                    map_ids=selected_maps,
+                    concepts=clean_concepts,
+                )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return JSONResponse(
+            {"card_id": card.id, "title": card.title, "created": True},
+            status_code=201,
+        )
+
     @mobile_app.post("/api/captures")
     async def create_capture(
         request: Request,
@@ -447,18 +686,7 @@ def create_mobile_app(
     ) -> JSONResponse:
         session = _require_session(request)
         _require_mobile_csrf(request, session)
-        if len(images) > MAX_IMAGES:
-            raise HTTPException(status_code=422, detail="图片数量超过限制")
-        payloads: list[bytes] = []
-        total = 0
-        for upload in images:
-            data = await upload.read(MAX_IMAGE_BYTES + 1)
-            if len(data) > MAX_IMAGE_BYTES:
-                raise HTTPException(status_code=413, detail="单张图片超过 10 MB")
-            total += len(data)
-            if total > MAX_TOTAL_IMAGE_BYTES:
-                raise HTTPException(status_code=413, detail="图片总大小超过 25 MB")
-            payloads.append(data)
+        payloads = await read_images(images)
         try:
             normalized_time = (
                 f"{created_at[:-1]}+00:00" if created_at.endswith("Z") else created_at
@@ -493,6 +721,8 @@ def create_mobile_app(
         return response
 
     return mobile_app
+
+
 def main() -> None:
     os.umask(0o077)
     uvicorn.run(

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.knowledge_store import load_knowledge_store
+from app.knowledge_store import create_knowledge_map, load_knowledge_store
 from app.main import create_app
 from app.model_gateway import (
     ModelGateway,
@@ -115,6 +115,13 @@ def test_usage_ledger_totals_and_price_roundtrip(tmp_path: Path) -> None:
     ("task_type", "payload"),
     [
         ("weekly-review", {"markdown": "本周记录"}),
+        (
+            "assistant",
+            {
+                "assistant_summary": "先完成最小闭环",
+                "user_intent_summary": "判断下一步",
+            },
+        ),
         ("publish", {"title": "标题", "markdown": "正文", "image_suggestions": []}),
         (
             "profile",
@@ -206,6 +213,9 @@ class FakeModelClient:
     def job_skill_candidate(self, _material):
         return self._result({"skills": []})
 
+    def assistant_candidate(self, _material):
+        return self._result({"assistant_summary": "先完成最小闭环"})
+
 
 def test_gateway_records_local_success_failure_and_facade_calls(tmp_path: Path) -> None:
     client = FakeModelClient()
@@ -219,6 +229,10 @@ def test_gateway_records_local_success_failure_and_facade_calls(tmp_path: Path) 
     assert gateway.knowledge_card_candidate(_knowledge_payload())["suggestions"]
     assert gateway.profile_candidate("profile") == {"facts": "fact"}
     assert gateway.job_skill_candidate("jd") == {"skills": []}
+    assert gateway.assistant_candidate("assistant") == {
+        "assistant_summary": "先完成最小闭环"
+    }
+    assert any(row.task_type == "assistant" for row in gateway.usage.recent())
     assert all(row.estimated_cost == 0 for row in gateway.usage.recent())
 
     client.fail = True
@@ -334,6 +348,19 @@ def test_manual_knowledge_route_requires_explicit_confirmation(
         enforce_security=False,
     )
     source = create_item(app.state.content_root, body="记忆具有时间属性。")
+    subject = create_knowledge_map(
+        app.state.content_root,
+        title="技术",
+        kind="subject",
+        summary="软件和人工智能系统。",
+    )
+    topic = create_knowledge_map(
+        app.state.content_root,
+        title="时序记忆",
+        kind="topic",
+        summary="记忆在时间中的变化。",
+        parent_ids=(subject.id,),
+    )
     client = TestClient(app)
     prepared = client.post("/knowledge/analyze/manual", follow_redirects=False)
     task_path = prepared.headers["location"]
@@ -354,7 +381,7 @@ def test_manual_knowledge_route_requires_explicit_confirmation(
                                     "body": "记忆中的事实可能只在某段时间成立。",
                                     "subjects": ["技术", "认知科学"],
                                     "concepts": ["时序记忆"],
-                                    "map_ids": [],
+                                    "map_ids": [topic.id],
                                     "relations": [],
                                 }
                             ],
@@ -378,7 +405,7 @@ def test_manual_knowledge_route_requires_explicit_confirmation(
             "body_0-0": "记忆中的事实可能只在某段时间成立。",
             "subjects_0-0": "技术，认知科学",
             "concepts_0-0": "时序记忆",
-            "maps_0-0": "",
+            "maps_0-0": topic.id,
         },
         follow_redirects=False,
     )

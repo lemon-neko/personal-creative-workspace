@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from app.content import semantic_revision
 from app.knowledge_quality import inspect_knowledge_quality
 from app.knowledge_store import (
     KnowledgeEdge,
@@ -14,11 +15,12 @@ from app.knowledge_store import (
     create_knowledge_map,
     layered_graph,
     load_knowledge_store,
+    reconfirm_knowledge_card_sources,
     supersede_knowledge_card,
     validate_map_graph,
 )
 from app.vault import apply_vault_migration, plan_vault_migration
-from app.workspace import SHANGHAI, create_item
+from app.workspace import SHANGHAI, create_item, update_item
 
 
 def test_multi_parent_maps_cards_and_provenance(tmp_path: Path) -> None:
@@ -61,6 +63,9 @@ def test_multi_parent_maps_cards_and_provenance(tmp_path: Path) -> None:
     assert card.source.name.startswith("记忆是选择性压缩--")
     assert store.map(memory.id).parent_ids == (technology.id, cognition.id)
     assert store.card(card.id).source_ids == (source.id,)
+    assert store.card(card.id).source_revisions == {
+        source.id: semantic_revision(source)
+    }
     assert any(
         edge["source"] == card.id
         and edge["target"] == source.id
@@ -74,6 +79,42 @@ def test_multi_parent_maps_cards_and_provenance(tmp_path: Path) -> None:
     }
     assert not any(edge["type"] == "mentions" for edge in graph["edges"])
     assert [value["id"] for value in graph["sources"]] == [source.id]
+
+
+def test_source_edit_marks_card_stale_until_explicit_reconfirmation(
+    tmp_path: Path,
+) -> None:
+    content = tmp_path / "content"
+    source = create_item(content, body="原始观察。", title="观察")
+    card = create_knowledge_card(
+        content,
+        title="观察形成的判断",
+        body="这是一条独立知识结论。",
+        card_type="claim",
+        subjects=("哲学",),
+        source_ids=(source.id,),
+    )
+    edited = update_item(content, source.id, body="原始观察补充了新信息。")
+
+    issues = inspect_knowledge_quality(
+        (edited,),
+        load_knowledge_store(content),
+    )
+    assert any(
+        issue.code == "stale-card" and issue.href.endswith(card.id)
+        for issue in issues
+    )
+    assert load_knowledge_store(content).card(card.id).body == card.body
+
+    confirmed = reconfirm_knowledge_card_sources(content, card.id)
+    assert confirmed.source_revisions[source.id] == semantic_revision(edited)
+    assert not any(
+        issue.code == "stale-card"
+        for issue in inspect_knowledge_quality(
+            (edited,),
+            load_knowledge_store(content),
+        )
+    )
 
 
 def test_knowledge_quality_reports_only_actionable_structure_issues(

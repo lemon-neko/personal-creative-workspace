@@ -19,6 +19,7 @@ from app.content import (
     combine_managed_links,
     load_items,
     render_markdown,
+    semantic_revision,
     split_managed_links,
 )
 from app.workspace import SHANGHAI
@@ -30,7 +31,7 @@ MAP_KINDS = {"subject", "topic"}
 EDGE_TYPES = {"related", "extends", "supports", "contrasts"}
 CARD_FIELDS = {
     "id", "title", "card_type", "status", "created_at", "updated_at",
-    "subjects", "map_ids", "concepts", "source_ids", "relations",
+    "subjects", "map_ids", "concepts", "source_ids", "source_revisions", "relations",
     "valid_from", "valid_to", "superseded_by",
 }
 MAP_FIELDS = {"id", "title", "kind", "summary", "parent_ids", "created_at", "updated_at"}
@@ -65,6 +66,7 @@ class KnowledgeCard:
     map_ids: tuple[str, ...]
     concepts: tuple[str, ...]
     source_ids: tuple[str, ...]
+    source_revisions: dict[str, str] = field(default_factory=dict)
     relations: tuple[KnowledgeEdge, ...] = ()
     valid_from: datetime | None = None
     valid_to: datetime | None = None
@@ -209,6 +211,26 @@ def _optional_datetime(metadata: dict, key: str) -> datetime | None:
     return None if value in (None, "") else _datetime(value, key)
 
 
+def _source_revisions(metadata: dict) -> dict[str, str]:
+    raw = metadata.get("source_revisions", {})
+    if raw in (None, ""):
+        return {}
+    if not isinstance(raw, dict) or len(raw) > 20:
+        raise ValueError("`source_revisions` 必须是来源 ID 到 Revision 的映射")
+    result: dict[str, str] = {}
+    for raw_id, raw_revision in raw.items():
+        source_id = str(raw_id).strip()
+        revision = str(raw_revision).strip().lower()
+        if (
+            not source_id
+            or len(source_id) > 160
+            or not re.fullmatch(r"[0-9a-f]{64}", revision)
+        ):
+            raise ValueError("`source_revisions` 包含无效来源或 Revision")
+        result[source_id] = revision
+    return result
+
+
 def parse_card(path: Path) -> KnowledgeCard:
     metadata, body, managed_links = _split(path.read_text(encoding="utf-8"))
     card_type = metadata.get("card_type")
@@ -247,6 +269,7 @@ def parse_card(path: Path) -> KnowledgeCard:
         map_ids=_values(metadata, "map_ids", 8, 160),
         concepts=_values(metadata, "concepts", 8, 40),
         source_ids=_values(metadata, "source_ids", 20, 160, required=True),
+        source_revisions=_source_revisions(metadata),
         relations=tuple(relations),
         valid_from=valid_from,
         valid_to=valid_to,
@@ -316,6 +339,8 @@ def load_knowledge_store(content_root: Path) -> KnowledgeStore:
     for card in cards:
         if not set(card.source_ids) <= source_ids:
             diagnostics.append(f"{card.source.name}: 引用了不存在的原始来源")
+        if not set(card.source_revisions) <= set(card.source_ids):
+            diagnostics.append(f"{card.source.name}: 来源 Revision 包含未引用的来源")
         if not set(card.map_ids) <= map_ids:
             diagnostics.append(f"{card.source.name}: 引用了不存在的知识地图")
         if any(edge.target_id not in known_targets for edge in card.relations):
@@ -346,6 +371,42 @@ def validate_map_graph(maps: tuple[KnowledgeMap, ...]) -> None:
     complete: set[str] = set()
     for node in parents:
         visit(node, set(), complete)
+
+
+def subjects_for_topic_maps(
+    store: KnowledgeStore,
+    map_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Resolve subject titles for one or more selected topic maps."""
+
+    selected = tuple(dict.fromkeys(value.strip() for value in map_ids if value.strip()))
+    lookup = {item.id: item for item in store.maps}
+    if not selected or not set(selected) <= set(lookup):
+        raise ValueError("请至少选择一个有效主题")
+    if any(lookup[value].kind != "topic" for value in selected):
+        raise ValueError("知识卡只能直接归入主题地图")
+
+    def parents(map_id: str, visited: set[str] | None = None) -> set[str]:
+        item = lookup[map_id]
+        if item.kind == "subject":
+            return {item.title}
+        active = set(visited or ())
+        if map_id in active:
+            return set()
+        active.add(map_id)
+        return {
+            subject
+            for parent_id in item.parent_ids
+            if parent_id in lookup
+            for subject in parents(parent_id, active)
+        }
+
+    subjects = tuple(sorted({subject for map_id in selected for subject in parents(map_id)}))
+    if not subjects:
+        raise ValueError("所选主题尚未连接到学科地图")
+    if len(subjects) > 3:
+        raise ValueError("所选主题关联的学科超过 3 个，请缩小范围")
+    return subjects
 
 
 def _write(
@@ -379,6 +440,7 @@ def knowledge_semantic_revision(value: KnowledgeCard | KnowledgeMap) -> str:
             "map_ids": value.map_ids,
             "concepts": value.concepts,
             "source_ids": value.source_ids,
+            "source_revisions": value.source_revisions,
             "relations": [
                 (edge.target_id, edge.relation, edge.note) for edge in value.relations
             ],
@@ -437,6 +499,7 @@ def reconcile_knowledge_external_edit(
             "map_ids": list(value.map_ids),
             "concepts": list(value.concepts),
             "source_ids": list(value.source_ids),
+            "source_revisions": value.source_revisions,
             "relations": [
                 {
                     "target_id": edge.target_id,
@@ -510,13 +573,13 @@ def create_knowledge_card(
     if clean_maps and not set(clean_maps) <= {item.id for item in store.maps}:
         raise ValueError("知识卡引用了不存在的知识地图")
     known_sources = {
-        item.id
+        item.id: item
         for item in load_items(content_root).items
         if item.kind != "weekly-review"
     }
-    if not set(clean_sources) <= known_sources:
+    if not set(clean_sources) <= set(known_sources):
         raise ValueError("知识卡引用了不存在的原始来源")
-    known_targets = known_sources | {item.id for item in store.cards} | {
+    known_targets = set(known_sources) | {item.id for item in store.cards} | {
         item.id for item in store.maps
     }
     if any(edge.target_id not in known_targets for edge in relations):
@@ -537,6 +600,10 @@ def create_knowledge_card(
             "map_ids": list(clean_maps),
             "concepts": list(clean_concepts),
             "source_ids": list(clean_sources),
+            "source_revisions": {
+                source_id: semantic_revision(known_sources[source_id])
+                for source_id in clean_sources
+            },
             "relations": [
                 {"target_id": edge.target_id, "type": edge.relation, "note": edge.note}
                 for edge in relations[:12]
@@ -630,6 +697,7 @@ def supersede_knowledge_card(
         "map_ids": list(card.map_ids),
         "concepts": list(card.concepts),
         "source_ids": list(card.source_ids),
+        "source_revisions": card.source_revisions,
         "relations": [
             {
                 "target_id": edge.target_id,
@@ -645,6 +713,72 @@ def supersede_knowledge_card(
     _write(
         card.source,
         metadata,
+        card.body,
+        extra_metadata=card.extra_metadata,
+        managed_links=card.managed_links,
+    )
+    return parse_card(card.source)
+
+
+def reconfirm_knowledge_card_sources(
+    content_root: Path,
+    card_id: str,
+    *,
+    source_ids: tuple[str, ...] = (),
+    now: datetime | None = None,
+) -> KnowledgeCard:
+    """Confirm that a card still applies to the current source revisions."""
+
+    store = load_knowledge_store(content_root)
+    card = store.card(card_id)
+    if card is None or card.status == "archived":
+        raise ValueError("知识卡不存在或已经归档")
+    items = {
+        item.id: item
+        for item in load_items(content_root).items
+        if item.kind != "weekly-review" and item.status != "archived"
+    }
+    selected = tuple(dict.fromkeys(source_ids or card.source_ids))
+    if (
+        not selected
+        or not set(selected) <= set(card.source_ids)
+        or not set(selected) <= set(items)
+    ):
+        raise ValueError("知识卡复核来源无效")
+    revisions = dict(card.source_revisions)
+    revisions.update(
+        {source_id: semantic_revision(items[source_id]) for source_id in selected}
+    )
+    stamp = (now or datetime.now(SHANGHAI)).astimezone(SHANGHAI).replace(
+        microsecond=0
+    )
+    metadata = {
+        "id": card.id,
+        "title": card.title,
+        "card_type": card.card_type,
+        "status": card.status,
+        "created_at": card.created_at.isoformat(),
+        "updated_at": stamp.isoformat(),
+        "subjects": list(card.subjects),
+        "map_ids": list(card.map_ids),
+        "concepts": list(card.concepts),
+        "source_ids": list(card.source_ids),
+        "source_revisions": revisions,
+        "relations": [
+            {
+                "target_id": edge.target_id,
+                "type": edge.relation,
+                "note": edge.note,
+            }
+            for edge in card.relations
+        ],
+        "valid_from": card.valid_from.isoformat() if card.valid_from else None,
+        "valid_to": card.valid_to.isoformat() if card.valid_to else None,
+        "superseded_by": card.superseded_by,
+    }
+    _write(
+        card.source,
+        {key: value for key, value in metadata.items() if value is not None},
         card.body,
         extra_metadata=card.extra_metadata,
         managed_links=card.managed_links,

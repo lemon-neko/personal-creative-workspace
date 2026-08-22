@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="{{ url_for('static', path='/styles/career.css') }}?v=20260817-stable1">
     <link rel="stylesheet" href="{{ url_for('static', path='/styles/creation.css') }}?v=20260817-stable1">
     <link rel="stylesheet" href="{{ url_for('static', path='/styles/knowledge-system.css') }}?v=20260817-stable1">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles/assistant.css') }}?v=20260820-assistant1">
     {% block page_styles %}{% endblock %}
     <script>
         window.MathJax = {
@@ -35,9 +36,11 @@
                 <nav class="sidebar-nav" aria-label="主要功能">
                     <small class="nav-group-label">工作</small>
                     <a class="{{ 'active' if active_page == 'workspace' else '' }}" href="{{ url_for('workspace') }}"><span aria-hidden="true">◌</span>工作台</a>
+                    <a class="{{ 'active' if active_page == 'assistant' else '' }}" href="{{ url_for('assistant') }}"><span aria-hidden="true">✦</span>助手</a>
                     <a class="{{ 'active' if active_page == 'ideas' else '' }}" href="{{ url_for('ideas') }}"><span aria-hidden="true">≡</span>想法库</a>
                     <a class="{{ 'active' if active_page == 'knowledge' else '' }}" href="{{ url_for('knowledge') }}"><span aria-hidden="true">✣</span>知识库</a>
-                    <a class="{{ 'active' if active_page in ['publish','reviews','video'] else '' }}" href="{{ url_for('publish_index') }}"><span aria-hidden="true">↗</span>创作</a>
+                    <a class="{{ 'active' if active_page == 'reviews' else '' }}" href="{{ url_for('reviews') }}"><span aria-hidden="true">↻</span>周回顾</a>
+                    <a class="{{ 'active' if active_page in ['articles','publish','video'] else '' }}" href="{{ url_for('articles') }}"><span aria-hidden="true">↗</span>创作</a>
                 </nav>
                 <nav class="sidebar-nav" aria-label="求职与学习">
                     <a class="{{ 'active' if active_page == 'career' else '' }}" href="{{ url_for('career') }}"><span aria-hidden="true">◇</span>求职</a>

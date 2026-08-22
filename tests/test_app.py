@@ -11,9 +11,13 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi.testclient import TestClient
 
-from app.content import load_items
+from app.content import load_items, semantic_revision
 from app.llm import PolishResult
-from app.knowledge_store import create_knowledge_card, create_knowledge_map
+from app.knowledge_store import (
+    create_knowledge_card,
+    create_knowledge_map,
+    load_knowledge_store,
+)
 from app.main import REPO_ROOT, create_app
 from app.runtime import DESKTOP_LABEL, MAX_LOG_BYTES, build_launch_agent, restart_service
 from app.workspace import create_item, items_directory, set_item_status
@@ -107,10 +111,12 @@ def client(tmp_path: Path) -> TestClient:
     ("path", "marker"),
     [
         ("/", "今天想接住什么"),
+        ("/assistant", "个人助手"),
         ("/ideas", "想法库"),
         ("/knowledge", "核心知识图"),
         ("/reviews", "周回顾"),
-        ("/publish", "发布适配"),
+        ("/articles", "文章创作"),
+        ("/publish", "公众号发布台"),
         ("/video", "视频创作"),
         ("/career", "求职驾驶舱"),
         ("/career/profile", "候选人档案"),
@@ -118,8 +124,7 @@ def client(tmp_path: Path) -> TestClient:
         ("/career/projects", "项目证据库"),
         ("/career/resumes", "简历版本"),
         ("/career/jobs", "职位跟踪"),
-        ("/learning", "技能与学习任务"),
-        ("/learning/campaigns/agent-reliability-arena", "30-DAY PROJECT CAMPAIGN"),
+        ("/learning", "岗位雷达与开源研读"),
         ("/settings/backups", "私有备份"),
         ("/settings/runtime", "本机运行状态"),
         ("/trash", "回收站"),
@@ -140,6 +145,7 @@ def test_static_assets_are_local_and_available(client: TestClient) -> None:
     for path, marker in (
         ("/static/styles/base.css", "--cyan"),
         ("/static/styles/knowledge-system.css", ".knowledge"),
+        ("/static/styles/assistant.css", ".assistant"),
         ("/static/publishing.css", ".publish-layout"),
         ("/static/publishing.js", "ClipboardItem"),
         ("/static/knowledge.js", "forceSimulation"),
@@ -163,6 +169,9 @@ def test_publishing_script_embeds_images_and_keeps_clipboard_fallback(
     assert '"text/plain"' in script.text
     assert "document.execCommand(\"copy\")" in script.text
     assert "张图片需手动上传" in script.text
+    assert "normalizeExportNode" in script.text
+    assert "cleanInlineStyle" in script.text
+    assert "prepared.node.outerHTML" in script.text
 
 
 def test_private_content_assets_are_not_part_of_static_mount(tmp_path: Path) -> None:
@@ -209,8 +218,7 @@ def test_workspace_groups_search_and_partial(tmp_path: Path) -> None:
 
     workspace = client.get("/", params={"view": "pending"})
     pending = client.get("/partials/workspace-feed", params={"view": "pending"})
-    articles = client.get("/partials/workspace-feed", params={"view": "articles"})
-    published = client.get("/partials/workspace-feed", params={"view": "published"})
+    organized = client.get("/partials/workspace-feed", params={"view": "organized"})
     all_items = client.get("/partials/workspace-feed", params={"view": "all"})
     searched = client.get(
         "/partials/workspace-feed",
@@ -218,7 +226,7 @@ def test_workspace_groups_search_and_partial(tmp_path: Path) -> None:
     )
     partial = client.get(
         "/partials/workspace-feed",
-        params={"view": "articles", "q": "参数"},
+        params={"view": "all", "q": "参数"},
         headers={"HX-Request": "true"},
     )
 
@@ -227,22 +235,34 @@ def test_workspace_groups_search_and_partial(tmp_path: Path) -> None:
     assert "文章草稿" in workspace.text
     assert "散步灵感" in pending.text
     assert "参数的碎碎念" not in pending.text
-    assert "参数的碎碎念" in articles.text
-    assert "散步灵感" not in articles.text
-    assert "公开月光" in published.text
-    assert "归档石头" not in published.text
-    for title in ("散步灵感", "参数的碎碎念", "公开月光", "归档石头"):
+    assert "参数的碎碎念" not in organized.text
+    assert "公开月光" in organized.text
+    assert "归档石头" not in organized.text
+    for title in ("散步灵感", "公开月光", "归档石头"):
         assert title in all_items.text
+    assert "参数的碎碎念" not in all_items.text
     assert "公开月光" in searched.text and "归档石头" not in searched.text
     assert '<section id="workspace-feed"' in partial.text
     assert "<!doctype html>" not in partial.text.lower()
-    assert partial.headers["HX-Push-Url"] == "/?view=articles&q=%E5%8F%82%E6%95%B0"
+    assert partial.headers["HX-Push-Url"] == "/?view=all&q=%E5%8F%82%E6%95%B0"
 
 
 def test_global_search_is_synced_on_start_and_after_successful_write(
     tmp_path: Path,
 ) -> None:
     create_item(tmp_path, body="启动前就存在的银河。", title="银河")
+    article = create_item(
+        tmp_path,
+        body="独立文章正文。",
+        title="独立文章",
+        kind="article",
+    )
+    review = create_item(
+        tmp_path,
+        body="中性回顾正文。",
+        title="中性回顾",
+        kind="weekly-review",
+    )
     application = create_app(content_root=tmp_path, enable_scheduler=False)
     with TestClient(application) as browser:
         before = browser.get("/search", params={"q": "银河"})
@@ -252,11 +272,15 @@ def test_global_search_is_synced_on_start_and_after_successful_write(
             follow_redirects=False,
         )
         after = browser.get("/search", params={"q": "流星"})
+        article_search = browser.get("/search", params={"q": "独立文章"})
+        review_search = browser.get("/search", params={"q": "中性回顾"})
         settings = browser.get("/settings/search")
 
     assert before.status_code == 200 and "银河" in before.text
     assert created.status_code == 303
     assert after.status_code == 200 and "流星" in after.text
+    assert f"/articles/{article.id}" in article_search.text
+    assert f"/reviews/{review.id}" in review_search.text
     assert "检索索引" in settings.text
 
 
@@ -365,6 +389,51 @@ def test_legacy_source_knowledge_writes_are_retired(tmp_path: Path) -> None:
     assert updated.body == item.body
 
 
+def test_desktop_idea_distill_creates_revision_linked_card_without_editing_source(
+    tmp_path: Path,
+) -> None:
+    item = create_item(tmp_path, body="一段仍需保留的原始随想。", title="原始随想")
+    subject = create_knowledge_map(
+        tmp_path,
+        title="哲学",
+        kind="subject",
+        summary="关于判断与理解。",
+    )
+    topic = create_knowledge_map(
+        tmp_path,
+        title="认知与选择",
+        kind="topic",
+        summary="个体如何形成判断。",
+        parent_ids=(subject.id,),
+    )
+    client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
+
+    page = client.get(f"/ideas/{item.id}/distill")
+    created = client.post(
+        f"/ideas/{item.id}/distill/cards",
+        data={
+            "title": "判断来自既有经验",
+            "body": "当下判断会被过去经验塑形。",
+            "card_type": "claim",
+            "map_ids": [topic.id],
+            "concepts": "判断,经验",
+        },
+        follow_redirects=True,
+    )
+
+    assert page.status_code == 200 and "把随想整理成可追溯的知识" in page.text
+    assert created.status_code == 200 and "知识卡已创建" in created.text
+    source = load_items(items_directory(tmp_path)).get(item.id)
+    card = next(
+        card
+        for card in load_knowledge_store(tmp_path).cards
+        if card.title == "判断来自既有经验"
+    )
+    assert source.body == item.body and source.title == item.title
+    assert card.source_ids == (item.id,)
+    assert card.source_revisions[item.id] == semantic_revision(source)
+
+
 def test_idea_filters_partial_edit_and_finished_status(
     tmp_path: Path,
 ) -> None:
@@ -406,9 +475,9 @@ def test_idea_filters_partial_edit_and_finished_status(
     assert partial.headers["HX-Push-Url"].startswith("/ideas?q=")
     assert "修改已保存" in edited.text
     assert "内容状态已更新" in published.text
-    finished = client.get("/partials/workspace-feed", params={"view": "published"})
+    finished = client.get("/partials/workspace-feed", params={"view": "organized"})
     assert "散步以后" in finished.text
-    assert "已成稿" in finished.text
+    assert "已整理" in finished.text
 
 
 def test_garden_routes_are_removed(tmp_path: Path) -> None:
@@ -489,8 +558,92 @@ def test_review_can_be_generated_from_workspace(tmp_path: Path) -> None:
     assert "本周回顾" in response.text
 
 
+def test_content_types_have_separate_pages_and_publish_boundary(tmp_path: Path) -> None:
+    thought = create_item(tmp_path, body="一个普通随想。", title="普通随想")
+    article = create_item(
+        tmp_path,
+        body="一篇独立文章。",
+        title="独立文章",
+        kind="article",
+    )
+    review = create_item(
+        tmp_path,
+        body="一份中性回顾。",
+        title="中性回顾",
+        kind="weekly-review",
+    )
+    client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
+
+    ideas = client.get("/ideas")
+    articles = client.get("/articles")
+    reviews = client.get("/reviews")
+    publish = client.get("/publish")
+
+    assert "普通随想" in ideas.text
+    assert "独立文章" not in ideas.text and "中性回顾" not in ideas.text
+    assert "独立文章" in articles.text and "普通随想" not in articles.text
+    assert "中性回顾" in reviews.text and "公众号预览" not in reviews.text
+    assert "独立文章" in publish.text
+    assert "普通随想" not in publish.text and "中性回顾" not in publish.text
+    assert "公众号" not in client.get(f"/ideas/{thought.id}").text
+
+    legacy_article = client.get(f"/ideas/{article.id}", follow_redirects=False)
+    legacy_review = client.get(f"/ideas/{review.id}", follow_redirects=False)
+    thought_publish = client.get(f"/publish/{thought.id}", follow_redirects=False)
+    review_publish = client.get(f"/publish/{review.id}", follow_redirects=False)
+    assert legacy_article.headers["location"].endswith(f"/articles/{article.id}")
+    assert legacy_review.headers["location"].endswith(f"/reviews/{review.id}")
+    assert "article-required" in thought_publish.headers["location"]
+    assert "article-required" in review_publish.headers["location"]
+    assert client.post(f"/publish/{thought.id}/polish").status_code == 404
+    assert client.post(f"/publish/{review.id}/save", data={"title": "x", "markdown": "y"}).status_code == 404
+
+
+def test_independent_article_crud_and_status(tmp_path: Path) -> None:
+    client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
+
+    created = client.post(
+        "/articles",
+        data={
+            "title": "独立写作",
+            "body": "## 提纲\n\n只是一份文章提纲。",
+            "tags": "创作",
+            "category": "文章",
+        },
+        follow_redirects=True,
+    )
+    article = next(item for item in load_items(items_directory(tmp_path)).items if item.kind == "article")
+    edited = client.post(
+        f"/articles/{article.id}",
+        data={
+            "title": "独立写作完成版",
+            "body": "## 正文\n\n已经写完。",
+            "tags": "创作，成稿",
+            "category": "文章",
+            "source_revision": semantic_revision(article),
+        },
+        follow_redirects=True,
+    )
+    finished = client.post(
+        f"/articles/{article.id}/status",
+        data={"status": "published"},
+        follow_redirects=True,
+    )
+
+    assert created.status_code == 200 and "文章草稿已保存" in created.text
+    assert "独立写作完成版" in edited.text
+    assert "已成稿" in finished.text
+    assert "公众号排版" in finished.text and "创建视频项目" in finished.text
+    assert "独立写作完成版" not in client.get("/ideas").text
+
+
 def test_publish_faithful_polish_and_save_child_article(tmp_path: Path) -> None:
-    source = create_item(tmp_path, body="一段原始想法。", title="原始想法")
+    source = create_item(
+        tmp_path,
+        body="一段原始文章。",
+        title="原始文章",
+        kind="article",
+    )
     client = TestClient(
         create_app(
             content_root=tmp_path,
@@ -517,7 +670,7 @@ def test_publish_faithful_polish_and_save_child_article(tmp_path: Path) -> None:
     saved = client.post(
         f"/publish/{source.id}/save",
         data={
-            "title": "如果原始想法会拐弯",
+            "title": "如果原始文章会拐弯",
             "markdown": "## 写 / Writing\n\n候选正文。",
         },
         follow_redirects=True,
@@ -527,21 +680,62 @@ def test_publish_faithful_polish_and_save_child_article(tmp_path: Path) -> None:
     assert 'id="copy-rich-text"' in faithful.text
     assert "一键复制公众号正文" in faithful.text
     assert "标题与摘要请在公众号后台单独填写" in faithful.text
-    assert "复制正文与固定署名，不包含标题和摘要" in faithful.text
-    assert "羽白标准版" in faithful.text
-    assert "羽白 | AI Engineer" in faithful.text
+    assert "仅复制当前预览正文与固定署名" in faithful.text
+    assert "羽白 · doocs 标准" in faithful.text
+    assert "排版设置" in faithful.text
+    assert 'name="primary_color"' in faithful.text
+    assert ">羽白</p>" in faithful.text
+    assert "格式检查" in faithful.text
+    assert 'data-preview-width="mobile"' in faithful.text
+    assert 'data-preview-width="editor"' in faithful.text
     assert "确认模型外发内容" in disclosure.text
     assert polished.status_code == 200
     assert "第二段后放一张无语猫咪" in polished.text
     assert "保存为文章草稿" in polished.text
-    assert "候选稿已保存为新的文章草稿" in saved.text
-    assert "view=articles" in saved.url.query.decode()
-    assert "一段原始想法" in client.get(f"/ideas/{source.id}").text
-    assert "如果原始想法会拐弯" in client.get("/ideas").text
+    assert "候选稿已保存为新的文章版本" in saved.text
+    assert saved.url.path.startswith("/articles/article-")
+    assert "一段原始文章" in client.get(f"/articles/{source.id}").text
+    assert "如果原始文章会拐弯" in client.get("/articles").text
+    assert "如果原始文章会拐弯" not in client.get("/ideas").text
+
+
+def test_publish_theme_query_is_validated_and_does_not_edit_source(
+    tmp_path: Path,
+) -> None:
+    source = create_item(
+        tmp_path,
+        body="## 章节\n\n正文。",
+        title="主题参数",
+        kind="article",
+    )
+    client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
+
+    customized = client.get(
+        f"/publish/{source.id}",
+        params={
+            "primary_color": "#123456",
+            "font_size": "18",
+            "font_family": "serif",
+            "indent": "1",
+            "justify": "0",
+        },
+    )
+    rejected = client.get(
+        f"/publish/{source.id}",
+        params={"primary_color": "red;position:fixed", "font_size": "99"},
+    )
+
+    assert customized.status_code == 200
+    assert "background:#123456" in customized.text
+    assert "text-indent:2em" in customized.text
+    assert "font-size:18px;line-height:1.75" in customized.text
+    assert 'value="#1597A8"' in rejected.text
+    assert "position:fixed" not in rejected.text
+    assert client.get(f"/articles/{source.id}").text.count("正文。") >= 1
 
 
 def test_polish_is_hidden_when_model_is_not_configured(tmp_path: Path) -> None:
-    item = create_item(tmp_path, body="原文。")
+    item = create_item(tmp_path, body="原文。", kind="article")
     client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
 
     response = client.get(f"/publish/{item.id}")

@@ -41,6 +41,29 @@ STATUS_LABELS = {
     "published": "已成稿",
     "archived": "归档",
 }
+CONTENT_STATUS_LABELS = {
+    "thought": {
+        "draft": "待整理",
+        "published": "已整理",
+        "archived": "已归档",
+    },
+    "article": {
+        "draft": "草稿",
+        "published": "已成稿",
+        "archived": "已归档",
+    },
+    "weekly-review": {
+        "draft": "回顾草稿",
+        "published": "已确认",
+        "archived": "已归档",
+    },
+}
+
+
+def status_labels_for_kind(kind: str) -> dict[str, str]:
+    """Return presentation labels without changing persisted status values."""
+
+    return CONTENT_STATUS_LABELS.get(kind, STATUS_LABELS)
 
 
 class ContentConflictError(ValueError):

@@ -10,11 +10,11 @@
 
 {% block content %}
 <header class="publish-header">
-    <div>
+    <div class="publish-heading">
         <a class="back-link" href="{{ url_for('publish_index') }}">← 返回发布列表</a>
-        <p class="eyebrow">WECHAT ADAPTER</p>
+        <p class="eyebrow">WECHAT PUBLISHER</p>
         <h1>{{ source.title }}</h1>
-        <p>白色画布就是最终复制的公众号正文。标题与摘要请在公众号后台单独填写；需要时再让“幻想栈风格”生成候选表达。</p>
+        <p>使用参考 doocs/md 的标准排版转换正文。预览、复制和下载共享同一份结果，标题与摘要请在公众号后台单独填写。</p>
     </div>
     <span class="platform-badge">微信公众号 · 人工发布</span>
 </header>
@@ -23,55 +23,61 @@
 
 <div class="publish-layout {{ 'has-candidate' if candidate else '' }}">
     <aside class="publish-controls">
-        <section class="publish-card">
+        <section class="publish-card source-card-panel">
             <p class="control-label">内容来源</p>
             <h2>{{ item.title }}</h2>
             <dl class="source-meta">
                 <div><dt>类型</dt><dd>{{ kind_labels[item.kind] }}</dd></div>
-                <div><dt>状态</dt><dd>{{ status_labels[item.status] }}</dd></div>
-                <div><dt>适配器</dt><dd><code>{{ rendered.platform }}</code></dd></div>
+                <div><dt>状态</dt><dd>{{ content_status_labels('article')[item.status] }}</dd></div>
+                <div><dt>版式</dt><dd>羽白 · doocs 标准</dd></div>
             </dl>
         </section>
 
-        <section class="publish-card">
-            <p class="control-label">幻想栈风格润色</p>
-            {% if llm_enabled %}
-            <form action="{{ url_for('polish_item', item_id=item.id) }}" method="post" class="polish-form">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-                <label class="field"><span>表达模式</span><select name="mode">
-                    <option value="auto">自动判断</option>
-                    <option value="essay">观察随想</option>
-                    <option value="explainer">概念拆解</option>
+        <section class="publish-card theme-card">
+            <div class="card-heading-row">
+                <p class="control-label">排版设置</p>
+                <span class="check-state">仅影响预览与导出</span>
+            </div>
+            <form class="theme-form" action="{{ url_for('publish_item', item_id=item.id) }}" method="get">
+                <label class="theme-field color-field"><span>主题色</span><input type="color" name="primary_color" value="{{ wechat_theme.primary_color }}"></label>
+                <label class="theme-field"><span>字号</span><select name="font_size">
+                    {% for size in wechat_font_sizes %}<option value="{{ size }}" {{ 'selected' if size == wechat_theme.font_size else '' }}>{{ size }}px</option>{% endfor %}
                 </select></label>
-                <button class="secondary-button full-button" type="submit">生成候选稿</button>
-            </form>
-            <p class="publish-hint">候选稿只在当前页面预览，明确保存后才会成为新草稿。</p>
-            {% else %}
-            <p class="publish-hint">尚未配置模型；忠实排版不受影响。也可以使用人工桥接，不产生 API 费用。</p>
-            {% endif %}
-            <form action="{{ url_for('manual_publish_task', item_id=item.id) }}" method="post" class="polish-form">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-                <label class="field"><span>人工桥接表达模式</span><select name="mode"><option value="auto">自动判断</option><option value="essay">观察随想</option><option value="explainer">概念拆解</option></select></label>
-                <button class="secondary-button full-button" type="submit">生成 ChatGPT / Codex 任务包</button>
+                <label class="theme-field"><span>字体</span><select name="font_family">
+                    {% for value, label in wechat_font_labels.items() %}<option value="{{ value }}" {{ 'selected' if value == wechat_theme.font_family else '' }}>{{ label }}</option>{% endfor %}
+                </select></label>
+                <label class="theme-field"><span>首行缩进</span><select name="indent">
+                    <option value="0" {{ 'selected' if not wechat_theme.indent else '' }}>关闭</option>
+                    <option value="1" {{ 'selected' if wechat_theme.indent else '' }}>开启</option>
+                </select></label>
+                <label class="theme-field"><span>段落对齐</span><select name="justify">
+                    <option value="1" {{ 'selected' if wechat_theme.justify else '' }}>两端对齐</option>
+                    <option value="0" {{ 'selected' if not wechat_theme.justify else '' }}>左对齐</option>
+                </select></label>
+                <button class="publish-secondary-action full-button" type="submit">应用排版</button>
             </form>
         </section>
 
-        {% if candidate and candidate.image_suggestions %}
-        <section class="publish-card suggestion-card">
-            <p class="control-label">配图位置建议</p>
-            <ul>{% for suggestion in candidate.image_suggestions %}<li>{{ suggestion }}</li>{% endfor %}</ul>
+        <section class="publish-card diagnostics-card">
+            <div class="card-heading-row">
+                <p class="control-label">格式检查</p>
+                <span class="check-state">已完成</span>
+            </div>
+            <ul class="diagnostic-list">
+                {% for diagnostic in rendered.diagnostics %}
+                <li class="{{ diagnostic.tone }}"><span aria-hidden="true"></span>{{ diagnostic.message }}</li>
+                {% endfor %}
+                {% for warning in rendered.warnings %}
+                <li class="warning"><span aria-hidden="true"></span>{{ warning }}</li>
+                {% endfor %}
+            </ul>
         </section>
-        {% endif %}
-
-        {% if rendered.warnings %}
-        <section class="publish-card warning-card"><p class="control-label">转换提醒</p><ul>{% for warning in rendered.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></section>
-        {% endif %}
 
         <section class="publish-card action-card">
-            <p class="control-label">公众号正文</p>
-            <button id="copy-rich-text" class="primary-button full-button" type="button">一键复制公众号正文</button>
-            <button id="download-html" class="secondary-button full-button" type="button">下载 HTML</button>
-            <p class="copy-scope-note">复制正文与固定署名，不包含标题和摘要。本地图片与公式会在当前浏览器中处理。</p>
+            <p class="control-label">复制发布</p>
+            <button id="copy-rich-text" class="publish-primary-action full-button" type="button">一键复制公众号正文</button>
+            <button id="download-html" class="publish-secondary-action full-button" type="button">下载同版 HTML</button>
+            <p class="copy-scope-note">仅复制当前预览正文与固定署名，不包含标题和摘要。</p>
             <p id="publish-status" class="publish-status" aria-live="polite">尚未复制。</p>
         </section>
 
@@ -81,24 +87,82 @@
             <input type="hidden" name="title" value="{{ candidate.title }}">
             <textarea name="markdown" hidden>{{ candidate.markdown }}</textarea>
             <p class="control-label">候选稿确认</p>
-            <p>保存后会创建关联原文的新文章草稿。</p>
-            <button class="primary-button full-button" type="submit">保存为文章草稿</button>
+            <p>保存会创建一篇关联原文的新文章草稿，不覆盖来源。</p>
+            <button class="publish-primary-action full-button" type="submit">保存为文章草稿</button>
         </form>
         {% endif %}
+
+        <details class="publish-card publish-disclosure">
+            <summary>
+                <span><small>可选能力</small>幻想栈风格润色</span>
+                <span aria-hidden="true">＋</span>
+            </summary>
+            <div class="disclosure-body">
+                {% if llm_enabled %}
+                <form action="{{ url_for('polish_item', item_id=item.id) }}?{{ wechat_theme.query_string }}" method="post" class="polish-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                    <label class="field"><span>表达模式</span><select name="mode">
+                        <option value="auto">自动判断</option>
+                        <option value="essay">观察随想</option>
+                        <option value="explainer">概念拆解</option>
+                    </select></label>
+                    <button class="publish-secondary-action full-button" type="submit">生成候选稿</button>
+                </form>
+                <p class="publish-hint">候选稿只在当前页面预览，明确保存后才会成为新草稿。</p>
+                {% else %}
+                <p class="publish-hint">尚未配置模型；忠实排版不受影响。人工桥接不产生 API 费用。</p>
+                {% endif %}
+                <form action="{{ url_for('manual_publish_task', item_id=item.id) }}?{{ wechat_theme.query_string }}" method="post" class="polish-form manual-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                    <label class="field"><span>人工桥接模式</span><select name="mode">
+                        <option value="auto">自动判断</option>
+                        <option value="essay">观察随想</option>
+                        <option value="explainer">概念拆解</option>
+                    </select></label>
+                    <button class="publish-secondary-action full-button" type="submit">生成 ChatGPT / Codex 任务包</button>
+                </form>
+                {% if candidate and candidate.image_suggestions %}
+                <div class="image-suggestions">
+                    <strong>配图位置建议</strong>
+                    <ul>{% for suggestion in candidate.image_suggestions %}<li>{{ suggestion }}</li>{% endfor %}</ul>
+                </div>
+                {% endif %}
+            </div>
+        </details>
     </aside>
 
     <section class="publish-stage" aria-label="公众号文章预览">
-        <div class="preview-toolbar"><span>{{ '幻想栈候选正文' if candidate else '忠实正文' }} · 不含标题和摘要</span><span>677 px · 羽白标准版</span></div>
+        <div class="preview-toolbar">
+            <div class="preview-context">
+                <span class="preview-dot" aria-hidden="true"></span>
+                <span id="preview-context-label">{{ '幻想栈候选正文' if candidate else '忠实正文' }}</span>
+            </div>
+            <div class="preview-size-switch" aria-label="预览宽度">
+                <button class="active" type="button" data-preview-width="mobile" aria-pressed="true">手机阅读</button>
+                <button type="button" data-preview-width="editor" aria-pressed="false">编辑器宽度</button>
+            </div>
+        </div>
+
         {% if candidate %}
-        <details class="original-drawer">
-            <summary>对照原文</summary>
-            <article class="prose">{{ original_html|safe }}</article>
-        </details>
+        <div class="preview-tabs" role="tablist" aria-label="原稿与候选稿">
+            <button class="preview-tab-button active" type="button" role="tab" aria-selected="true" data-preview-target="candidate">候选稿</button>
+            <button class="preview-tab-button" type="button" role="tab" aria-selected="false" data-preview-target="original">原稿</button>
+            <span>当前标签页决定复制内容</span>
+        </div>
         {% endif %}
-        <div class="wechat-canvas">
-            <div id="publish-preview" data-export-title="{{ rendered.title }}">{{ rendered.html|safe }}</div>
+
+        <div class="wechat-canvas preview-frame is-mobile">
+            <div class="preview-pane" data-preview-pane="{{ 'candidate' if candidate else 'original' }}">
+                <div class="publish-preview" data-export-title="{{ rendered.title }}">{{ rendered.export_html|safe }}</div>
+                <textarea class="publish-plain-text" hidden>{{ rendered.plain_text }}</textarea>
+            </div>
+            {% if candidate %}
+            <div class="preview-pane" data-preview-pane="original" hidden>
+                <div class="publish-preview" data-export-title="{{ original_rendered.title }}">{{ original_rendered.export_html|safe }}</div>
+                <textarea class="publish-plain-text" hidden>{{ original_rendered.plain_text }}</textarea>
+            </div>
+            {% endif %}
         </div>
     </section>
 </div>
-<textarea id="publish-plain-text" hidden>{{ rendered.plain_text }}</textarea>
 {% endblock %}

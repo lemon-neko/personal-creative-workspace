@@ -4,7 +4,8 @@
 
 {% block content %}
 <header class="page-header split-header">
-    <div><p class="eyebrow">PUBLISH DESK</p><h1>发布适配</h1><p>从一个念头出发，变成可以贴进公众号编辑器的文章。</p></div>
+    <div><p class="eyebrow">PUBLISH DESK</p><h1>公众号发布台</h1><p>这里只接收文章。随想负责记录，周回顾负责总结，知识卡负责沉淀。</p></div>
+    <a class="secondary-button" href="{{ url_for('articles') }}">管理文章</a>
     <span class="model-state {{ 'online' if llm_enabled else '' }}">{{ '幻想栈润色可用' if llm_enabled else '忠实排版模式' }}</span>
 </header>
 
@@ -18,7 +19,7 @@
 <div class="publish-source-grid">
     {% for item in items %}
     <article class="source-card">
-        <div class="meta-line"><span class="kind-badge">{{ kind_labels[item.kind] }}</span><span>{{ item.date_label }}</span></div>
+        <div class="meta-line"><span class="kind-badge">文章</span><span class="status-badge status-{{ item.status }}">{{ content_status_labels('article')[item.status] }}</span><span>{{ item.date_label }}</span></div>
         <h2>{{ item.title }}</h2>
         <p>{{ item.summary }}</p>
         <a href="{{ url_for('publish_item', item_id=item.id) }}">打开发布工作台 →</a>
@@ -26,6 +27,6 @@
     {% endfor %}
 </div>
 {% else %}
-<div class="empty-state"><span class="empty-cat">ฅ՞•ﻌ•՞ฅ</span><h3>还没有可以转换的内容</h3><p>先在随手记里留下一点什么。</p></div>
+<div class="empty-state"><span class="empty-cat">ฅ՞•ﻌ•՞ฅ</span><h3>还没有可以转换的文章</h3><p>先在文章创作区建立草稿；普通随想不会出现在这里。</p><a class="secondary-button" href="{{ url_for('articles') }}">去创建文章</a></div>
 {% endif %}
 {% endblock %}

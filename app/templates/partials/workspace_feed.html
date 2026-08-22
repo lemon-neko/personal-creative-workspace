@@ -47,8 +47,8 @@
             <div class="workbench-item-date"><strong>{{ item.created_at.strftime('%d') }}</strong><span>{{ item.created_at.strftime('%m月') }}</span></div>
             <div class="workbench-item-body">
                 <div class="meta-line">
-                    <span class="kind-badge">{{ kind_labels[item.kind] }}</span>
-                    <span class="status-badge status-{{ item.status }}">{{ status_labels[item.status] }}</span>
+                    <span class="kind-badge">随想</span>
+                    <span class="status-badge status-{{ item.status }}">{{ content_status_labels('thought')[item.status] }}</span>
                     {% if item.category %}<span>{{ item.category }}</span>{% endif %}
                     <time>{{ item.time_label }}</time>
                 </div>
@@ -57,9 +57,9 @@
                 {% if item.tags %}<div class="tag-row">{% for tag in item.tags %}<span># {{ tag }}</span>{% endfor %}</div>{% endif %}
                 <div class="workbench-item-actions">
                     <a href="{{ url_for('idea_detail', item_id=item.id) }}">编辑</a>
-                    <a href="{{ url_for('publish_item', item_id=item.id) }}">公众号</a>
+                    <a href="{{ url_for('distill_idea', item_id=item.id) }}">整理为知识</a>
                     <div class="quick-status" aria-label="更改 {{ item.title }} 的状态">
-                        {% for status_value, status_label in status_labels.items() %}
+                        {% for status_value, status_label in content_status_labels('thought').items() %}
                         <form
                             action="{{ url_for('change_idea_status', item_id=item.id) }}"
                             method="post"
