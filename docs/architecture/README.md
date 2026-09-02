@@ -39,6 +39,7 @@ flowchart LR
 | 领域 | 责任 |
 |---|---|
 | 内容 | `ContentItem`、随想、文章、回顾、状态和回收 |
+| 任务运行时 | 通用项目、任务、运行、步骤、脱敏工具摘要和私有 Artifact |
 | 正式知识 | `KnowledgeMap`、`KnowledgeCard`、关系、Revision 和核心图 |
 | Obsidian | Vault 扫描、Templates、链接、冲突和迁移预演 |
 | 创作 | 微信转换、候选文章保护、视频分镜和交接 |
@@ -64,6 +65,10 @@ flowchart LR
     R --> H["人工确认行动"]
     SO["四个固定收入来源"] --> LE["待确认收支"]
     LE -->|"作者确认"| PA["实际到账与净现金"]
+    GO["作者目标"] --> TA["本地任务"]
+    TA --> RU["规则式角色与运行步骤"]
+    RU --> AR["私有工作纸"]
+    AR -->|"人工接受"| OK["完成记录"]
 ```
 
 详细内容关系见 [内容模型](content-model.md)，文件与数据库布局见 [存储架构](storage.md)。在 Obsidian 中看到的每个 Vault 目录及其操作边界见 [私有知识库目录说明](private-vault-folders.md)。
@@ -74,6 +79,7 @@ flowchart LR
 - 桌面、Obsidian 和手机编辑使用语义 Revision；冲突返回 409。
 - SQLite 启用事务、外键、统一迁移和升级前快照。
 - 普通搜索只查询索引；成功写入后增量同步，显式操作才全量重建。
+- 本地任务运行时只通过只读工具查询现有索引；运行轨迹不记录完整查询正文、Prompt 或私有绝对路径。
 - 桌面拒绝非回环请求；移动只接受已配置 Tailnet Host 和本机代理。
 - 私人响应统一使用 `no-store`、CSP、禁止嵌入和 MIME 嗅探保护。
 

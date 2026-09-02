@@ -37,6 +37,7 @@ REQUIRED_FEATURES = {
     "mobile-pwa.md",
     "privacy-recovery.md",
     "income.md",
+    "agent-runtime.md",
 }
 REQUIRED_ARCHITECTURE = {
     "content-model.md",
@@ -113,6 +114,8 @@ def test_documented_core_routes_exist(tmp_path: Path) -> None:
         "/learning",
         "/income",
         "/assistant",
+        "/tasks",
+        "/runs",
         "/models",
         "/settings",
         "/settings/obsidian",

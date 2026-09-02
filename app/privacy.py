@@ -81,6 +81,7 @@ def prepare_private_root(root: Path) -> Path:
         "documents/resume-assets",
         "video-projects",
         "working",
+        "working/agent-artifacts",
         "working/model-tasks",
     ):
         directory = root / relative

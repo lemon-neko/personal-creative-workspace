@@ -30,6 +30,7 @@
 | 2026-08-28 | refactor | [Agent 应用开发学习路线](2026/2026-08-28-agent-learning-path.md) | 求职学习、助手、检索、迁移 |
 | 2026-08-28 | refactor | [学习路线极简化](2026/2026-08-28-learning-roadmap-simplification.md) | 求职学习、前端、文档 |
 | 2026-08-31 | refactor | [赚钱验证闭环](2026/2026-08-31-money-skill-loop.md) | 收入、助手、迁移、文档 |
+| 2026-09-02 | feature | [Agent Runtime Phase 1](2026/2026-09-02-agent-runtime-phase-1.md) | 任务、运行、本地检索、产物 |
 
 ## 完成功能批次时
 

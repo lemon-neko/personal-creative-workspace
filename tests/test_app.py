@@ -165,6 +165,8 @@ def client(tmp_path: Path) -> TestClient:
     ("path", "marker"),
     [
         ("/", "今天想接住什么"),
+        ("/tasks", "任务运行时"),
+        ("/runs", "运行记录"),
         ("/assistant", "个人助手"),
         ("/ideas", "想法库"),
         ("/knowledge", "核心知识图"),
@@ -203,6 +205,7 @@ def test_static_assets_are_local_and_available(client: TestClient) -> None:
         ("/static/styles/knowledge-system.css", ".knowledge"),
         ("/static/styles/assistant.css", ".assistant"),
         ("/static/styles/income.css", ".income-kpis"),
+        ("/static/styles/agent-core.css", ".agent-shell"),
         ("/static/publishing.css", ".publish-layout"),
         ("/static/publishing.js", "ClipboardItem"),
         ("/static/knowledge.js", "forceSimulation"),

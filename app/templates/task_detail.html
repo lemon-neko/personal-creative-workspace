@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ task.title }} · 任务运行时{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/agent-core.css') }}?v=20260902-agent1">{% endblock %}
+{% block content %}
+<div class="agent-shell agent-reading-shell">
+  <nav class="agent-back"><a href="{{ url_for('tasks') }}">← 返回任务</a><a href="{{ url_for('runs') }}">全部运行</a></nav>
+  {% if error %}<div class="message error">{{ error }}</div>{% endif %}
+  <header class="agent-detail-header">
+    <div>
+      <p class="agent-kicker">{{ project.title if project else '未分组' }} · {{ task_type_labels[task.task_type] }} · P{{ task.priority }}</p>
+      <h1>{{ task.title }}</h1>
+      <p>{{ task.objective }}</p>
+    </div>
+    <span class="agent-status status-{{ task.status }}">{{ task_status_labels[task.status] }}</span>
+  </header>
+
+  <section class="agent-next-step">
+    <span>下一步</span><strong>{{ task.next_action }}</strong>
+    {% if task.status in ['draft', 'planned'] %}
+    <form action="{{ url_for('plan_workspace_task', task_id=task.id) }}" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <button class="primary-button" type="submit">{{ '查看执行计划' if task.status == 'planned' else '生成执行计划' }}</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="agent-role-line">
+    <span>负责角色</span><strong>{{ role[1] }}</strong><p>{{ role[2] }}</p>
+  </section>
+
+  <section class="agent-detail-section">
+    <div class="agent-section-heading"><div><h2>运行记录</h2><p>每次计划和执行都有独立轨迹。</p></div></div>
+    {% if runs %}
+    <div class="agent-list compact">
+      {% for run in runs %}<a class="agent-run-row" href="{{ url_for('run_detail', run_id=run.id) }}"><div><strong>{{ role[1] }}运行</strong><small>{{ run.created_at }}</small></div><span>{{ run_status_labels[run.status] }}</span></a>{% endfor %}
+    </div>
+    {% else %}<p class="agent-muted">尚未生成运行计划。</p>{% endif %}
+  </section>
+
+  {% if artifacts %}
+  <section class="agent-detail-section">
+    <div class="agent-section-heading"><div><h2>产物</h2><p>产物不会自动进入知识库或创作区。</p></div></div>
+    <div class="agent-list compact">{% for artifact in artifacts %}<a class="agent-run-row" href="{{ url_for('agent_artifact', artifact_id=artifact.id) }}"><div><strong>{{ artifact.title }}</strong><small>{{ artifact.summary }}</small></div><span>{{ '已接受' if artifact.status == 'accepted' else '待确认' if artifact.status == 'review' else '已拒绝' }}</span></a>{% endfor %}</div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

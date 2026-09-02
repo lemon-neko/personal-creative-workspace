@@ -35,6 +35,7 @@
 | `app/publishing*.py` | 微信预处理、语义渲染、主题和导出编排 |
 | `app/career.py`、`app/career_radar.py` | 求职、学习、岗位雷达和项目证据 |
 | `app/assistant.py` | 助手上下文、校验、摘要与确认行动 |
+| `app/agent_core.py`、`app/routers/agent_core.py` | 通用项目、任务、运行、步骤、产物和本地规则式执行 |
 | `app/model_gateway.py`、`app/llm.py` | Provider、策略、用量和客户端 |
 | `app/mobile*.py` | 移动工厂、会话、离线同步、冲突和知识投影 |
 | `app/privacy.py`、`app/atomic.py` | 数据根、权限、安全校验和原子写入 |
@@ -63,6 +64,8 @@
 新增模型任务必须定义 `ModelPolicy`，生成可编辑外发预览，限制 Provider 和 Token，校验结构化结果及引用 ID，并把结果保存为候选等待确认。账本不得写入正文、提示词、响应或密钥。定时任务不得调用模型。
 
 助手额外要求来源和技能白名单、最小持久化，以及只允许逐项确认创建随想或学习任务。
+
+任务运行时与助手保持分离。任务运行时新增的模型步骤必须继续通过 `ModelGateway`，新增工具必须声明只读/写入能力和确认策略；运行轨迹只保存状态与脱敏摘要。任何正式知识、内容发布、文件修改、代码执行或外部系统写入都必须在对应领域 Service 内再次显式确认。
 
 ## 扩展检查表
 

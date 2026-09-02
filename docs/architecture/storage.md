@@ -30,6 +30,7 @@
 ├── mobile.db
 ├── mobile.secret
 ├── working/
+│   ├── agent-artifacts/           # 本地任务工作纸，0600，不是正式知识
 │   ├── model-tasks/
 │   └── wechat-push/intents/       # 24 小时待确认正文，不进入备份
 └── backups/
@@ -44,6 +45,8 @@ Markdown 是随想、材料记录、周回顾、文章、知识卡和知识地�
 ## SQLite
 
 `workspace.db` 保存求职、学习、搜索索引、模型账本、助手摘要/决策、收入账本、微信公众号推送元数据和 Obsidian 状态等结构化信息。它不保存 Markdown 正文副本。
+
+`agent_core` 子系统保存通用项目、任务、依赖、运行、步骤、脱敏工具调用和 Artifact 登记。Artifact 正文不进入数据库，而是以随机稳定 ID 存入 `working/agent-artifacts/`；数据库只保存逻辑文件名、SHA-256、摘要、状态和来源运行。第一版不把现有知识卡、文章、视频或简历复制为第二份 Artifact。
 
 Career v4 在原有 `resumes` 记录上增加简历工作室字段：`resume_kind`、`parent_id`、`job_id`、`structured_data`、`source_fingerprint`、`revision`、`template_key` 和 `is_primary`。Career v5 增加私有 `resume_assets` 与可选 `photo_asset_id`。已有记录只补默认值并保持 `legacy`，不会读取或改写原文件。主简历只有一个；岗位定制简历通过 `parent_id` 和 `job_id` 关联现有主简历与职位，并默认继承照片引用。每次结构化保存和照片变更使用 Revision 乐观锁，事实源指纹只用于提示待复核。
 
@@ -67,6 +70,7 @@ Career v6 增加 `learning_paths`、`learning_stages`、`learning_stage_referenc
 - 简历照片位于 `documents/resume-assets/`，目录为 `0700`、文件为 `0600`；不进入静态目录、模型临时任务、搜索索引或手机数据库。
 - 视频项目及交接包位于 `video-projects/`。
 - 人工模型桥接正文位于 `working/model-tasks/`，七天后清理且不进入备份。
+- 本地任务工作纸位于 `working/agent-artifacts/`，只有作者接受后才标记完成，不自动转成正式知识或创作内容。
 - 微信草稿待确认正文位于 `working/wechat-push/intents/`，24 小时后清理且不进入备份。
 - 微信 AppID 与 AppSecret 位于 macOS 钥匙串；Access Token 仅在运行进程内缓存。
 - `.obsidian/`、API Key、设备会话和已有备份不进入新的加密内容备份。

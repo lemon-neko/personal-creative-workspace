@@ -38,6 +38,7 @@
                 <nav class="sidebar-nav" aria-label="主要功能">
                     <small class="nav-group-label">工作</small>
                     <a class="{{ 'active' if active_page == 'workspace' else '' }}" href="{{ url_for('workspace') }}"><span aria-hidden="true">◌</span>工作台</a>
+                    <a class="{{ 'active' if active_page == 'tasks' else '' }}" href="{{ url_for('tasks') }}"><span aria-hidden="true">□</span>任务</a>
                     <a class="{{ 'active' if active_page == 'assistant' else '' }}" href="{{ url_for('assistant') }}"><span aria-hidden="true">✦</span>助手</a>
                     <a class="{{ 'active' if active_page == 'ideas' else '' }}" href="{{ url_for('ideas') }}"><span aria-hidden="true">≡</span>想法库</a>
                     <a class="{{ 'active' if active_page == 'knowledge' else '' }}" href="{{ url_for('knowledge') }}"><span aria-hidden="true">✣</span>知识库</a>

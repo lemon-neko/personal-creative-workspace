@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
+from app.agent_core import AgentCoreRepository
 from app.assistant import AssistantRepository
 from app.income import IncomeRepository
 from app.career import CareerRepository
@@ -35,6 +36,7 @@ from app.routers.assistant import router as assistant_router
 from app.routers.income import router as income_router
 from app.routers.wechat import router as wechat_router
 from app.routers.resumes import router as resumes_router
+from app.routers.agent_core import router as agent_core_router
 from app.privacy import (
     LocalOnlyMiddleware,
     default_data_root,
@@ -155,6 +157,7 @@ def create_app(
         workspace_app.state.content_root,
     )
     workspace_app.state.search = SearchRepository(resolved_data_root)
+    workspace_app.state.agent_core = AgentCoreRepository(resolved_data_root)
     workspace_app.state.assistant = AssistantRepository(resolved_data_root)
     workspace_app.state.income = IncomeRepository(resolved_data_root)
     workspace_app.state.wechat = WechatPublisher(
@@ -204,6 +207,7 @@ def create_app(
         return FileResponse(path)
 
     workspace_app.include_router(workspace_content_router)
+    workspace_app.include_router(agent_core_router)
     workspace_app.include_router(assistant_router)
     workspace_app.include_router(income_router)
     workspace_app.include_router(knowledge_models_router)

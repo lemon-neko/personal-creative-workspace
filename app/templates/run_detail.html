@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}运行详情 · {{ task.title }}{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/agent-core.css') }}?v=20260902-agent1">{% endblock %}
+{% block content %}
+<div class="agent-shell agent-reading-shell">
+  <nav class="agent-back"><a href="{{ url_for('task_detail', task_id=task.id) }}">← 返回任务</a><a href="{{ url_for('runs') }}">全部运行</a></nav>
+  {% if error %}<div class="message error">{{ error }}</div>{% endif %}
+  <header class="agent-detail-header run-header">
+    <div><p class="agent-kicker">{{ role[1] }} · {{ run.id[-8:] }}</p><h1>{{ task.title }}</h1><p>{{ role[2] }}</p></div>
+    <span class="agent-status status-{{ run.status }}">{{ run_status_labels[run.status] }}</span>
+  </header>
+
+  <section class="agent-step-list" aria-label="执行步骤">
+    {% for step in steps %}
+    <article class="agent-step step-{{ step.status }}"><span>0{{ step.position }}</span><div><h2>{{ step.title }}</h2><p>{{ '已完成' if step.status == 'completed' else '等待执行' if step.status == 'pending' else '运行中' if step.status == 'running' else '已取消' if step.status == 'cancelled' else '失败' }}</p></div>{% if step.output_artifact_id %}<a href="{{ url_for('agent_artifact', artifact_id=step.output_artifact_id) }}">查看产物</a>{% endif %}</article>
+    {% endfor %}
+  </section>
+
+  <section class="agent-run-actions">
+    {% if run.status == 'planned' %}
+    <div><strong>准备执行本地计划</strong><p>会检索最多 8 条本地来源并生成私有工作纸，不联网、不调用模型。</p></div>
+    <form action="{{ url_for('execute_agent_run', run_id=run.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="primary-button" type="submit">运行本地计划</button></form>
+    {% elif run.status == 'reviewing' %}
+    <div><strong>等待人工确认</strong><p>接受只确认这份产物，不会把它写入知识库、文章或外部系统。</p></div>
+    <form action="{{ url_for('approve_agent_run', run_id=run.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="primary-button" type="submit">接受产物并完成</button></form>
+    {% else %}
+    <div><strong>{{ run_status_labels[run.status] }}</strong><p>{{ task.next_action }}</p></div>
+    {% endif %}
+    {% if run.status not in ['completed', 'cancelled'] %}<form action="{{ url_for('cancel_agent_run', run_id=run.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="danger-link" type="submit">取消本次运行</button></form>{% endif %}
+  </section>
+
+  {% if tool_calls %}<section class="agent-detail-section"><div class="agent-section-heading"><div><h2>工具调用</h2><p>只记录脱敏摘要。</p></div></div><div class="agent-ledger">{% for call in tool_calls %}<div><code>{{ call.tool_key }}</code><span>{{ call.input_summary }}</span><strong>{{ call.result_summary }}</strong></div>{% endfor %}</div></section>{% endif %}
+  {% if artifacts %}<section class="agent-detail-section"><div class="agent-section-heading"><div><h2>产物</h2></div></div><div class="agent-list compact">{% for artifact in artifacts %}<a class="agent-run-row" href="{{ url_for('agent_artifact', artifact_id=artifact.id) }}"><div><strong>{{ artifact.title }}</strong><small>{{ artifact.summary }}</small></div><span>{{ '已接受' if artifact.status == 'accepted' else '待确认' if artifact.status == 'review' else '已拒绝' }}</span></a>{% endfor %}</div></section>{% endif %}
+</div>
+{% endblock %}

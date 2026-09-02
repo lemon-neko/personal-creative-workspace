@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}任务运行时 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/agent-core.css') }}?v=20260902-agent1">{% endblock %}
+{% block content %}
+<div class="agent-shell">
+  <header class="agent-header">
+    <div>
+      <p class="eyebrow">LOCAL TASK RUNTIME</p>
+      <h1>任务运行时</h1>
+      <p>先定义目标，再查看计划、运行记录和产物。当前版本只读取本地资料，不调用模型或外部服务。</p>
+    </div>
+    <a class="secondary-button" href="{{ url_for('runs') }}">查看全部运行</a>
+  </header>
+
+  <section class="agent-overview" aria-label="运行时概览">
+    <div><span>项目</span><strong>{{ projects|length }}</strong></div>
+    <div><span>任务</span><strong>{{ tasks|length }}</strong></div>
+    <div><span>运行</span><strong>{{ runs|length }}</strong></div>
+    <div><span>待确认</span><strong>{{ runs|selectattr('status', 'equalto', 'reviewing')|list|length }}</strong></div>
+  </section>
+
+  <div class="agent-grid">
+    <section class="agent-main">
+      <div class="agent-section-heading">
+        <div><h2>任务</h2><p>任务只保存目标和状态；执行内容进入独立运行记录。</p></div>
+      </div>
+      {% if tasks %}
+      <div class="agent-list">
+        {% for task in tasks %}
+        <a class="agent-task-row" href="{{ url_for('task_detail', task_id=task.id) }}">
+          <div>
+            <span class="agent-kicker">{{ task_type_labels[task.task_type] }} · P{{ task.priority }}</span>
+            <h3>{{ task.title }}</h3>
+            <p>{{ task.objective|truncate(150) }}</p>
+          </div>
+          <div class="agent-row-state"><span>{{ task_status_labels[task.status] }}</span><small>{{ task.next_action }}</small></div>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="agent-empty"><h3>还没有任务</h3><p>从右侧创建一个目标，先跑通第一条本地任务链。</p></div>
+      {% endif %}
+    </section>
+
+    <aside class="agent-compose">
+      <section>
+        <h2>新建任务</h2>
+        <form action="{{ url_for('create_workspace_task') }}" method="post" class="agent-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <label><span>任务名称</span><input name="title" maxlength="160" required placeholder="例如：整理 Agent Harness 学习脉络"></label>
+          <label><span>目标</span><textarea name="objective" maxlength="8000" required placeholder="说明想解决的问题、边界和期望产物。"></textarea></label>
+          <div class="agent-form-pair">
+            <label><span>类型</span><select name="task_type">{% for value, label in task_type_labels.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+            <label><span>优先级</span><select name="priority">{% for value in range(1, 6) %}<option value="{{ value }}" {{ 'selected' if value == 3 else '' }}>P{{ value }}</option>{% endfor %}</select></label>
+          </div>
+          <label><span>项目</span><select name="project_id">{% for project in projects %}<option value="{{ project.id }}">{{ project.title }}</option>{% endfor %}</select></label>
+          <button class="primary-button" type="submit">创建任务</button>
+        </form>
+      </section>
+      <details class="agent-project-create">
+        <summary>创建新项目</summary>
+        <form action="{{ url_for('create_workspace_project') }}" method="post" class="agent-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <label><span>项目名称</span><input name="title" maxlength="160" required></label>
+          <label><span>说明</span><textarea name="description" maxlength="2000"></textarea></label>
+          <button class="secondary-button" type="submit">保存项目</button>
+        </form>
+      </details>
+    </aside>
+  </div>
+</div>
+{% endblock %}

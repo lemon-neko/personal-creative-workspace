@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ artifact.title }} · 任务产物{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/agent-core.css') }}?v=20260902-agent1">{% endblock %}
+{% block content %}
+<div class="agent-shell agent-reading-shell artifact-shell">
+  <nav class="agent-back"><a href="{{ url_for('run_detail', run_id=artifact.run_id) }}">← 返回运行</a>{% if task %}<a href="{{ url_for('task_detail', task_id=task.id) }}">任务详情</a>{% endif %}</nav>
+  <header class="agent-detail-header"><div><p class="agent-kicker">PRIVATE ARTIFACT · {{ artifact.content_hash[:10] }}</p><h1>{{ artifact.title }}</h1><p>{{ artifact.summary }}</p></div><span class="agent-status status-{{ artifact.status }}">{{ '已接受' if artifact.status == 'accepted' else '待确认' if artifact.status == 'review' else '已拒绝' }}</span></header>
+  <div class="artifact-boundary"><strong>边界</strong><span>私有工作纸，不是正式知识卡；未调用模型，未写入外部系统。</span></div>
+  <pre class="agent-artifact-content">{{ content }}</pre>
+</div>
+{% endblock %}

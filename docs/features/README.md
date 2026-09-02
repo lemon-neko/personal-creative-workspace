@@ -5,6 +5,7 @@
 | 状态 | 模块 | 主要入口 | 说明 |
 |---|---|---|---|
 | ✅ | [工作台与内容](workspace-content.md) | `/`、`/ideas`、`/reviews`、`/articles` | 随想、周回顾和文章分区管理，支持生命周期、回收和搜索 |
+| 🧪 | [本地任务运行时](agent-runtime.md) | `/tasks`、`/runs` | 项目、任务、规则式角色、本地运行轨迹与私有产物确认 |
 | 🟡 | [知识库与 Obsidian](knowledge-obsidian.md) | `/knowledge`、`/settings/obsidian` | 随想拆卡、知识地图、来源 Revision、核心图和零复制 Vault |
 | ✅ / 🟡 | [公众号与视频](publishing-video.md) | `/publish`、`/video` | 文章专属微信排版，以及视频分镜与制作交接 |
 | 🟡 | [求职与学习](career-learning.md) | `/career`、`/career/resumes`、`/learning` | 事实档案、简历工作室、岗位定制、职位、能力差距和 Agent 工程四阶段路线 |
