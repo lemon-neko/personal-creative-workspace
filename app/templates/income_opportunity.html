@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ opportunity.name }} · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/income.css') }}?v=20260831-money-method">{% endblock %}
+{% block content %}
+<header class="income-header compact-header">
+  <div><a class="back-link" href="{{ url_for('income_opportunities') }}">← 返回候选机会</a><p class="eyebrow">VERIFY BEFORE BUILD</p><h1>{{ opportunity.name }}</h1><p>{{ opportunity.target_customer }} · {{ money_tier_labels[opportunity.for_tier] }}</p></div>
+  <div class="opportunity-state"><b class="verdict-{{ opportunity.verdict }}">{{ verdict_labels[opportunity.verdict] }}</b><span>{{ opportunity_status_labels[opportunity.status] }}</span></div>
+</header>
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<nav class="method-progress" aria-label="机会验证步骤"><span class="done">1 画像</span><span class="{{ 'done' if verification.evidence_count >= 2 else 'current' }}">2 需求证据</span><span class="{{ 'done' if opportunity.verdict in ('viable','high_risk') else '' }}">3 反诈核验</span><span class="{{ 'done' if opportunity.prediction_locked_at else '' }}">4 最小试验</span><span class="{{ 'done' if retros else '' }}">5 实际复盘</span></nav>
+
+<section class="verification-summary {{ 'ready' if verification.ready else '' }}">
+  <div><span>独立来源</span><strong>{{ verification.independent_source_count }} / 2</strong></div><div><span>一年内证据</span><strong>{{ verification.fresh_evidence_count }}</strong></div><div><span>硬性红旗</span><strong>{{ opportunity.hard_flag_codes|length }}</strong></div>
+  <p>{{ verification.reason }}</p>
+</section>
+
+<section class="money-section">
+  <header><div><span>01</span><h2>需求证据</h2></div><p>只记公开、可核验的需求；两年以上信号不作为当前依据。</p></header>
+  <div class="evidence-list">{% for item in evidence %}<article><div><small>{{ evidence_kind_labels[item.source_kind] }} · {{ item.published_at or '日期未知' }} · {{ item.source_host }}</small><a href="{{ item.source_url }}" target="_blank" rel="noopener noreferrer">{{ item.source_title }} ↗</a><p>{{ item.note }}</p></div><b class="{{ 'stale' if item.age_days is none or item.age_days > 730 else '' }}">{{ '过旧/未知' if item.age_days is none or item.age_days > 730 else ('近期' if item.age_days <= 365 else '需近期交叉验证') }}</b></article>{% else %}<p class="muted-copy">尚无证据。不要把自媒体“赚钱教程”当成需求证据。</p>{% endfor %}</div>
+  <details class="inline-form"><summary>添加公开证据</summary><form class="money-sheet-form" action="{{ url_for('create_income_evidence', opportunity_id=opportunity.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label><span>公开 HTTPS 链接</span><input name="source_url" inputmode="url" required></label><label><span>证据标题</span><input name="source_title" required></label><div class="form-pair"><label><span>类型</span><select name="source_kind">{% for key,label in evidence_kind_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label><label><span>发布日期</span><input type="date" name="published_at" required></label><label><span>本次核验日期</span><input type="date" name="checked_at"></label></div><label><span>它具体证明了什么</span><textarea name="note" rows="3"></textarea></label><div class="sheet-actions"><button class="secondary-button">记录证据</button></div></form></details>
+</section>
+
+<section class="money-section">
+  <header><div><span>02</span><h2>需求与反诈核验</h2></div><p>硬性红旗会自动把机会标为高风险并停止。</p></header>
+  <form class="money-sheet-form" action="{{ url_for('update_income_opportunity_verification', opportunity_id=opportunity.id) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <div class="form-pair"><label><span>状态</span><select name="status">{% for key,label in opportunity_status_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == opportunity.status else '' }}>{{ label }}</option>{% endfor %}</select></label><label><span>结论</span><select name="verdict">{% for key,label in verdict_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == opportunity.verdict else '' }}>{{ label }}</option>{% endfor %}</select></label></div>
+    <label><span>资金流：谁为什么付钱</span><textarea name="money_flow" rows="3" required>{{ opportunity.money_flow }}</textarea></label>
+    <label><span>需求信号总结</span><textarea name="signal_summary" rows="3">{{ opportunity.signal_summary }}</textarea></label>
+    <label><span>时效说明</span><textarea name="freshness_note" rows="2">{{ opportunity.freshness_note }}</textarea></label>
+    <label><span>两个来源如何相互印证</span><textarea name="cross_check" rows="3">{{ opportunity.cross_check }}</textarea></label>
+    <div class="risk-columns"><fieldset><legend>硬性红旗</legend>{% for code,label in hard_red_flags.items() %}<label class="check-row"><input type="checkbox" name="hard_flags" value="{{ code }}" {{ 'checked' if code in opportunity.hard_flag_codes else '' }}><span>{{ code }} · {{ label }}</span></label>{% endfor %}</fieldset><fieldset><legend>可疑信号</legend>{% for code,label in suspect_flags.items() %}<label class="check-row"><input type="checkbox" name="suspect_flags" value="{{ code }}" {{ 'checked' if code in opportunity.suspect_flag_codes else '' }}><span>{{ code }} · {{ label }}</span></label>{% endfor %}</fieldset></div>
+    <div class="sheet-actions"><button class="primary-button">保存核验结论</button></div>
+  </form>
+</section>
+
+<section class="money-section">
+  <header><div><span>03</span><h2>最小试验与预测</h2></div><p>预测一旦保存即冻结；之后只能用实际结果校准。</p></header>
+  <form class="money-sheet-form" action="{{ url_for('update_income_opportunity_plan', opportunity_id=opportunity.id) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <label><span>最小验证步骤</span><textarea name="validation_step" rows="3" required>{{ opportunity.validation_step }}</textarea></label><label><span>两周内怎么做</span><textarea name="two_week_plan" rows="4">{{ opportunity.two_week_plan }}</textarea></label><label><span>诚实的收入预期</span><textarea name="income_expectation" rows="2">{{ opportunity.income_expectation }}</textarea></label><label><span>止损条件</span><textarea name="stop_loss" rows="3" required>{{ opportunity.stop_loss }}</textarea></label><label><span>AI 只在哪些地方提效</span><textarea name="ai_leverage" rows="3">{{ opportunity.ai_leverage }}</textarea></label>
+    <div class="prediction-grid"><label><span>预计工时</span><input type="number" min="0" name="predicted_hours" value="{{ opportunity.predicted_hours if opportunity.predicted_hours is not none else '' }}"></label><label><span>预计首笔收入天数</span><input type="number" min="0" name="predicted_first_income_days" value="{{ opportunity.predicted_first_income_days if opportunity.predicted_first_income_days is not none else '' }}"></label><label><span>预计收入下限（元）</span><input name="predicted_min" inputmode="decimal" value="{{ '%.2f'|format(opportunity.predicted_min_fen / 100) if opportunity.predicted_min_fen is not none else '' }}"></label><label><span>预计收入上限（元）</span><input name="predicted_max" inputmode="decimal" value="{{ '%.2f'|format(opportunity.predicted_max_fen / 100) if opportunity.predicted_max_fen is not none else '' }}"></label></div>
+    <div class="sheet-actions"><button class="primary-button" {{ 'disabled' if opportunity.prediction_locked_at or not verification.ready else '' }}>{{ '预测已冻结' if opportunity.prediction_locked_at else ('先完成需求与反诈核验' if not verification.ready else '冻结预测并开始验证') }}</button></div>
+  </form>
+</section>
+
+<section class="money-section">
+  <header><div><span>04</span><h2>实际结果与复盘</h2></div><p>复盘收入不进入账本；真实到账仍需在收入记录中确认。</p></header>
+  {% if opportunity.prediction_locked_at %}<form class="money-sheet-form" action="{{ url_for('create_income_opportunity_retro', opportunity_id=opportunity.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><div class="prediction-grid"><label><span>实际工时</span><input type="number" min="0" name="actual_hours" value="0"></label><label><span>实际收入（元）</span><input name="actual_income" inputmode="decimal" value="0"></label><label><span>首笔收入日期</span><input type="date" name="first_income_at"></label><label><span>结论</span><select name="decision">{% for key,label in retro_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label></div><label><span>实际看到的风险</span><textarea name="red_flags_seen" rows="2"></textarea></label><label><span>阻断点</span><textarea name="blockers" rows="2"></textarea></label><label><span>这次学到了什么</span><textarea name="lesson" rows="3"></textarea></label><div class="sheet-actions"><button class="secondary-button">记录本次复盘</button></div></form>{% else %}<p class="muted-copy">先完成核验并冻结执行预测。</p>{% endif %}
+  {% if retros %}<div class="retro-list">{% for item in retros %}<article><div><strong>{{ retro_labels[item.decision] }} · {{ item.actual_hours }} 小时 · {{ format_cny(item.actual_income_fen) }}</strong><small>{{ item.created_at }}</small><p>{{ item.lesson or item.blockers or '未填写复盘说明' }}</p></div></article>{% endfor %}</div>{% endif %}
+</section>
+{% endblock %}

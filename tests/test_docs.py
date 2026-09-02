@@ -36,6 +36,7 @@ REQUIRED_FEATURES = {
     "model-cost.md",
     "mobile-pwa.md",
     "privacy-recovery.md",
+    "income.md",
 }
 REQUIRED_ARCHITECTURE = {
     "content-model.md",
@@ -110,6 +111,7 @@ def test_documented_core_routes_exist(tmp_path: Path) -> None:
         "/video",
         "/career",
         "/learning",
+        "/income",
         "/assistant",
         "/models",
         "/settings",

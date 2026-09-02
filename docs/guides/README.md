@@ -7,6 +7,7 @@
 | 从随手记录沉淀为正式知识 | [知识沉淀](knowledge-workflow.md) |
 | 独立写文章并制作公众号或视频 | [创作发布](creation-workflow.md) |
 | 从岗位要求推进技能和项目证据 | [求职学习](career-workflow.md) |
+| 管理收入方向并记录真实到账 | [收入记录](income-workflow.md) |
 
 ## 日常入口
 
@@ -20,6 +21,7 @@
 | 写独立文章 | `/articles` |
 | 公众号排版或视频制作 | `/publish`、`/video` |
 | 推进求职学习 | `/career`、`/learning` |
+| 查看收入并手工确认收支 | [收入记录](income-workflow.md) · `/income` |
 | 判断当前优先事项 | `/assistant` |
 | 查看模型和成本 | `/models` |
 

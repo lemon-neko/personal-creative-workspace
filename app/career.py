@@ -6,7 +6,9 @@ import hashlib
 import io
 import json
 import mimetypes
+import os
 import sqlite3
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,6 +21,15 @@ from app.database import (
     WORKSPACE_REGISTRY,
     apply_migrations,
     connect_database,
+    snapshot_database,
+)
+from app.resume_assets import ResumeImage, validate_resume_image
+from app.resume_studio import (
+    RESUME_TEMPLATE_KEYS,
+    StructuredResume,
+    deserialize_structured_resume,
+    serialize_structured_resume,
+    source_fingerprint,
 )
 
 
@@ -43,7 +54,9 @@ LEARNING_STATUSES = {"backlog", "active", "done", "paused"}
 QUEST_STATUSES = {"locked", "available", "active", "cleared"}
 CAMPAIGN_STATUSES = {"planned", "active", "completed", "archived"}
 REFERENCE_STATUSES = {"backlog", "reading", "building", "verified", "paused"}
-SCHEMA_VERSION = 3
+LEARNING_PATH_STATUSES = {"active", "completed", "archived"}
+LEARNING_STAGE_STATUSES = REFERENCE_STATUSES
+SCHEMA_VERSION = 6
 
 
 def _now() -> str:
@@ -80,6 +93,19 @@ class PrivateDocument:
 
 
 @dataclass(frozen=True)
+class ResumeAsset:
+    id: str
+    source_document_id: str | None
+    stored_name: str
+    media_type: str
+    size: int
+    sha256: str
+    width: int
+    height: int
+    created_at: str
+
+
+@dataclass(frozen=True)
 class CareerProject:
     id: str
     name: str
@@ -107,6 +133,21 @@ class ResumeVersion:
     notes: str
     created_at: str
     updated_at: str
+    resume_kind: str = "legacy"
+    parent_id: str | None = None
+    job_id: str | None = None
+    structured_data: str = ""
+    source_fingerprint: str = ""
+    revision: int = 0
+    template_key: str = "ats_single"
+    is_primary: int = 0
+    photo_asset_id: str | None = None
+
+    @property
+    def is_structured(self) -> bool:
+        return self.resume_kind in {"master", "tailored"} and bool(
+            self.structured_data
+        )
 
 
 @dataclass(frozen=True)
@@ -203,6 +244,47 @@ class LearningReference:
     is_optional: int
     created_at: str
     updated_at: str
+    archived_at: str
+
+
+@dataclass(frozen=True)
+class LearningPath:
+    id: str
+    title: str
+    summary: str
+    status: str
+    source_title: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class LearningStage:
+    id: str
+    path_id: str
+    stage_order: int
+    title: str
+    objective: str
+    focus: str
+    deliverable: str
+    acceptance_command: str
+    status: str
+    commit_sha: str
+    test_result: str
+    reflection: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class LearningStageReference:
+    id: str
+    stage_id: str
+    name: str
+    repo_url: str
+    role: str
+    target_modules: str
+    sort_order: int
 
 
 @dataclass(frozen=True)
@@ -386,6 +468,89 @@ CREATE TABLE IF NOT EXISTS learning_reference_tasks (
 """
 
 
+LEARNING_PATH_SCHEMA = """
+ALTER TABLE learning_references ADD COLUMN archived_at TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS learning_paths (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active','completed','archived')),
+    source_title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS learning_stages (
+    id TEXT PRIMARY KEY,
+    path_id TEXT NOT NULL REFERENCES learning_paths(id) ON DELETE CASCADE,
+    stage_order INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    focus TEXT NOT NULL,
+    deliverable TEXT NOT NULL,
+    acceptance_command TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('backlog','reading','building','verified','paused')),
+    commit_sha TEXT NOT NULL DEFAULT '',
+    test_result TEXT NOT NULL DEFAULT '',
+    reflection TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(path_id, stage_order)
+);
+CREATE TABLE IF NOT EXISTS learning_stage_references (
+    id TEXT PRIMARY KEY,
+    stage_id TEXT NOT NULL REFERENCES learning_stages(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    repo_url TEXT NOT NULL,
+    role TEXT NOT NULL,
+    target_modules TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    UNIQUE(stage_id, repo_url)
+);
+CREATE TABLE IF NOT EXISTS learning_stage_capabilities (
+    stage_id TEXT NOT NULL REFERENCES learning_stages(id) ON DELETE CASCADE,
+    capability_id TEXT NOT NULL REFERENCES capability_domains(id) ON DELETE CASCADE,
+    PRIMARY KEY(stage_id, capability_id)
+);
+CREATE INDEX IF NOT EXISTS ix_learning_stages_path_order
+    ON learning_stages(path_id, stage_order);
+PRAGMA user_version = 6;
+"""
+
+
+RESUME_STUDIO_SCHEMA = """
+ALTER TABLE resumes ADD COLUMN resume_kind TEXT NOT NULL DEFAULT 'legacy';
+ALTER TABLE resumes ADD COLUMN parent_id TEXT REFERENCES resumes(id) ON DELETE SET NULL;
+ALTER TABLE resumes ADD COLUMN job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL;
+ALTER TABLE resumes ADD COLUMN structured_data TEXT NOT NULL DEFAULT '';
+ALTER TABLE resumes ADD COLUMN source_fingerprint TEXT NOT NULL DEFAULT '';
+ALTER TABLE resumes ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE resumes ADD COLUMN template_key TEXT NOT NULL DEFAULT 'ats_single';
+ALTER TABLE resumes ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_resumes_primary
+    ON resumes(is_primary) WHERE is_primary = 1;
+PRAGMA user_version = 4;
+"""
+
+
+RESUME_PHOTO_SCHEMA = """
+CREATE TABLE IF NOT EXISTS resume_assets (
+    id TEXT PRIMARY KEY,
+    source_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+    stored_name TEXT NOT NULL UNIQUE,
+    media_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_document_id, sha256)
+);
+ALTER TABLE resumes ADD COLUMN photo_asset_id TEXT
+    REFERENCES resume_assets(id) ON DELETE SET NULL;
+PRAGMA user_version = 5;
+"""
+
+
 class CareerRepository:
     """Small transaction-oriented repository for one local author."""
 
@@ -394,6 +559,9 @@ class CareerRepository:
         self.database_path = data_root / "workspace.db"
         self.documents_root = data_root / "documents"
         self.documents_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.resume_assets_root = self.documents_root / "resume-assets"
+        self.resume_assets_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.resume_assets_root.chmod(0o700)
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
@@ -415,7 +583,10 @@ class CareerRepository:
             migrations={
                 1: f"{SCHEMA}\nPRAGMA user_version = 1;",
                 2: f"{CAMPAIGN_SCHEMA}\nPRAGMA user_version = 2;",
-                3: f"{CAREER_RADAR_SCHEMA}\nPRAGMA user_version = {SCHEMA_VERSION};",
+                3: f"{CAREER_RADAR_SCHEMA}\nPRAGMA user_version = 3;",
+                4: RESUME_STUDIO_SCHEMA,
+                5: RESUME_PHOTO_SCHEMA,
+                6: LEARNING_PATH_SCHEMA,
             },
         )
 
@@ -470,6 +641,132 @@ class CareerRepository:
                 "SELECT * FROM documents WHERE id = ?", (document_id,)
             ).fetchone()
         return PrivateDocument(**dict(row)) if row else None
+
+    def document_by_sha256(self, digest: str) -> PrivateDocument | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM documents WHERE sha256 = ? ORDER BY created_at LIMIT 1",
+                (digest.strip().lower(),),
+            ).fetchone()
+        return PrivateDocument(**dict(row)) if row else None
+
+    def document_path(self, document: PrivateDocument) -> Path:
+        if Path(document.stored_name).name != document.stored_name:
+            raise ValueError("文档存储路径无效")
+        path = (self.documents_root / document.stored_name).resolve()
+        if path.parent != self.documents_root.resolve() or not path.is_file():
+            raise FileNotFoundError(document.id)
+        return path
+
+    def snapshot(self, label: str) -> Path:
+        safe_label = "".join(
+            character for character in label if character.isalnum() or character in "-_"
+        )[:80]
+        if not safe_label:
+            raise ValueError("快照标签无效")
+        return snapshot_database(
+            self.database_path,
+            self.data_root / "working" / "db-migrations",
+            safe_label,
+        )
+
+    def resume_asset(self, asset_id: str) -> ResumeAsset | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM resume_assets WHERE id = ?", (asset_id,)
+            ).fetchone()
+        return ResumeAsset(**dict(row)) if row else None
+
+    def resume_asset_for_source(
+        self, source_document_id: str, sha256: str
+    ) -> ResumeAsset | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM resume_assets
+                WHERE source_document_id=? AND sha256=? LIMIT 1""",
+                (source_document_id, sha256.strip().lower()),
+            ).fetchone()
+        return ResumeAsset(**dict(row)) if row else None
+
+    def resume_photo(self, resume: ResumeVersion) -> ResumeAsset | None:
+        return self.resume_asset(resume.photo_asset_id or "")
+
+    def resume_asset_path(self, asset: ResumeAsset) -> Path:
+        if Path(asset.stored_name).name != asset.stored_name:
+            raise ValueError("简历照片存储路径无效")
+        path = (self.resume_assets_root / asset.stored_name).resolve()
+        if path.parent != self.resume_assets_root.resolve() or not path.is_file():
+            raise FileNotFoundError(asset.id)
+        return path
+
+    def store_resume_asset(
+        self,
+        image: ResumeImage | bytes,
+        *,
+        source_document_id: str = "",
+    ) -> ResumeAsset:
+        validated = image if isinstance(image, ResumeImage) else validate_resume_image(image)
+        if source_document_id and self.document(source_document_id) is None:
+            raise ValueError("照片来源文档不存在")
+        digest = hashlib.sha256(validated.content).hexdigest()
+        if source_document_id:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM resume_assets WHERE source_document_id=? AND sha256=?",
+                    (source_document_id, digest),
+                ).fetchone()
+            if row is not None:
+                return ResumeAsset(**dict(row))
+        asset_id = _id("resume-photo")
+        stored_name = f"{asset_id}{validated.extension}"
+        final_path = self.resume_assets_root / stored_name
+        temporary_name = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=self.resume_assets_root, prefix=".resume-photo-", delete=False
+            ) as handle:
+                temporary_name = handle.name
+                handle.write(validated.content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary = Path(temporary_name)
+            temporary.chmod(0o600)
+            os.replace(temporary, final_path)
+            final_path.chmod(0o600)
+            asset = ResumeAsset(
+                id=asset_id,
+                source_document_id=source_document_id or None,
+                stored_name=stored_name,
+                media_type=validated.media_type,
+                size=len(validated.content),
+                sha256=digest,
+                width=validated.width,
+                height=validated.height,
+                created_at=_now(),
+            )
+            self._insert("resume_assets", asset)
+            return asset
+        except Exception:
+            if temporary_name:
+                Path(temporary_name).unlink(missing_ok=True)
+            final_path.unlink(missing_ok=True)
+            raise
+
+    def delete_resume_asset_if_unreferenced(self, asset_id: str) -> bool:
+        """Remove an import-created asset only when no resume references it."""
+
+        asset = self.resume_asset(asset_id)
+        if asset is None:
+            return False
+        with self.connect() as connection:
+            referenced = connection.execute(
+                "SELECT 1 FROM resumes WHERE photo_asset_id=? LIMIT 1", (asset_id,)
+            ).fetchone()
+            if referenced is not None:
+                return False
+            connection.execute("DELETE FROM resume_assets WHERE id=?", (asset_id,))
+        self.resume_asset_path(asset).unlink(missing_ok=True)
+        return True
 
     def delete_document(self, document_id: str, confirmation: str) -> None:
         if confirmation.strip() != "删除文档":
@@ -594,13 +891,217 @@ class CareerRepository:
             ).fetchall()
         return tuple(self._resume(row) for row in rows)
 
+    def resume(self, resume_id: str) -> ResumeVersion | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM resumes WHERE id = ?", (resume_id,)
+            ).fetchone()
+        return self._resume(row) if row is not None else None
+
+    def primary_resume(self) -> ResumeVersion | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM resumes WHERE is_primary = 1 LIMIT 1"
+            ).fetchone()
+        return self._resume(row) if row is not None else None
+
+    def primary_resume_for_document(self, document_id: str) -> ResumeVersion | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM resumes WHERE is_primary=1 AND document_id=? LIMIT 1",
+                (document_id,),
+            ).fetchone()
+        return self._resume(row) if row is not None else None
+
+    @staticmethod
+    def structured_resume(resume: ResumeVersion) -> StructuredResume:
+        if not resume.is_structured:
+            raise ValueError("该记录不是结构化简历")
+        return deserialize_structured_resume(resume.structured_data)
+
+    def resume_source_fingerprint(
+        self, project_ids: tuple[str, ...]
+    ) -> str:
+        project_lookup = {project.id: project for project in self.projects()}
+        selected = tuple(
+            project_lookup[project_id]
+            for project_id in project_ids
+            if project_id in project_lookup
+        )
+        return source_fingerprint(self.profile(), selected).digest
+
+    def resume_source_is_current(self, resume: ResumeVersion) -> bool:
+        if not resume.is_structured or not resume.source_fingerprint:
+            return False
+        return resume.source_fingerprint == self.resume_source_fingerprint(
+            resume.project_ids
+        )
+
+    def add_structured_resume(
+        self,
+        *,
+        title: str,
+        structured: StructuredResume,
+        resume_kind: str,
+        target_role: str = "",
+        document_id: str = "",
+        parent_id: str = "",
+        job_id: str = "",
+        status: str = "draft",
+        notes: str = "",
+        is_primary: bool = False,
+        template_key: str = "ats_single",
+        photo_asset_id: str = "",
+    ) -> ResumeVersion:
+        if resume_kind not in {"master", "tailored"}:
+            raise ValueError("结构化简历类型无效")
+        if status not in RESUME_STATUSES:
+            raise ValueError("简历状态无效")
+        if template_key not in RESUME_TEMPLATE_KEYS:
+            raise ValueError("简历模板无效")
+        if not title.strip():
+            raise ValueError("简历名称不能为空")
+        if document_id and self.document(document_id) is None:
+            raise ValueError("关联文档不存在")
+        parent = self.resume(parent_id) if parent_id else None
+        if resume_kind == "tailored" and (
+            parent is None or parent.resume_kind != "master"
+        ):
+            raise ValueError("定制简历必须关联有效主简历")
+        if job_id and self.job(job_id) is None:
+            raise ValueError("关联职位不存在")
+        if resume_kind == "tailored" and not job_id:
+            raise ValueError("定制简历必须关联目标职位")
+        if is_primary and resume_kind != "master":
+            raise ValueError("只有主简历可以设为当前主版本")
+        existing_primary = self.primary_resume() if is_primary else None
+        if existing_primary is not None:
+            if document_id and existing_primary.document_id == document_id:
+                return existing_primary
+            raise ValueError("当前已经存在主简历，请先使用现有主简历")
+        if photo_asset_id and self.resume_asset(photo_asset_id) is None:
+            raise ValueError("简历照片不存在")
+        if resume_kind == "tailored" and parent is not None and not photo_asset_id:
+            photo_asset_id = parent.photo_asset_id or ""
+
+        project_ids = tuple(
+            dict.fromkeys(
+                str(row.get("project_id", ""))
+                for row in structured.projects
+                if str(row.get("project_id", ""))
+            )
+        )
+        known_projects = {project.id for project in self.projects()}
+        if not set(project_ids) <= known_projects:
+            raise ValueError("简历引用了不存在的项目证据")
+        stamp = _now()
+        resume = ResumeVersion(
+            id=_id("resume"),
+            title=title.strip()[:160],
+            target_role=target_role.strip()[:160],
+            document_id=document_id or None,
+            project_ids=project_ids,
+            status=status,
+            notes=notes.strip()[:10_000],
+            created_at=stamp,
+            updated_at=stamp,
+            resume_kind=resume_kind,
+            parent_id=parent_id or None,
+            job_id=job_id or None,
+            structured_data=serialize_structured_resume(structured),
+            source_fingerprint=self.resume_source_fingerprint(project_ids),
+            revision=1,
+            template_key=template_key,
+            is_primary=int(is_primary),
+            photo_asset_id=photo_asset_id or None,
+        )
+        payload = resume.__dict__ | {
+            "project_ids": json.dumps(resume.project_ids, ensure_ascii=False)
+        }
+        self._insert("resumes", payload)
+        return resume
+
+    def update_structured_resume(
+        self,
+        resume_id: str,
+        *,
+        structured: StructuredResume,
+        expected_revision: int,
+        title: str,
+        target_role: str = "",
+        notes: str = "",
+    ) -> ResumeVersion:
+        current = self.resume(resume_id)
+        if current is None or not current.is_structured:
+            raise KeyError(resume_id)
+        if not title.strip():
+            raise ValueError("简历名称不能为空")
+        project_ids = tuple(
+            dict.fromkeys(
+                str(row.get("project_id", ""))
+                for row in structured.projects
+                if str(row.get("project_id", ""))
+            )
+        )
+        known_projects = {project.id for project in self.projects()}
+        if not set(project_ids) <= known_projects:
+            raise ValueError("简历引用了不存在的项目证据")
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE resumes SET title=?,target_role=?,notes=?,project_ids=?,
+                structured_data=?,source_fingerprint=?,revision=revision+1,updated_at=?
+                WHERE id=? AND revision=?""",
+                (
+                    title.strip()[:160],
+                    target_role.strip()[:160],
+                    notes.strip()[:10_000],
+                    json.dumps(project_ids, ensure_ascii=False),
+                    serialize_structured_resume(structured),
+                    self.resume_source_fingerprint(project_ids),
+                    _now(),
+                    resume_id,
+                    expected_revision,
+                ),
+            )
+        if cursor.rowcount != 1:
+            if self.resume(resume_id) is None:
+                raise KeyError(resume_id)
+            raise RuntimeError("简历已在其他页面更新，请刷新后合并修改")
+        return self.resume(resume_id)  # type: ignore[return-value]
+
+    def update_resume_photo(
+        self,
+        resume_id: str,
+        *,
+        expected_revision: int,
+        photo_asset_id: str = "",
+    ) -> ResumeVersion:
+        current = self.resume(resume_id)
+        if current is None or not current.is_structured:
+            raise KeyError(resume_id)
+        if photo_asset_id and self.resume_asset(photo_asset_id) is None:
+            raise ValueError("简历照片不存在")
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE resumes SET photo_asset_id=?,revision=revision+1,updated_at=?
+                WHERE id=? AND revision=?""",
+                (photo_asset_id or None, _now(), resume_id, expected_revision),
+            )
+        if cursor.rowcount != 1:
+            if self.resume(resume_id) is None:
+                raise KeyError(resume_id)
+            raise RuntimeError("简历已在其他页面更新，请刷新后重试")
+        return self.resume(resume_id)  # type: ignore[return-value]
+
     def update_resume_status(self, resume_id: str, status: str) -> None:
         if status not in RESUME_STATUSES:
             raise ValueError("简历状态无效")
         with self.connect() as connection:
             cursor = connection.execute(
-                "UPDATE resumes SET status = ?, updated_at = ? WHERE id = ?",
-                (status, _now(), resume_id),
+                """UPDATE resumes SET status = ?,
+                is_primary = CASE WHEN ? = 'archived' THEN 0 ELSE is_primary END,
+                updated_at = ? WHERE id = ?""",
+                (status, status, _now(), resume_id),
             )
         if cursor.rowcount != 1:
             raise KeyError(resume_id)
@@ -641,6 +1142,16 @@ class CareerRepository:
         }
         self._insert("resumes", payload)
         return resume
+
+    def confirmed_skill_names(self, job_id: str) -> tuple[str, ...]:
+        if self.job(job_id) is None:
+            raise KeyError(job_id)
+        skills = {skill.id: skill.name for skill in self.skills()}
+        return tuple(
+            skills[gap.skill_id]
+            for gap in self.gaps()
+            if gap.job_id == job_id and gap.skill_id in skills
+        )
 
     def jobs(self) -> tuple[JobOpportunity, ...]:
         return self._rows("SELECT * FROM jobs ORDER BY updated_at DESC", JobOpportunity)
@@ -825,6 +1336,113 @@ class CareerRepository:
         )
         return rows[0] if rows else None
 
+    def learning_paths(self) -> tuple[LearningPath, ...]:
+        return self._rows(
+            "SELECT * FROM learning_paths ORDER BY created_at, id",
+            LearningPath,
+        )
+
+    def learning_path(self, path_id: str) -> LearningPath | None:
+        rows = self._rows(
+            "SELECT * FROM learning_paths WHERE id = ?",
+            LearningPath,
+            (path_id,),
+        )
+        return rows[0] if rows else None
+
+    def learning_stages(self, path_id: str | None = None) -> tuple[LearningStage, ...]:
+        if path_id:
+            return self._rows(
+                "SELECT * FROM learning_stages WHERE path_id = ? ORDER BY stage_order",
+                LearningStage,
+                (path_id,),
+            )
+        return self._rows(
+            "SELECT * FROM learning_stages ORDER BY path_id, stage_order",
+            LearningStage,
+        )
+
+    def learning_stage(self, stage_id: str) -> LearningStage | None:
+        rows = self._rows(
+            "SELECT * FROM learning_stages WHERE id = ?",
+            LearningStage,
+            (stage_id,),
+        )
+        return rows[0] if rows else None
+
+    def learning_stage_references(
+        self, stage_id: str | None = None,
+    ) -> tuple[LearningStageReference, ...]:
+        if stage_id:
+            return self._rows(
+                "SELECT * FROM learning_stage_references WHERE stage_id = ? ORDER BY sort_order, name",
+                LearningStageReference,
+                (stage_id,),
+            )
+        return self._rows(
+            "SELECT * FROM learning_stage_references ORDER BY stage_id, sort_order, name",
+            LearningStageReference,
+        )
+
+    def learning_stage_capability_ids(self) -> dict[str, tuple[str, ...]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT stage_id,capability_id FROM learning_stage_capabilities ORDER BY capability_id"
+            ).fetchall()
+        result: dict[str, list[str]] = {}
+        for row in rows:
+            result.setdefault(row["stage_id"], []).append(row["capability_id"])
+        return {key: tuple(values) for key, values in result.items()}
+
+    def update_learning_stage(
+        self,
+        stage_id: str,
+        *,
+        status: str,
+        commit_sha: str = "",
+        test_result: str = "",
+        reflection: str = "",
+    ) -> LearningStage:
+        if status not in LEARNING_STAGE_STATUSES:
+            raise ValueError("学习阶段状态无效")
+        stage = self.learning_stage(stage_id)
+        if stage is None:
+            raise KeyError(stage_id)
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE learning_stages
+                SET status=?,commit_sha=?,test_result=?,reflection=?,updated_at=?
+                WHERE id=?""",
+                (
+                    status,
+                    commit_sha.strip()[:120],
+                    test_result.strip()[:20_000],
+                    reflection.strip()[:20_000],
+                    _now(),
+                    stage_id,
+                ),
+            )
+        return self.learning_stage(stage_id)  # type: ignore[return-value]
+
+    def update_learning_stage_status(
+        self,
+        stage_id: str,
+        *,
+        status: str,
+    ) -> LearningStage:
+        """Update only roadmap progress without touching preserved evidence."""
+
+        if status not in LEARNING_STAGE_STATUSES:
+            raise ValueError("学习阶段状态无效")
+        if self.learning_stage(stage_id) is None:
+            raise KeyError(stage_id)
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE learning_stages SET status=?,updated_at=? WHERE id=?",
+                (status, _now(), stage_id),
+            )
+        return self.learning_stage(stage_id)  # type: ignore[return-value]
+
     def reference_capability_ids(self) -> dict[str, tuple[str, ...]]:
         with self.connect() as connection:
             rows = connection.execute(
@@ -884,6 +1502,8 @@ class CareerRepository:
             CAPABILITY_SKILL_NAMES,
             JOB_CAPABILITIES,
             JOB_SNAPSHOTS,
+            LEARNING_PATH,
+            LEARNING_STAGES,
             REFERENCE_PROJECTS,
             SNAPSHOT_DATE,
         )
@@ -1007,6 +1627,82 @@ class CareerRepository:
                     "INSERT OR IGNORE INTO learning_reference_tasks(reference_id,learning_task_id) VALUES(?,?)",
                     (reference["id"], task_id),
                 )
+
+            # The original four-week route remains readable as history.  Its
+            # mutable evidence is deliberately untouched.
+            connection.execute(
+                """UPDATE learning_references
+                SET archived_at=CASE WHEN archived_at='' THEN ? ELSE archived_at END
+                WHERE archived_at=''""",
+                (stamp,),
+            )
+
+            connection.execute(
+                """INSERT INTO learning_paths(
+                id,title,summary,status,source_title,created_at,updated_at)
+                VALUES(?,?,?,'active',?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                title=excluded.title,summary=excluded.summary,
+                source_title=excluded.source_title,updated_at=excluded.updated_at""",
+                (
+                    LEARNING_PATH["id"],
+                    LEARNING_PATH["title"],
+                    LEARNING_PATH["summary"],
+                    LEARNING_PATH["source_title"],
+                    stamp,
+                    stamp,
+                ),
+            )
+            for stage in LEARNING_STAGES:
+                connection.execute(
+                    """INSERT INTO learning_stages(
+                    id,path_id,stage_order,title,objective,focus,deliverable,
+                    acceptance_command,status,commit_sha,test_result,reflection,
+                    created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,'backlog','','','',?,?)
+                    ON CONFLICT(id) DO UPDATE SET
+                    path_id=excluded.path_id,stage_order=excluded.stage_order,
+                    title=excluded.title,objective=excluded.objective,
+                    focus=excluded.focus,deliverable=excluded.deliverable,
+                    acceptance_command=excluded.acceptance_command""",
+                    (
+                        stage["id"],
+                        LEARNING_PATH["id"],
+                        stage["order"],
+                        stage["title"],
+                        stage["objective"],
+                        stage["focus"],
+                        stage["deliverable"],
+                        stage["acceptance_command"],
+                        stamp,
+                        stamp,
+                    ),
+                )
+                for sort_order, reference in enumerate(stage["references"], start=1):
+                    connection.execute(
+                        """INSERT INTO learning_stage_references(
+                        id,stage_id,name,repo_url,role,target_modules,sort_order)
+                        VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                        stage_id=excluded.stage_id,name=excluded.name,
+                        repo_url=excluded.repo_url,role=excluded.role,
+                        target_modules=excluded.target_modules,
+                        sort_order=excluded.sort_order""",
+                        (
+                            reference["id"],
+                            stage["id"],
+                            reference["name"],
+                            reference["repo_url"],
+                            reference["role"],
+                            reference["target_modules"],
+                            sort_order,
+                        ),
+                    )
+                for capability_id in stage["capabilities"]:
+                    connection.execute(
+                        """INSERT OR IGNORE INTO learning_stage_capabilities(
+                        stage_id,capability_id) VALUES(?,?)""",
+                        (stage["id"], capability_id),
+                    )
 
             connection.execute(
                 """INSERT INTO career_radar_state(singleton,baseline_version,applied_at)

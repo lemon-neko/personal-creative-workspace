@@ -149,6 +149,13 @@
             {% if learning_tasks %}<ul class="task-list">{% for task in learning_tasks %}<li><span>{{ task.priority }}</span><div><strong>{{ task.title }}</strong><small>{{ task.status }}</small></div></li>{% endfor %}</ul>{% else %}<p class="rail-note">技能差距还没有变成任务。</p>{% endif %}
             <a class="text-link rail-link" href="{{ url_for('learning') }}">查看技能图谱 →</a>
         </section>
+
+        {% if income_metrics is defined %}<section class="rail-card income-rail-card">
+            <div class="rail-heading"><div><p class="eyebrow">INCOME</p><h2>收入</h2></div><span>¥</span></div>
+            <div class="week-progress"><strong>¥{{ '%.2f'|format(income_metrics.earned_fen / 100) }}</strong><span>实际到账</span></div>
+            <p class="rail-note">{{ '第一笔 ¥1 已跑通。' if first_yuan_cleared else 'Money Engine 下一步：' ~ income_product.next_action }}</p>
+            <div class="rail-footer"><span>本月 ¥{{ '%.2f'|format(income_metrics.month_earned_fen / 100) }}</span><a href="{{ url_for('income_product', product_id=income_product.id) }}">打开 Money Engine →</a></div>
+        </section>{% endif %}
     </aside>
 </div>
 {% endblock %}

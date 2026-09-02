@@ -120,7 +120,8 @@ def test_assistant_context_is_high_signal_and_excludes_private_fields(
 
     assert "Agent 应用开发" in snapshot.material
     assert "缺少可靠性评测证据" in snapshot.material
-    assert task.id in snapshot.material
+    assert "agent-path-minimal-agent" in snapshot.material
+    assert task.id not in snapshot.material
     assert thought.id in snapshot.material
     assert "private-contact@example.test" not in snapshot.material
     assert "私密教育全文" not in snapshot.material
@@ -130,6 +131,55 @@ def test_assistant_context_is_high_signal_and_excludes_private_fields(
     assert "13812345678" not in snapshot.material
     assert "/Users/demo/private.txt" not in snapshot.material
     assert str(application.state.data_root) not in snapshot.material
+
+
+def test_assistant_income_context_contains_only_money_engine_summary(
+    assistant_client: TestClient,
+) -> None:
+    application = assistant_client.app
+    income = application.state.income
+    product = income.active_product()
+    income.update_role(
+        product.id,
+        "product",
+        status="active",
+        observable_result="不应进入助手的内部观察结果",
+        next_action="完成模板包",
+        requires_confirmation=True,
+    )
+    entry = income.add_entry(
+        source_key="digital_product",
+        entry_type="revenue",
+        gross_fen=990,
+        note="PRIVATE_BUYER_AND_PAYMENT_NOTE",
+    )
+    income.add_metric_snapshot(
+        product.id,
+        observed_at="2026-08-25",
+        impressions=10,
+        store_clicks=2,
+        paid_orders=1,
+        delivered_orders=1,
+        refunds=0,
+    )
+
+    snapshot = AssistantContextBuilder(
+        application.state.content_root,
+        application.state.career,
+        application.state.search,
+        application.state.video,
+        income,
+    ).build("收入下一步是什么")
+
+    assert product.name in snapshot.material
+    assert "opportunity-agent-reliability-launch-kit" in snapshot.material
+    assert '"profile_tier": "T2"' in snapshot.material
+    assert '"verification_ready": false' in snapshot.material
+    assert "完成模板包" in snapshot.material
+    assert '"paid_orders": 1' in snapshot.material
+    assert entry.id not in snapshot.material
+    assert "PRIVATE_BUYER_AND_PAYMENT_NOTE" not in snapshot.material
+    assert "不应进入助手的内部观察结果" not in snapshot.material
 
 
 def test_assistant_result_rejects_forged_sources_skills_and_bad_shape() -> None:

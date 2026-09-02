@@ -232,11 +232,12 @@ def validate_assistant_result(
 class AssistantContextBuilder:
     """Build a bounded, reviewable snapshot without private documents or secrets."""
 
-    def __init__(self, content_root: Path, career: CareerRepository, search, video) -> None:
+    def __init__(self, content_root: Path, career: CareerRepository, search, video, income=None) -> None:
         self.content_root = content_root
         self.career = career
         self.search = search
         self.video = video
+        self.income = income
 
     def build(self, question: str, *, conversation_summary: str = "") -> AssistantContextSnapshot:
         clean_question = str(question).strip()[:MAX_ASSISTANT_QUESTION]
@@ -256,22 +257,31 @@ class AssistantContextBuilder:
         gaps = tuple(
             gap for gap in self.career.gaps() if gap.job_id in job_ids
         )[:8]
-        tasks = tuple(
-            task
-            for task in self.career.learning_tasks()
-            if task.status in {"backlog", "active"}
-        )[:8]
-        campaigns = tuple(
-            campaign
-            for campaign in self.career.campaigns()
-            if campaign.status in {"planned", "active"}
-        )[:3]
-        quests = tuple(
-            quest
-            for campaign in campaigns
-            for quest in self.career.quests(campaign.id)
-            if quest.status in {"available", "active"}
-        )[:5]
+        paths = tuple(
+            path for path in self.career.learning_paths() if path.status == "active"
+        )
+        stages = self.career.learning_stages(paths[0].id) if paths else ()
+        current_stage = next(
+            (stage for stage in stages if stage.status in {"reading", "building"}),
+            None,
+        )
+        if current_stage is None:
+            current_stage = next(
+                (stage for stage in stages if stage.status == "backlog"),
+                None,
+            )
+        capability_skill_ids = self.career.capability_skill_ids()
+        p0_skill_ids = {
+            skill_id
+            for domain in self.career.capability_domains()
+            if domain.priority == "P0"
+            for skill_id in capability_skill_ids.get(domain.id, ())
+        }
+        unfinished_p0 = tuple(
+            skill
+            for skill in skills
+            if skill.id in p0_skill_ids and skill.current_level < skill.target_level
+        )
         thoughts = tuple(
             item
             for item in collection.items
@@ -294,6 +304,30 @@ class AssistantContextBuilder:
             card for card in store.cards if card.status == "active"
         )[:5]
         search_results = self.search.search(clean_question, limit=8)
+        income_metrics = self.income.metrics() if self.income is not None else None
+        income_sources = self.income.sources() if self.income is not None else ()
+        income_product = self.income.active_product() if self.income is not None else None
+        income_metric = (
+            self.income.latest_metric(income_product.id)
+            if self.income is not None and income_product is not None
+            else None
+        )
+        income_roles = (
+            self.income.product_roles(income_product.id)
+            if self.income is not None and income_product is not None
+            else ()
+        )
+        money_profile = (
+            self.income.money_profile() if self.income is not None else None
+        )
+        money_opportunity = (
+            self.income.current_opportunity() if self.income is not None else None
+        )
+        money_verification = (
+            self.income.verification(money_opportunity.id)
+            if self.income is not None and money_opportunity is not None
+            else None
+        )
 
         sources: dict[str, AssistantSource] = {}
 
@@ -308,12 +342,8 @@ class AssistantContextBuilder:
             source("career-profile", "career-profile", "候选人目标方向", "/career/profile")
         for job in jobs:
             source(job.id, "career-job", f"{job.company} · {job.title}", f"/career/jobs/{job.id}")
-        for task in tasks:
-            source(task.id, "learning-task", task.title, "/learning")
-        for campaign in campaigns:
-            source(campaign.id, "campaign", campaign.name, f"/learning/campaigns/{campaign.id}")
-        for quest in quests:
-            source(quest.id, "quest", quest.title, f"/learning/campaigns/{quest.campaign_id}")
+        if current_stage is not None:
+            source(current_stage.id, "learning-stage", current_stage.title, "/learning")
         for item in (*thoughts, *reviews, *articles):
             source(item.id, item.kind, item.title, f"/ideas/{item.id}")
         for project in video_projects:
@@ -322,6 +352,20 @@ class AssistantContextBuilder:
             source(card.id, "knowledge-card", card.title, f"/knowledge/cards/{card.id}")
         for result in search_results:
             source(result.id, result.result_type, result.title, result.url)
+        for income_source in income_sources:
+            source(
+                f"income-source-{income_source.key}",
+                "income-source",
+                income_source.display_name,
+                "/income",
+            )
+        if money_opportunity is not None:
+            source(
+                money_opportunity.id,
+                "income-opportunity",
+                money_opportunity.name,
+                f"/income/opportunities/{money_opportunity.id}",
+            )
 
         issue_counts: dict[str, int] = {}
         for issue in issues:
@@ -354,36 +398,30 @@ class AssistantContextBuilder:
                 ],
             },
             "learning": {
-                "tasks": [
+                "path": paths[0].title if paths else "",
+                "current_stage": {
+                    "id": current_stage.id,
+                    "order": current_stage.stage_order,
+                    "title": _short(current_stage.title, 160),
+                    "status": current_stage.status,
+                    "objective": _short(current_stage.objective, 300),
+                    "deliverable": _short(current_stage.deliverable, 400),
+                    "next_action": (
+                        "先研读指定源码范围。"
+                        if current_stage.status == "reading"
+                        else "完成手搓交付物并提交测试证据。"
+                        if current_stage.status == "building"
+                        else "确认交付物边界后开始阶段。"
+                    ),
+                } if current_stage else {},
+                "unfinished_p0_capabilities": [
                     {
-                        "id": task.id,
-                        "title": _short(task.title, 200),
-                        "status": task.status,
-                        "priority": task.priority,
-                        "skill_id": task.skill_id,
-                        "skill": _short(
-                            getattr(skill_lookup.get(task.skill_id), "name", ""), 120
-                        ),
+                        "skill_id": skill.id,
+                        "name": _short(skill.name, 120),
+                        "current_level": skill.current_level,
+                        "target_level": skill.target_level,
                     }
-                    for task in tasks
-                ],
-                "campaigns": [
-                    {
-                        "id": campaign.id,
-                        "name": _short(campaign.name, 160),
-                        "status": campaign.status,
-                    }
-                    for campaign in campaigns
-                ],
-                "available_quests": [
-                    {
-                        "id": quest.id,
-                        "campaign_id": quest.campaign_id,
-                        "title": _short(quest.title, 160),
-                        "status": quest.status,
-                        "pass_criteria": _short(quest.pass_criteria, 300),
-                    }
-                    for quest in quests
+                    for skill in unfinished_p0
                 ],
             },
             "knowledge": {
@@ -440,6 +478,77 @@ class AssistantContextBuilder:
                 }
                 for result in search_results
             ],
+            "income": {
+                "earned_fen": income_metrics.earned_fen if income_metrics else 0,
+                "month_earned_fen": income_metrics.month_earned_fen if income_metrics else 0,
+                "pending_fen": income_metrics.pending_fen if income_metrics else 0,
+                "deductions_fen": income_metrics.deductions_fen if income_metrics else 0,
+                "net_cash_fen": income_metrics.net_cash_fen if income_metrics else 0,
+                "sources": [
+                    {
+                        "id": f"income-source-{value.key}",
+                        "name": value.display_name,
+                        "status": value.status,
+                        "current_product": _short(value.current_product, 180),
+                        "next_action": _short(value.next_action, 240),
+                    }
+                    for value in income_sources
+                ],
+                "money_engine": {
+                    "product_id": income_product.id if income_product else "",
+                    "product_name": _short(income_product.name, 180)
+                    if income_product else "",
+                    "stage": income_product.current_stage if income_product else "",
+                    "next_action": _short(income_product.next_action, 240)
+                    if income_product else "",
+                    "first_yuan_cleared": self.income.first_yuan_cleared(
+                        income_product.id
+                    ) if self.income is not None and income_product is not None else False,
+                    "funnel": {
+                        "impressions": income_metric.impressions if income_metric else 0,
+                        "store_clicks": income_metric.store_clicks if income_metric else 0,
+                        "paid_orders": income_metric.paid_orders if income_metric else 0,
+                        "delivered_orders": income_metric.delivered_orders if income_metric else 0,
+                        "refunds": income_metric.refunds if income_metric else 0,
+                    },
+                    "roles": [
+                        {
+                            "name": role.display_name,
+                            "status": role.status,
+                            "next_action": _short(role.next_action, 180),
+                        }
+                        for role in income_roles
+                    ],
+                },
+                "verification_loop": {
+                    "profile_tier": money_profile.tier if money_profile else "",
+                    "goal": _short(money_profile.goal, 240) if money_profile else "",
+                    "opportunity_id": (
+                        money_opportunity.id if money_opportunity else ""
+                    ),
+                    "opportunity": _short(money_opportunity.name, 180)
+                    if money_opportunity else "",
+                    "status": money_opportunity.status if money_opportunity else "",
+                    "verdict": money_opportunity.verdict
+                    if money_opportunity else "",
+                    "next_validation": _short(
+                        money_opportunity.validation_step, 300
+                    ) if money_opportunity else "",
+                    "stop_loss": _short(money_opportunity.stop_loss, 240)
+                    if money_opportunity else "",
+                    "evidence_count": (
+                        money_verification.evidence_count
+                        if money_verification else 0
+                    ),
+                    "independent_sources": (
+                        money_verification.independent_source_count
+                        if money_verification else 0
+                    ),
+                    "verification_ready": (
+                        money_verification.ready if money_verification else False
+                    ),
+                },
+            },
         }
         envelope = {
             "task": "personal-decision-support",

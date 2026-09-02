@@ -38,4 +38,5 @@
 ## 相关文档与测试
 
 - [手机安装与 Tailnet](../operations/mobile-tailscale.md)
+- [2026-08-23 手机网关常驻修复](../changes/2026/2026-08-23-mobile-runtime-reliability.md)
 - 测试：`test_mobile.py`、`tests/browser/`

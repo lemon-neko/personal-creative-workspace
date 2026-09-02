@@ -35,6 +35,7 @@ def _builder(request: Request) -> AssistantContextBuilder:
         request.app.state.career,
         request.app.state.search,
         request.app.state.video,
+        request.app.state.income,
     )
 
 

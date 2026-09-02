@@ -78,6 +78,7 @@ def prepare_private_root(root: Path) -> Path:
         "content/trash",
         "content/assets",
         "documents",
+        "documents/resume-assets",
         "video-projects",
         "working",
         "working/model-tasks",

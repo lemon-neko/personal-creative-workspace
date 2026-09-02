@@ -18,8 +18,9 @@ WORKSPACE_DATA_DIR=/tmp/pcw-import .venv/bin/python -c "from app.asgi import app
 |---|---|
 | `test_content.py`、`test_workspace.py` | Markdown、生命周期、周回顾和设置 |
 | `test_knowledge*.py`、`test_obsidian.py` | 地图、卡片、来源、Revision、模板和迁移 |
-| `test_publishing.py`、`test_video.py` | 微信转换、安全渲染、分镜和交接 |
+| `test_publishing.py`、`test_wechat.py`、`test_video.py` | 微信转换、安全渲染、草稿箱直推、分镜和交接 |
 | `test_career.py` | 档案、职位、文档、技能和学习路线 |
+| `test_income.py` | 固定收入来源、现金口径、迁移快照/回滚、表单、旧路由移除和移动隔离 |
 | `test_model_gateway.py`、`test_llm.py` | Provider、上限、人工导入和用量 |
 | `test_assistant.py` | 上下文隐私、白名单、摘要和行动幂等 |
 | `test_mobile.py` | 配对、离线编辑、冲突、图片、拆卡和移动知识 |
@@ -41,7 +42,7 @@ WORKSPACE_DATA_DIR=/tmp/pcw-import .venv/bin/python -c "from app.asgi import app
 
 文档测试递归扫描 `docs/**/*.md`，验证：
 
-- 分类目录、索引和八个功能模块存在。
+- 分类目录、索引和九个功能模块存在。
 - 相对链接目标存在，单文件标题不重复。
 - 更新记录 front matter 符合约定。
 - README 中端口、数据目录和启动命令与代码一致。

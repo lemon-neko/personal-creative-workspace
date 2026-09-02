@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}确认推送公众号草稿 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/publishing.css') }}">{% endblock %}
+
+{% block content %}
+<header class="page-header compact-header">
+    <p class="eyebrow">FINAL CONFIRMATION</p>
+    <h1>确认推送到草稿箱</h1>
+    <p>确认前没有访问微信。目标账号：羽白的幻想栈。</p>
+</header>
+
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+{% if result %}
+    {% if result.status == 'succeeded' %}
+    <div class="message success">草稿已创建。请前往公众号后台检查标题、封面、图片、公式和手机排版。</div>
+    {% elif result.status == 'unknown' %}
+    <div class="message error">微信在创建草稿阶段超时，结果未知。系统不会自动重试，请先到公众号后台检查。</div>
+    {% else %}
+    <div class="message error">{{ push_error }}</div>
+    {% if result.error_code in ['40001', '40014', '42001'] %}<p class="settings-note">系统已清除失效 Token 并只重试一次；这里显示的是重试后的结果。</p>{% endif %}
+    {% endif %}
+{% endif %}
+
+<div class="wechat-confirm-grid">
+    <section class="paper-panel">
+        <p class="eyebrow">ARTICLE</p>
+        <h2>{{ intent.title }}</h2>
+        <dl class="settings-list">
+            <div><dt>作者</dt><dd>{{ intent.author }}</dd></div>
+            <div><dt>摘要</dt><dd>{{ intent.digest or '未填写' }}</dd></div>
+            <div><dt>正文图片</dt><dd>{{ intent.image_count }} 张</dd></div>
+            <div><dt>公式</dt><dd>{{ intent.formula_count }} 个已转图</dd></div>
+            <div><dt>正文体积</dt><dd>{{ (intent.final_html|length / 1024)|round(1) }} KB</dd></div>
+            <div><dt>文章版本</dt><dd><code>{{ intent.article_revision[:12] }}</code></dd></div>
+        </dl>
+    </section>
+    <section class="paper-panel">
+        <p class="eyebrow">COVER</p>
+        <h2>草稿封面</h2>
+        <img class="wechat-cover-preview" src="{{ url_for('private_asset', asset_name=intent.cover_asset) }}" alt="公众号封面预览">
+        <p class="settings-note">{{ intent.cover_asset }}</p>
+    </section>
+</div>
+
+<section class="paper-panel wechat-final-action">
+    {% if result and result.status == 'succeeded' %}
+        <p><strong>草稿 media_id：</strong><code>{{ result.media_id }}</code></p>
+        <a class="primary-button inline-button" href="https://mp.weixin.qq.com/" target="_blank" rel="noopener noreferrer">打开公众号后台检查</a>
+        <a class="secondary-button inline-button" href="{{ url_for('publish_item', item_id=intent.article_id) }}">返回发布页</a>
+    {% elif result and result.status == 'unknown' %}
+        <a class="primary-button inline-button" href="https://mp.weixin.qq.com/" target="_blank" rel="noopener noreferrer">先检查公众号草稿箱</a>
+        <p class="settings-note">结果未知时不要立即重复推送，避免创建两份草稿。</p>
+    {% elif result and result.status == 'failed' %}
+        <a class="secondary-button inline-button" href="{{ url_for('publish_item', item_id=intent.article_id) }}">返回检查后重新准备</a>
+    {% elif existing %}
+        {% if existing.status == 'unknown' %}
+        <div class="message error">相同内容曾在创建草稿阶段超时，结果未知。请先检查公众号后台，默认不会再次推送。</div>
+        {% else %}
+        <div class="message">相同文章版本、正文和封面已经成功推送过，默认不会重复创建。</div>
+        <p>已有草稿 media_id：<code>{{ existing.media_id }}</code></p>
+        {% endif %}
+        <form action="{{ url_for('wechat_push_duplicate', item_id=intent.article_id) }}" method="post" class="stack-form danger-confirm-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <input type="hidden" name="intent_id" value="{{ intent.id }}">
+            <label class="field"><span>确认后台状态后，如仍需新草稿，请输入“创建新草稿副本”</span><input name="confirmation" required autocomplete="off"></label>
+            <button class="secondary-button" type="submit">明确创建新草稿副本</button>
+        </form>
+    {% elif not wechat_status.configured %}
+        <div class="message error">尚未配置公众号凭证，不能执行最终推送。</div>
+        <a class="primary-button inline-button" href="{{ url_for('wechat_settings') }}">前往公众号设置</a>
+    {% else %}
+        <form action="{{ url_for('wechat_push_confirm', item_id=intent.article_id) }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <input type="hidden" name="intent_id" value="{{ intent.id }}">
+            <button class="primary-button" type="submit">确认创建公众号草稿</button>
+        </form>
+        <p class="settings-note">点击后才会上传正文图片、封面并调用微信新增草稿接口；不会正式发表。</p>
+    {% endif %}
+</section>
+{% endblock %}

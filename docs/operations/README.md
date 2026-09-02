@@ -45,8 +45,10 @@ WORKSPACE_DATA_DIR=/tmp/pcw-sandbox .venv/bin/python -m app
 | `MODEL_INPUT_PRICE_PER_M` | 设置页价格 | 每百万输入 Token 价格 |
 | `MODEL_OUTPUT_PRICE_PER_M` | 设置页价格 | 每百万输出 Token 价格 |
 | `OPENCUT_REPO_DIR` | 本地工作区下的 OpenCut | OpenCut 检查与交接提示 |
+| `WECHAT_APP_ID` | 空 | 公众号 AppID；仅作为钥匙串之外的后端兼容配置 |
+| `WECHAT_APP_SECRET` | 空 | 公众号 AppSecret；仅后端读取，不进入页面、数据库或日志 |
 
-不要把密钥写入被 Git 跟踪的 `.env`。
+不要把真实密钥写入被 Git 跟踪的 `.env`。日常运行优先在 `/settings/wechat` 写入 macOS 钥匙串；环境变量适合临时启动，且不会自动写入 LaunchAgent。
 
 ## 本机常驻运行
 

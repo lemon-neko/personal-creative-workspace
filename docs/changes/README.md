@@ -18,6 +18,18 @@
 | 2026-08-22 | refactor | [内容分层与发布边界](2026/2026-08-22-content-layering.md) | 内容、知识、公众号、视频 |
 | 2026-08-22 | docs | [文档体系重构](2026/2026-08-22-documentation-system.md) | 文档与测试 |
 | 2026-08-22 | docs | [私有知识库目录说明](2026/2026-08-22-vault-folder-guide.md) | 知识库、Obsidian、文档 |
+| 2026-08-23 | fix | [手机网关常驻修复](2026/2026-08-23-mobile-runtime-reliability.md) | 手机端、本机运行 |
+| 2026-08-24 | feature | [悬赏收入一期](2026/2026-08-24-bounty-income.md) | 收入、助手、检索 |
+| 2026-08-24 | feature | [商业与收入验证系统](2026/2026-08-24-business-validation.md) | 商业、收入、助手、检索 |
+| 2026-08-24 | refactor | [收入面板极简重构](2026/2026-08-24-income-simplification.md) | 收入、助手、检索、迁移 |
+| 2026-08-25 | feature | [Money Engine V1](2026/2026-08-25-money-engine-v1.md) | 收入、助手、首页、迁移 |
+| 2026-08-25 | feature | [微信公众号草稿箱直推](2026/2026-08-25-wechat-draft-push.md) | 公众号、钥匙串、外发安全、迁移 |
+| 2026-08-26 | refactor | [全站视觉系统升级](2026/2026-08-26-frontend-visual-system.md) | 前端、可访问性、响应式布局 |
+| 2026-08-27 | feature | [简历工作室与岗位定制](2026/2026-08-27-resume-studio.md) | 求职、简历、模型网关、PDF、迁移 |
+| 2026-08-27 | feature | [现有简历与照片导入](2026/2026-08-27-resume-photo-import.md) | 求职、简历、私有资产、PDF、迁移 |
+| 2026-08-28 | refactor | [Agent 应用开发学习路线](2026/2026-08-28-agent-learning-path.md) | 求职学习、助手、检索、迁移 |
+| 2026-08-28 | refactor | [学习路线极简化](2026/2026-08-28-learning-roadmap-simplification.md) | 求职学习、前端、文档 |
+| 2026-08-31 | refactor | [赚钱验证闭环](2026/2026-08-31-money-skill-loop.md) | 收入、助手、迁移、文档 |
 
 ## 完成功能批次时
 

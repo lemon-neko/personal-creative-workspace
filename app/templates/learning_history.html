@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}学习历史 · 羽白工作台{% endblock %}
+{% block content %}
+{% set status_labels = {'backlog':'待开始','reading':'研读中','building':'实现中','verified':'已验收','paused':'暂停'} %}
+<div class="learning-support-shell">
+  <header class="learning-support-header">
+    <a href="{{ url_for('learning') }}">← 返回学习路线</a>
+    <h1>学习历史</h1>
+    <p>这里保留旧路线和阶段证据。主路线的状态更新不会覆盖这些内容。</p>
+  </header>
+
+  <section class="learning-history-section">
+    <h2>当前路线证据</h2>
+    <div class="learning-history-table">
+      {% for stage in stages %}
+      <article>
+        <header><strong>{{ '%02d'|format(stage.stage_order) }} · {{ stage.title }}</strong><span>{{ status_labels.get(stage.status, stage.status) }}</span></header>
+        <dl>
+          <div><dt>Commit</dt><dd>{{ stage.commit_sha or '未记录' }}</dd></div>
+          <div><dt>测试结果</dt><dd>{{ stage.test_result or '未记录' }}</dd></div>
+          <div><dt>复盘</dt><dd>{{ stage.reflection or '未记录' }}</dd></div>
+        </dl>
+      </article>
+      {% else %}
+      <p class="empty-note">暂无阶段记录。</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="learning-history-section">
+    <h2>归档研读路线</h2>
+    <div class="learning-history-table">
+      {% for reference in references %}
+      <article>
+        <header><strong>{{ reference.name }}</strong><span>{{ status_labels.get(reference.status, reference.status) }}</span></header>
+        <dl>
+          <div><dt>交付物</dt><dd>{{ reference.deliverable }}</dd></div>
+          <div><dt>Commit</dt><dd>{{ reference.commit_sha or '未记录' }}</dd></div>
+          <div><dt>测试结果</dt><dd>{{ reference.test_result or '未记录' }}</dd></div>
+          <div><dt>复盘</dt><dd>{{ reference.reflection or '未记录' }}</dd></div>
+        </dl>
+      </article>
+      {% else %}
+      <p class="empty-note">暂无归档路线。</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  {% if campaigns %}
+  <section class="learning-history-section">
+    <h2>历史战役</h2>
+    <div class="learning-history-campaigns">
+      {% for campaign in campaigns %}<a href="{{ url_for('learning_campaign', campaign_id=campaign.id) }}"><strong>{{ campaign.name }}</strong><span>查看关卡与证据 →</span></a>{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

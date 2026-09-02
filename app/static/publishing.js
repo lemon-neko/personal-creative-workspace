@@ -6,6 +6,8 @@
   const downloadButton = document.querySelector("#download-html");
   const status = document.querySelector("#publish-status");
   const contextLabel = document.querySelector("#preview-context-label");
+  const wechatPushForm = document.querySelector("#wechat-push-form");
+  const wechatPreflightButton = document.querySelector("#wechat-preflight-button");
   const tabButtons = Array.from(document.querySelectorAll("[data-preview-target]"));
   const widthButtons = Array.from(document.querySelectorAll("[data-preview-width]"));
 
@@ -88,6 +90,13 @@
         const imageUrl = new URL(source, window.location.href);
         if (!["http:", "https:"].includes(imageUrl.protocol)) {
           throw new Error("图片地址不受支持");
+        }
+        if (
+          imageUrl.protocol === "https:" &&
+          imageUrl.hostname.toLowerCase() === "mmbiz.qpic.cn"
+        ) {
+          image.removeAttribute("srcset");
+          continue;
         }
         const sameOrigin = imageUrl.origin === window.location.origin;
         const response = await fetch(imageUrl.href, {
@@ -254,10 +263,44 @@
     clone.appendChild(emptyBoundary());
     return {
       node: clone,
+      formulaCount: clonedFormulas.length,
       formulaFallbackCount: fallbackCount,
       ...imageResult,
     };
   };
+
+  if (wechatPushForm) {
+    wechatPushForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (wechatPreflightButton) {
+        wechatPreflightButton.disabled = true;
+      }
+      setStatus("正在固化公式、图片和最终公众号正文……");
+      try {
+        const prepared = await prepareExport();
+        wechatPushForm.querySelector('[name="final_html"]').value =
+          prepared.node.outerHTML;
+        wechatPushForm.querySelector('[name="formula_count"]').value =
+          String(prepared.formulaCount);
+        wechatPushForm.querySelector('[name="image_fallback_count"]').value =
+          String(prepared.imageFallbackCount);
+        wechatPushForm.querySelector('[name="formula_fallback_count"]').value =
+          String(prepared.formulaFallbackCount);
+        if (prepared.imageFallbackCount || prepared.formulaFallbackCount) {
+          throw new Error(
+            "仍有外部图片或公式转换失败，请处理后再直推；富文本复制仍可使用。",
+          );
+        }
+        setStatus("本地正文已准备，正在进入最终确认……", "success");
+        wechatPushForm.submit();
+      } catch (error) {
+        setStatus(`草稿预检失败：${error.message}`, "error");
+        if (wechatPreflightButton) {
+          wechatPreflightButton.disabled = false;
+        }
+      }
+    });
+  }
 
   const resultSummary = (prepared) => {
     const details = [];

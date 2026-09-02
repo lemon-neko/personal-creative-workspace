@@ -6,14 +6,15 @@
     <meta name="description" content="{% block description %}记录突然冒出来的想法，也给它们慢慢长大的空间。{% endblock %}">
     <meta name="csrf-token" content="{{ csrf_token(request) }}">
     <title>{% block title %}羽白工作台{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles/base.css') }}?v=20260817-stable1">
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles/workspace.css') }}?v=20260817-stable1">
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles/content.css') }}?v=20260817-stable1">
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles/career.css') }}?v=20260817-stable1">
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles/creation.css') }}?v=20260817-stable1">
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles/knowledge-system.css') }}?v=20260817-stable1">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles/base.css') }}?v=20260826-ui1">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles/workspace.css') }}?v=20260826-ui1">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles/content.css') }}?v=20260826-ui1">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles/career.css') }}?v=20260828-learning3">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles/creation.css') }}?v=20260826-ui1">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles/knowledge-system.css') }}?v=20260826-ui1">
     <link rel="stylesheet" href="{{ url_for('static', path='/styles/assistant.css') }}?v=20260820-assistant1">
     {% block page_styles %}{% endblock %}
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles/design-system.css') }}?v=20260826-ui1">
     <script>
         window.MathJax = {
             tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']] },
@@ -25,7 +26,8 @@
     <script defer src="{{ url_for('static', path='/app.js') }}?v=20260817-stable1"></script>
     {% block extra_head %}{% endblock %}
 </head>
-<body>
+<body class="page-{{ active_page|default('workspace') }}">
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
     <div class="app-shell">
         <aside class="site-sidebar">
             <a class="brand" href="{{ url_for('workspace') }}">
@@ -45,6 +47,8 @@
                 <nav class="sidebar-nav" aria-label="求职与学习">
                     <a class="{{ 'active' if active_page == 'career' else '' }}" href="{{ url_for('career') }}"><span aria-hidden="true">◇</span>求职</a>
                     <a class="{{ 'active' if active_page == 'learning' else '' }}" href="{{ url_for('learning') }}"><span aria-hidden="true">△</span>学习</a>
+                    {% set available_routes = request.app.router.routes | map(attribute='name') | list %}
+                    {% if 'income' in available_routes %}<a class="{{ 'active' if active_page == 'income' else '' }}" href="{{ url_for('income') }}"><span aria-hidden="true">¥</span>收入</a>{% endif %}
                 </nav>
                 <nav class="sidebar-nav sidebar-secondary" aria-label="工作台设置">
                     <small class="nav-group-label">系统</small>
@@ -58,7 +62,7 @@
         </aside>
 
         <div class="app-main">
-            <main class="page-shell">
+            <main class="page-shell" id="main-content">
                 {% block content %}{% endblock %}
             </main>
             <footer class="site-footer">

@@ -48,7 +48,7 @@ jobs:
             --ignore=tests/browser \
             --cov=app.privacy --cov=app.workspace --cov=app.backup \
             --cov=app.mobile --cov=app.knowledge_store \
-            --cov=app.model_gateway --cov=app.database \
+            --cov=app.model_gateway --cov=app.database --cov=app.assistant \
             --cov-report=json:coverage.json
           python tools/check_coverage_targets.py coverage.json
 

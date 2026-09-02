@@ -38,6 +38,8 @@ class ModelTaskKind(str, Enum):
     PUBLISH = "publish"
     PROFILE = "profile"
     JOB_SKILLS = "job-skills"
+    RESUME_PARSE = "resume-parse"
+    RESUME_TAILOR = "resume-tailor"
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,12 @@ POLICIES = {
     ModelTaskKind.PUBLISH: ModelPolicy(ModelTaskKind.PUBLISH, 1, 24_000, 6_000),
     ModelTaskKind.PROFILE: ModelPolicy(ModelTaskKind.PROFILE, 1, 24_000, 2_000),
     ModelTaskKind.JOB_SKILLS: ModelPolicy(ModelTaskKind.JOB_SKILLS, 1, 24_000, 2_000),
+    ModelTaskKind.RESUME_PARSE: ModelPolicy(
+        ModelTaskKind.RESUME_PARSE, 1, 24_000, 6_000
+    ),
+    ModelTaskKind.RESUME_TAILOR: ModelPolicy(
+        ModelTaskKind.RESUME_TAILOR, 2, 24_000, 6_000
+    ),
 }
 
 
@@ -205,6 +213,8 @@ def _manual_instructions(task_type: str) -> tuple[str, str]:
         ModelTaskKind.PUBLISH: '{"title":"候选标题","markdown":"完整候选稿","image_suggestions":[]}',
         ModelTaskKind.PROFILE: '{"target_roles":"","contact":"","education":"","experience":"","certifications":"","skills":"","facts":""}',
         ModelTaskKind.JOB_SKILLS: '{"skills":[{"name":"技能","category":"分类","importance":3,"requirement":"原文要求"}]}',
+        ModelTaskKind.RESUME_PARSE: '{"resume":{"personal_info":{"name":"","title":"","email":"","phone":"","location":"","website":"","github":""},"summary":"","work_experience":[],"education":[],"projects":[],"skills":[],"sections":[]}}',
+        ModelTaskKind.RESUME_TAILOR: '{"suggestions":[{"path":"summary","before":"当前内容","after":"候选内容","reason":"修改理由","evidence_ids":["允许的证据ID"]}]}',
     }
     purposes = {
         ModelTaskKind.ASSISTANT: "基于作者确认的工作台摘要，给出一个有来源、可执行的优先建议。",
@@ -213,6 +223,8 @@ def _manual_instructions(task_type: str) -> tuple[str, str]:
         ModelTaskKind.PUBLISH: "生成忠于原意的羽白公众号候选稿。",
         ModelTaskKind.PROFILE: "提取明确出现的求职档案事实，无法确认的留空。",
         ModelTaskKind.JOB_SKILLS: "只提取职位描述明确要求的技能。",
+        ModelTaskKind.RESUME_PARSE: "把简历资料整理为结构化候选，不补充材料中没有的事实。",
+        ModelTaskKind.RESUME_TAILOR: "基于目标岗位提出有证据的字段级修改，不覆盖主简历。",
     }
     key = ModelTaskKind(task_type)
     return f"{common}\n\n任务：{purposes[key]}", schemas[key]
@@ -239,10 +251,16 @@ def validate_manual_result(task_type: str, raw: str) -> dict[str, Any]:
         ModelTaskKind.PUBLISH: "markdown",
         ModelTaskKind.PROFILE: "facts",
         ModelTaskKind.JOB_SKILLS: "skills",
+        ModelTaskKind.RESUME_PARSE: "resume",
+        ModelTaskKind.RESUME_TAILOR: "suggestions",
     }[kind]
     if required not in payload:
         raise ValueError(f"返回内容缺少 `{required}`")
-    if kind in {ModelTaskKind.KNOWLEDGE, ModelTaskKind.JOB_SKILLS} and not isinstance(
+    if kind in {
+        ModelTaskKind.KNOWLEDGE,
+        ModelTaskKind.JOB_SKILLS,
+        ModelTaskKind.RESUME_TAILOR,
+    } and not isinstance(
         payload[required], list
     ):
         raise ValueError(f"`{required}` 必须是列表")
@@ -336,6 +354,17 @@ def validate_manual_result(task_type: str, raw: str) -> dict[str, Any]:
                 raise ValueError("技能候选重要度无效") from error
             if importance not in range(1, 6):
                 raise ValueError("技能候选重要度无效")
+    elif kind == ModelTaskKind.RESUME_PARSE:
+        from app.resume_studio import normalize_structured_resume
+
+        if not isinstance(payload["resume"], dict):
+            raise ValueError("结构化简历候选必须是对象")
+        payload["resume"] = normalize_structured_resume(
+            payload["resume"]
+        ).to_payload()
+    elif kind == ModelTaskKind.RESUME_TAILOR:
+        if len(payload["suggestions"]) > 40:
+            raise ValueError("简历定制候选最多 40 条")
     return payload
 
 
@@ -485,6 +514,41 @@ class ModelTaskStore:
                 validated,
                 allowed_source_ids=source_ids,
                 allowed_skill_ids=skill_ids,
+            )
+        elif task.task_type == ModelTaskKind.RESUME_PARSE.value:
+            try:
+                material = json.loads(task.payload)
+                allowed_projects = {
+                    str(value)
+                    for value in material.get("allowed_project_ids", [])
+                }
+            except (AttributeError, TypeError, json.JSONDecodeError) as error:
+                raise ValueError("简历导入任务来源结构无效") from error
+            candidate_projects = {
+                str(row.get("project_id", ""))
+                for row in validated["resume"].get("projects", [])
+                if isinstance(row, dict) and row.get("project_id")
+            }
+            if not candidate_projects <= allowed_projects:
+                raise ValueError("返回了虚构的项目证据 ID")
+        elif task.task_type == ModelTaskKind.RESUME_TAILOR.value:
+            from app.resume_studio import (
+                deserialize_structured_resume,
+                validate_tailoring_suggestions,
+            )
+
+            try:
+                material = json.loads(task.payload)
+                current = deserialize_structured_resume(
+                    json.dumps(material["resume"], ensure_ascii=False)
+                )
+                allowed_evidence_ids = {
+                    str(value) for value in material["allowed_evidence_ids"]
+                }
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                raise ValueError("简历定制任务来源结构无效") from error
+            validate_tailoring_suggestions(
+                validated["suggestions"], current, allowed_evidence_ids
             )
         updated = ModelTask(**(asdict(task) | {"status": "imported", "result": json.dumps(validated, ensure_ascii=False)}))
         self._write(updated)
@@ -692,4 +756,26 @@ class ModelGateway:
             ModelTaskKind.ASSISTANT,
             material,
             lambda: self.client.assistant_candidate(material),  # type: ignore[union-attr]
+        )
+
+    def resume_parse_candidate(self, material: str) -> dict[str, Any]:
+        payload = self._run(
+            ModelTaskKind.RESUME_PARSE,
+            material,
+            lambda: self.client.resume_parse_candidate(material),  # type: ignore[union-attr]
+        )
+        return validate_manual_result(
+            ModelTaskKind.RESUME_PARSE.value,
+            json.dumps(payload, ensure_ascii=False),
+        )
+
+    def resume_tailor_candidate(self, material: str) -> dict[str, Any]:
+        payload = self._run(
+            ModelTaskKind.RESUME_TAILOR,
+            material,
+            lambda: self.client.resume_tailor_candidate(material),  # type: ignore[union-attr]
+        )
+        return validate_manual_result(
+            ModelTaskKind.RESUME_TAILOR.value,
+            json.dumps(payload, ensure_ascii=False),
         )

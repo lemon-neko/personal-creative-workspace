@@ -1,105 +1,89 @@
 {% extends "base.html" %}
-{% block title %}岗位雷达与开源研读 · 羽白工作台{% endblock %}
+{% block title %}Agent 应用开发路线 · 羽白工作台{% endblock %}
 {% block content %}
-<header class="page-header learning-radar-hero">
-  <p class="eyebrow">CAREER RADAR · 2026-08-21</p>
-  <h1>岗位雷达与开源研读</h1>
-  <p>先用真实岗位校准方向，再把能力差距压缩成四周可验收的手搓任务。</p>
-</header>
-{% if error %}<div class="message error">{{ error }}</div>{% endif %}
-{% if request.query_params.get('saved') == 'reference' %}<div class="message success">研读进度与验收证据已保存。</div>{% endif %}
-
-<section class="workspace-section radar-section">
-  <div class="section-heading"><div><p class="eyebrow">TARGET ROLES</p><h2>目标岗位雷达</h2></div><span class="snapshot-badge">静态快照 · 不自动抓取</span></div>
-  {% if primary_job %}
-  <article class="primary-job-card">
-    <div><span class="priority-pill p0">主岗位</span><small>{{ primary_job.captured_at }}</small></div>
-    <h3>{{ primary_job.company }} · {{ primary_job.title }}</h3>
-    <p>{{ primary_job.capability_summary }}</p>
-    <a href="{{ primary_job.source_url }}" target="_blank" rel="noreferrer">查看岗位来源 ↗</a>
-  </article>
-  {% endif %}
-  <div class="radar-job-grid">
-    {% for job in radar_jobs if not job.is_primary %}
-    <article class="radar-job-card">
-      <small>{{ job.captured_at }} · 参照岗位</small>
-      <h3>{{ job.company }} · {{ job.title }}</h3>
-      <p>{{ job.capability_summary }}</p>
-      <a href="{{ job.source_url }}" target="_blank" rel="noreferrer">来源 ↗</a>
-    </article>
-    {% endfor %}
-  </div>
-</section>
-
-<section class="workspace-section radar-section">
-  <div class="section-heading"><div><p class="eyebrow">COMMON CAPABILITIES</p><h2>共性能力与当前差距</h2></div></div>
-  <div class="career-metrics evidence-metrics">
-    <article><strong>{{ evidence_project_count }}</strong><span>真实项目证据</span><a href="{{ url_for('career_projects') }}">查看项目 →</a></article>
-    <article><strong>{{ resume_count }}</strong><span>简历版本</span><a href="{{ url_for('career_resumes') }}">查看简历 →</a></article>
-    <article><strong>{{ p0_gap_count }}</strong><span>P0 技能差距</span><small>当前等级低于目标</small></article>
-    <article><strong>4</strong><span>四周主线任务</span><small>每周只验收一个模块</small></article>
-  </div>
-  <div class="capability-matrix">
-    {% for row in capability_rows %}
-    <article class="capability-card">
-      <header><span class="priority-pill {{ row.domain.priority|lower }}">{{ row.domain.priority }}</span><h3>{{ row.domain.title }}</h3></header>
-      <p>{{ row.domain.summary }}</p>
-      <div class="capability-skills">
-        {% for skill in row.skills %}
-        <div><span>{{ skill.name }}</span><b>{{ skill.current_level }} → {{ skill.target_level }}</b><i><em style="width: {{ skill.current_level * 20 }}%"></em></i></div>
-        {% else %}<small>还没有对应技能证据。</small>{% endfor %}
-      </div>
-      <details><summary>岗位要求与参考项目</summary>
-        <ul>{% for requirement in row.requirements %}<li>{{ jobs[requirement.job_id].company }}：{{ requirement.requirement_summary }}</li>{% endfor %}</ul>
-        <p class="reference-links">{% for reference in row.references %}<a href="#reference-{{ reference.id }}">{{ reference.name }}</a>{% endfor %}</p>
-      </details>
-    </article>
-    {% endfor %}
-  </div>
-  <div class="priority-legend"><span><b>P0</b> 四周主线</span><span><b>P1</b> 与主线组合补齐</span><span><b>P2</b> A2A/A2UI、微调、深入 K8s 暂不阻塞求职</span></div>
-</section>
-
-<section class="workspace-section radar-section">
-  <div class="section-heading"><div><p class="eyebrow">FOUR-WEEK SOURCE STUDY</p><h2>四周开源研读路线</h2></div></div>
-  <div class="study-roadmap">
-    {% for reference in references if not reference.is_optional %}
-    <article class="study-week" id="reference-{{ reference.id }}">
-      <div class="week-marker"><small>WEEK</small><strong>{{ reference.week }}</strong></div>
-      <div class="study-week-body">
-        <header><div><span>{{ reference.status }}</span><h3>{{ reference.name }}</h3></div><a href="{{ reference.repo_url }}" target="_blank" rel="noreferrer">GitHub ↗</a></header>
-        <p><b>研读重点：</b>{{ reference.study_focus }}</p>
-        <p><b>只看这些：</b>{{ reference.target_modules }}</p>
-        <div class="deliverable-box"><span>本周手搓交付物</span><strong>{{ reference.deliverable }}</strong><code>{{ reference.acceptance_command }}</code></div>
-        <form action="{{ url_for('update_learning_reference', reference_id=reference.id) }}" method="post" class="reference-progress-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-          <label class="field"><span>状态</span><select name="status">{% for status in reference_statuses|sort %}<option value="{{ status }}" {{ 'selected' if status == reference.status else '' }}>{{ {'backlog':'待开始','reading':'研读中','building':'手搓中','verified':'已验收','paused':'暂停'}[status] }}</option>{% endfor %}</select></label>
-          <label class="field"><span>Commit SHA</span><input name="commit_sha" value="{{ reference.commit_sha }}" placeholder="验收后填写"></label>
-          <label class="field full"><span>测试结果</span><textarea name="test_result" rows="2" placeholder="命令与结果">{{ reference.test_result }}</textarea></label>
-          <label class="field full"><span>复盘</span><textarea name="reflection" rows="3" placeholder="学到了什么，哪里还没理解">{{ reference.reflection }}</textarea></label>
-          <button class="secondary-button" type="submit">保存本周证据</button>
-        </form>
-      </div>
-    </article>
-    {% endfor %}
-  </div>
-  {% for reference in references if reference.is_optional %}
-  <details class="paper-panel optional-reading" id="reference-{{ reference.id }}"><summary>{{ reference.name }}</summary><p>{{ reference.study_focus }}</p><p><b>指定范围：</b>{{ reference.target_modules }}</p><a href="{{ reference.repo_url }}" target="_blank" rel="noreferrer">打开仓库 ↗</a></details>
-  {% endfor %}
-</section>
-
-<section class="workspace-section radar-section">
-  <div class="section-heading"><div><p class="eyebrow">EVIDENCE & HISTORY</p><h2>证据维护与历史路线</h2></div><a href="{{ url_for('learning') }}?show_archived={{ 0 if show_archived else 1 }}">{{ '隐藏归档' if show_archived else '查看归档路线' }}</a></div>
-  <details class="paper-panel maintenance-panel"><summary>手动维护技能与额外任务</summary>
-    <div class="career-grid">
-      <form action="{{ url_for('create_skill') }}" method="post" class="edit-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><h3>添加技能</h3><label class="field"><span>技能</span><input name="name" required></label><label class="field"><span>分类</span><input name="category"></label><div class="field-grid"><label class="field"><span>当前等级</span><input type="number" name="current_level" min="0" max="5" value="0"></label><label class="field"><span>目标等级</span><input type="number" name="target_level" min="0" max="5" value="3"></label></div><label class="field"><span>备注</span><textarea name="notes" rows="3"></textarea></label><button class="secondary-button" type="submit">添加</button></form>
-      <form action="{{ url_for('create_learning_task') }}" method="post" class="edit-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><h3>创建额外任务</h3><label class="field"><span>技能</span><select name="skill_id">{% for skill in skills %}<option value="{{ skill.id }}">{{ skill.name }}</option>{% endfor %}</select></label><label class="field"><span>任务</span><input name="title" required></label><div class="field-grid"><label class="field"><span>状态</span><select name="status">{% for status in learning_statuses|sort %}<option>{{ status }}</option>{% endfor %}</select></label><label class="field"><span>优先级</span><input type="number" name="priority" min="1" max="5" value="3"></label></div><label class="field"><span>备注</span><textarea name="notes" rows="3"></textarea></label><button class="secondary-button" type="submit">创建</button></form>
+<div class="learning-roadmap-shell">
+  <header class="learning-roadmap-header">
+    <div>
+      <h1>Agent 应用开发路线</h1>
+      <p>从最小闭环走向可靠运行、状态编排和产品交付。</p>
     </div>
-  </details>
-  {% if show_archived %}
-  <div class="archive-grid">
-    {% for campaign in campaigns if campaign.status == 'archived' %}<a class="campaign-card archived-card" href="{{ url_for('learning_campaign', campaign_id=campaign.id) }}"><strong>{{ campaign.name }}</strong><p>已归档，历史关卡与证据仍保留。</p></a>{% endfor %}
-    {% for task in tasks if task.status == 'paused' %}<article class="radar-job-card"><small>暂停任务</small><h3>{{ task.title }}</h3><p>{{ task.notes }}</p></article>{% endfor %}
-  </div>
+    <p class="learning-roadmap-count"><strong>{{ verified_stage_count }}</strong><span>/ 4 已验收</span></p>
+  </header>
+
+  {% if request.query_params.get('saved') == 'status' %}
+  <div class="message success">阶段状态已更新，已有提交和复盘记录保持不变。</div>
   {% endif %}
-</section>
+
+  {% if learning_path %}
+  <section class="learning-current" aria-labelledby="current-learning-title">
+    <div>
+      <span>当前层级</span>
+      {% if active_stage %}
+      <strong id="current-learning-title">{{ active_stage_design.code }} · {{ active_stage_design.title }}</strong>
+      {% else %}
+      <strong id="current-learning-title">路线已完成</strong>
+      {% endif %}
+    </div>
+    <div>
+      <span>下一步</span>
+      <p>{{ next_action }}</p>
+    </div>
+  </section>
+
+  <section class="learning-roadmap" aria-label="Agent 应用开发能力路线">
+    <article class="learning-roadmap-row foundation-row">
+      <div class="learning-roadmap-code">{{ foundation.code }}</div>
+      <div class="learning-roadmap-title">
+        <h2>{{ foundation.title }}</h2>
+        <p>{{ foundation.objective }}</p>
+      </div>
+      <div class="learning-roadmap-content">
+        <p class="learning-capability-chain">
+          {% for capability in foundation.chain %}<span>{{ capability }}</span>{% if not loop.last %}<i aria-hidden="true">→</i>{% endif %}{% endfor %}
+        </p>
+        <p class="learning-roadmap-output"><strong>产出</strong>{{ foundation.deliverable }}</p>
+      </div>
+      <span class="learning-roadmap-state">已有底座</span>
+    </article>
+
+    {% for row in stage_rows %}
+    {% set stage = row.stage %}
+    <article class="learning-roadmap-row stage-{{ stage.status }} {{ 'is-current' if active_stage and active_stage.id == stage.id else '' }}">
+      <div class="learning-roadmap-code">{{ row.design.code }}</div>
+      <div class="learning-roadmap-title">
+        <h2>{{ row.design.title }}</h2>
+        <p>{{ stage.objective }}</p>
+      </div>
+      <div class="learning-roadmap-content">
+        <p class="learning-capability-chain">
+          {% for capability in row.design.chain %}<span>{{ capability }}</span>{% if not loop.last %}<i aria-hidden="true">→</i>{% endif %}{% endfor %}
+        </p>
+        <p class="learning-roadmap-output"><strong>产出</strong>{{ stage.deliverable }}</p>
+        {% if row.references %}
+        <p class="learning-roadmap-references"><strong>参考</strong>{% for reference in row.references %}<a href="{{ reference.repo_url }}" target="_blank" rel="noreferrer">{{ reference.name }}</a>{% if not loop.last %}<span>、</span>{% endif %}{% endfor %}</p>
+        {% else %}
+        <p class="learning-roadmap-references"><strong>参考</strong>不依赖框架</p>
+        {% endif %}
+      </div>
+      <form class="learning-status-form" action="{{ url_for('update_learning_stage_status', stage_id=stage.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <label class="sr-only" for="stage-status-{{ stage.id }}">{{ row.design.title }}状态</label>
+        <select id="stage-status-{{ stage.id }}" name="status">
+          {% for value, label in status_options %}<option value="{{ value }}" {{ 'selected' if value == stage.status else '' }}>{{ label }}</option>{% endfor %}
+        </select>
+        <button type="submit">保存</button>
+      </form>
+    </article>
+    {% endfor %}
+  </section>
+
+  <nav class="learning-roadmap-links" aria-label="学习路线辅助入口">
+    <a href="{{ url_for('career_jobs') }}">路线依据<span>岗位与能力差距</span></a>
+    <a href="{{ url_for('learning_history') }}">历史记录<span>旧路线与验收证据</span></a>
+    <a href="{{ url_for('learning_maintenance') }}">技能维护<span>技能与额外任务</span></a>
+  </nav>
+  {% else %}
+  <section class="empty-state"><h2>学习路线尚未初始化</h2><p>重新启动工作台后会写入默认路线，不会修改私人学习记录。</p></section>
+  {% endif %}
+</div>
 {% endblock %}

@@ -5,7 +5,7 @@
 <div class="career-metrics">
   <article><strong>{{ active_jobs|length }}</strong><span>进行中职位</span></article>
   <article><strong>{{ projects|length }}</strong><span>项目证据</span></article>
-  <article><strong>{{ resumes|length }}</strong><span>简历版本</span></article>
+  <article><strong>{{ resumes|length }}</strong><span>简历工作室版本</span></article>
   <article><strong>{{ active_tasks|length }}</strong><span>学习任务</span></article>
 </div>
 <div class="career-grid">
@@ -15,7 +15,7 @@
   <section class="paper-panel"><div class="panel-heading"><div><p class="eyebrow">PIPELINE</p><h2>近期职位</h2></div><a href="{{ url_for('career_jobs') }}">全部 →</a></div>
     {% if jobs %}<div class="compact-list">{% for job in jobs[:5] %}<a href="{{ url_for('career_job_detail', job_id=job.id) }}"><strong>{{ job.title }}</strong><span>{{ job.company }} · {{ job.status }}</span></a>{% endfor %}</div>{% else %}<div class="empty-note">还没有职位。先手动贴一份 JD 进来。</div>{% endif %}
   </section>
-  <section class="paper-panel"><div class="panel-heading"><div><p class="eyebrow">EVIDENCE</p><h2>项目与简历</h2></div></div><div class="quick-links"><a href="{{ url_for('career_projects') }}">项目证据库 <span>{{ projects|length }}</span></a><a href="{{ url_for('career_resumes') }}">简历版本 <span>{{ resumes|length }}</span></a><a href="{{ url_for('career_documents') }}">私有文档 <span>本地</span></a></div></section>
+  <section class="paper-panel"><div class="panel-heading"><div><p class="eyebrow">EVIDENCE</p><h2>项目与简历</h2></div></div><div class="quick-links"><a href="{{ url_for('career_projects') }}">项目证据库 <span>{{ projects|length }}</span></a><a href="{{ url_for('career_resumes') }}">简历工作室 <span>{{ resumes|length }}</span></a><a href="{{ url_for('career_documents') }}">私有文档 <span>本地</span></a></div></section>
   <section class="paper-panel"><div class="panel-heading"><div><p class="eyebrow">UPSKILL</p><h2>下一步学习</h2></div><a href="{{ url_for('learning') }}">技能图谱 →</a></div>{% if active_tasks %}<ul class="task-list">{% for task in active_tasks[:5] %}<li><span>{{ task.priority }}</span><div><strong>{{ task.title }}</strong><small>{{ task.status }}</small></div></li>{% endfor %}</ul>{% else %}<div class="empty-note">职位差距会在这里长成具体学习任务。</div>{% endif %}</section>
 </div>
 {% endblock %}

@@ -15,20 +15,13 @@ from app.career import (
     JOB_STATUSES,
     LEARNING_STATUSES,
     PROJECT_STATUSES,
-    REFERENCE_STATUSES,
-    RESUME_STATUSES,
     CareerRepository,
 )
-from app.knowledge import eligible_items
 from app.model_gateway import ModelTaskKind
-from app.web import TEMPLATES, collection, not_found
+from app.web import TEMPLATES, not_found
 
 
 router = APIRouter()
-
-
-def _collection(request: Request):
-    return collection(request)
 
 
 def _not_found(request: Request, active_page: str = "") -> HTMLResponse:
@@ -65,6 +58,7 @@ def _career_job_context(request: Request, job, *, skill_candidates: tuple[dict, 
         "events": repository.job_events(job.id),
         "skills": repository.skills(),
         "gap_map": gap_map,
+        "primary_resume": repository.primary_resume(),
         "job_statuses": JOB_STATUSES,
         "llm_enabled": request.app.state.llm_client.enabled and callable(analyzer),
         "skill_candidates": skill_candidates,
@@ -407,74 +401,6 @@ async def update_career_project(request: Request, project_id: str) -> HTMLRespon
         status_code=303,
     )
 
-@router.get(
-    "/career/resumes", response_class=HTMLResponse, name="career_resumes"
-)
-async def career_resumes(request: Request) -> HTMLResponse:
-    repository = request.app.state.career
-    return TEMPLATES.TemplateResponse(
-        request=request,
-        name="career_resumes.html",
-        context={
-            "active_page": "career",
-            "resumes": repository.resumes(),
-            "documents": repository.documents("resume"),
-            "projects": repository.projects(),
-            "resume_statuses": RESUME_STATUSES,
-        },
-    )
-
-@router.post("/career/resumes", name="create_resume_version")
-async def create_resume_version(
-    request: Request,
-    title: str = Form(...),
-    target_role: str = Form(default=""),
-    document_id: str = Form(default=""),
-    project_ids: list[str] = Form(default=[]),
-    status: str = Form(default="draft"),
-    notes: str = Form(default=""),
-) -> HTMLResponse:
-    try:
-        request.app.state.career.add_resume(
-            title=title,
-            target_role=target_role,
-            document_id=document_id,
-            project_ids=tuple(project_ids),
-            status=status,
-            notes=notes,
-        )
-    except ValueError as error:
-        repository = request.app.state.career
-        return TEMPLATES.TemplateResponse(
-            request=request,
-            name="career_resumes.html",
-            context={
-                "active_page": "career",
-                "resumes": repository.resumes(),
-                "documents": repository.documents("resume"),
-                "projects": repository.projects(),
-                "resume_statuses": RESUME_STATUSES,
-                "error": str(error),
-            },
-            status_code=422,
-        )
-    return RedirectResponse(
-        request.url_for("career_resumes").include_query_params(saved="created"),
-        status_code=303,
-    )
-
-@router.post(
-    "/career/resumes/{resume_id}/status", name="change_resume_status"
-)
-async def change_resume_status(
-    request: Request, resume_id: str, status: str = Form(...)
-) -> HTMLResponse:
-    try:
-        request.app.state.career.update_resume_status(resume_id, status)
-    except (KeyError, ValueError):
-        return _not_found(request, "career")
-    return RedirectResponse(request.url_for("career_resumes"), status_code=303)
-
 @router.get("/career/jobs", response_class=HTMLResponse, name="career_jobs")
 async def career_jobs(request: Request) -> HTMLResponse:
     return TEMPLATES.TemplateResponse(
@@ -721,86 +647,158 @@ async def learning(
     request: Request,
     show_archived: bool = Query(default=False),
 ) -> HTMLResponse:
+    if show_archived:
+        return RedirectResponse(request.url_for("learning_history"), status_code=302)
+
     repository: CareerRepository = request.app.state.career
-    jobs = repository.jobs()
-    skills = repository.skills()
-    tasks = repository.learning_tasks()
-    campaigns = repository.campaigns()
-    references = repository.learning_references()
-    job_capabilities = repository.job_capabilities()
-    capability_skill_ids = repository.capability_skill_ids()
-    reference_capabilities = repository.reference_capability_ids()
-    reference_tasks = repository.reference_task_ids()
-    skill_map = {skill.id: skill for skill in skills}
-    reference_map = {reference.id: reference for reference in references}
-    capability_rows = tuple(
+    paths = repository.learning_paths()
+    active_path = next((value for value in paths if value.status == "active"), None)
+    stages = repository.learning_stages(active_path.id) if active_path else ()
+    active_stage = next(
+        (value for value in stages if value.status in {"reading", "building"}),
+        None,
+    )
+    if active_stage is None:
+        active_stage = next(
+            (value for value in stages if value.status == "paused"),
+            None,
+        )
+    if active_stage is None:
+        active_stage = next(
+            (value for value in stages if value.status == "backlog"),
+            None,
+        )
+    stage_references = repository.learning_stage_references()
+    stage_design = {
+        "agent-path-minimal-agent": {
+            "code": "01",
+            "title": "最小 Agent",
+            "chain": ("Model", "Context", "Tool", "State", "Stop"),
+        },
+        "agent-path-openhands": {
+            "code": "02",
+            "title": "可靠 Runtime",
+            "chain": ("Loop", "Sandbox", "Approval", "Trace", "Recovery"),
+        },
+        "agent-path-langgraph": {
+            "code": "03",
+            "title": "状态化编排",
+            "chain": ("StateGraph", "Checkpoint", "Persistence", "HITL"),
+        },
+        "agent-path-productization": {
+            "code": "04",
+            "title": "产品化交付",
+            "chain": ("RAG", "Memory", "MCP", "Eval", "Application"),
+        },
+    }
+    stage_rows = tuple(
         {
-            "domain": domain,
-            "skills": tuple(
-                skill_map[skill_id]
-                for skill_id in capability_skill_ids.get(domain.id, ())
-                if skill_id in skill_map
-            ),
-            "requirements": tuple(
-                requirement
-                for requirement in job_capabilities
-                if requirement.capability_id == domain.id
+            "stage": stage,
+            "design": stage_design.get(
+                stage.id,
+                {
+                    "code": f"{stage.stage_order:02d}",
+                    "title": stage.title,
+                    "chain": tuple(
+                        value.strip()
+                        for value in stage.focus.replace("、", ",").split(",")
+                        if value.strip()
+                    ),
+                },
             ),
             "references": tuple(
-                reference
-                for reference in references
-                if domain.id in reference_capabilities.get(reference.id, ())
+                value for value in stage_references if value.stage_id == stage.id
             ),
         }
-        for domain in repository.capability_domains()
+        for stage in stages
     )
-    p0_skill_ids = {
-        skill.id
-        for row in capability_rows
-        if row["domain"].priority == "P0"
-        for skill in row["skills"]
+    next_actions = {
+        "backlog": "理解这一层的能力链，再进入研读。",
+        "reading": "只阅读与本层交付物直接相关的实现边界。",
+        "building": "完成本层交付物，通过验收后再进入下一层。",
+        "paused": "确认继续投入后恢复本层，已有记录不会丢失。",
+        "verified": "进入下一层能力。",
     }
+
     return TEMPLATES.TemplateResponse(
         request=request,
         name="learning.html",
         context={
             "active_page": "learning",
-            "skills": skills,
-            "skill_map": skill_map,
-            "tasks": tuple(task for task in tasks if show_archived or task.status != "paused"),
-            "gaps": repository.gaps(),
-            "jobs": {job.id: job for job in jobs},
-            "radar_jobs": tuple(job for job in jobs if job.captured_at),
-            "primary_job": next((job for job in jobs if job.is_primary), None),
-            "capabilities": repository.capability_domains(),
-            "capability_rows": capability_rows,
-            "job_capabilities": job_capabilities,
-            "capability_skill_ids": capability_skill_ids,
-            "references": references,
-            "reference_capabilities": reference_capabilities,
-            "reference_tasks": reference_tasks,
-            "reference_map": reference_map,
-            "reference_statuses": REFERENCE_STATUSES,
-            "learning_statuses": LEARNING_STATUSES,
-            "projects": repository.projects(),
-            "evidence_project_count": len(repository.projects()),
-            "resume_count": len(repository.resumes()),
-            "p0_gap_count": sum(
-                skill.current_level < skill.target_level
-                for skill in skills
-                if skill.id in p0_skill_ids
-            ),
-            "content_items": eligible_items(_collection(request)),
-            "campaigns": tuple(
-                campaign
-                for campaign in campaigns
-                if show_archived or campaign.status != "archived"
-            ),
-            "campaign_xp": {
-                campaign.id: repository.campaign_xp(campaign.id)
-                for campaign in campaigns
+            "learning_path": active_path,
+            "foundation": {
+                "code": "00",
+                "title": "工程底座",
+                "objective": "已有的软件工程能力，作为 Agent 应用开发的运行基础。",
+                "chain": ("API", "Database", "Async", "Docker", "Logging"),
+                "deliverable": "已有基础，不参与路线完成度。",
             },
-            "show_archived": show_archived,
+            "stage_rows": stage_rows,
+            "active_stage": active_stage,
+            "active_stage_design": (
+                stage_design.get(active_stage.id) if active_stage else None
+            ),
+            "status_options": (
+                ("backlog", "待开始"),
+                ("reading", "研读中"),
+                ("building", "实现中"),
+                ("verified", "已验收"),
+                ("paused", "暂停"),
+            ),
+            "verified_stage_count": sum(
+                value.status == "verified" for value in stages
+            ),
+            "learning_progress": round(
+                100 * sum(value.status == "verified" for value in stages) / len(stages)
+            ) if stages else 0,
+            "next_action": (
+                next_actions.get(active_stage.status, "继续维护验收证据。")
+                if active_stage
+                else "四个阶段均已验收，整理最终架构复盘。"
+            ),
+        },
+    )
+
+
+@router.get(
+    "/learning/history",
+    response_class=HTMLResponse,
+    name="learning_history",
+)
+async def learning_history(request: Request) -> HTMLResponse:
+    repository: CareerRepository = request.app.state.career
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="learning_history.html",
+        context={
+            "active_page": "learning",
+            "learning_paths": repository.learning_paths(),
+            "stages": repository.learning_stages(),
+            "references": repository.learning_references(),
+            "campaigns": tuple(
+                value
+                for value in repository.campaigns()
+                if value.status == "archived"
+            ),
+        },
+    )
+
+
+@router.get(
+    "/learning/maintenance",
+    response_class=HTMLResponse,
+    name="learning_maintenance",
+)
+async def learning_maintenance(request: Request) -> HTMLResponse:
+    repository: CareerRepository = request.app.state.career
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="learning_maintenance.html",
+        context={
+            "active_page": "learning",
+            "skills": repository.skills(),
+            "tasks": repository.learning_tasks(),
+            "learning_statuses": LEARNING_STATUSES,
         },
     )
 
@@ -829,6 +827,56 @@ async def update_learning_reference(
         return _not_found(request, "learning")
     return RedirectResponse(
         request.url_for("learning").include_query_params(saved="reference"),
+        status_code=303,
+    )
+
+
+@router.post(
+    "/learning/stages/{stage_id}",
+    name="update_learning_stage",
+)
+async def update_learning_stage(
+    request: Request,
+    stage_id: str,
+    status: str = Form(...),
+    commit_sha: str = Form(default=""),
+    test_result: str = Form(default=""),
+    reflection: str = Form(default=""),
+) -> HTMLResponse:
+    try:
+        request.app.state.career.update_learning_stage(
+            stage_id,
+            status=status,
+            commit_sha=commit_sha,
+            test_result=test_result,
+            reflection=reflection,
+        )
+    except (KeyError, ValueError):
+        return _not_found(request, "learning")
+    return RedirectResponse(
+        request.url_for("learning").include_query_params(saved="stage"),
+        status_code=303,
+    )
+
+
+@router.post(
+    "/learning/stages/{stage_id}/status",
+    name="update_learning_stage_status",
+)
+async def update_learning_stage_status(
+    request: Request,
+    stage_id: str,
+    status: str = Form(...),
+) -> HTMLResponse:
+    try:
+        request.app.state.career.update_learning_stage_status(
+            stage_id,
+            status=status,
+        )
+    except (KeyError, ValueError):
+        return _not_found(request, "learning")
+    return RedirectResponse(
+        request.url_for("learning").include_query_params(saved="status"),
         status_code=303,
     )
 
@@ -1005,6 +1053,7 @@ async def clear_campaign_quest(
         status_code=303,
     )
 
+
 @router.post("/learning/skills", name="create_skill")
 async def create_skill(
     request: Request,
@@ -1026,21 +1075,22 @@ async def create_skill(
         repository = request.app.state.career
         return TEMPLATES.TemplateResponse(
             request=request,
-            name="learning.html",
+            name="learning_maintenance.html",
             context={
                 "active_page": "learning",
                 "skills": repository.skills(),
                 "tasks": repository.learning_tasks(),
-                "gaps": repository.gaps(),
-                "jobs": {job.id: job for job in repository.jobs()},
                 "learning_statuses": LEARNING_STATUSES,
-                "projects": repository.projects(),
-                "content_items": eligible_items(_collection(request)),
                 "error": str(error),
             },
             status_code=422,
         )
-    return RedirectResponse(request.url_for("learning"), status_code=303)
+    return RedirectResponse(
+        request.url_for("learning_maintenance").include_query_params(saved="skill"),
+        status_code=303,
+    )
+
+
 @router.post("/learning/tasks", name="create_learning_task")
 async def create_learning_task(
     request: Request,
@@ -1062,9 +1112,25 @@ async def create_learning_task(
             linked_project_id=linked_project_id,
             notes=notes,
         )
-    except ValueError:
-        return _not_found(request, "learning")
-    return RedirectResponse(request.url_for("learning"), status_code=303)
+    except ValueError as error:
+        repository = request.app.state.career
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="learning_maintenance.html",
+            context={
+                "active_page": "learning",
+                "skills": repository.skills(),
+                "tasks": repository.learning_tasks(),
+                "learning_statuses": LEARNING_STATUSES,
+                "error": str(error),
+            },
+            status_code=422,
+        )
+    return RedirectResponse(
+        request.url_for("learning_maintenance").include_query_params(saved="task"),
+        status_code=303,
+    )
+
 
 @router.post(
     "/learning/tasks/{task_id}/status", name="change_learning_task_status"
@@ -1076,4 +1142,4 @@ async def change_learning_task_status(
         request.app.state.career.update_learning_task_status(task_id, status)
     except (KeyError, ValueError):
         return _not_found(request, "learning")
-    return RedirectResponse(request.url_for("learning"), status_code=303)
+    return RedirectResponse(request.url_for("learning_maintenance"), status_code=303)

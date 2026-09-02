@@ -1,0 +1,102 @@
+<div class="resume-form-stack">
+  <details class="resume-form-section" open>
+    <summary><span>基本信息</span><small>姓名、职业定位与联系方式</small></summary>
+    <div class="resume-section-body">
+      <div class="field-grid">
+        {% for key, label in [('name','姓名'),('title','职业定位'),('phone','电话'),('email','邮箱'),('experience_years','工作年限'),('age','年龄'),('location','所在地'),('website','个人网站'),('github','GitHub')] %}
+        <label class="field"><span>{{ label }}</span><input name="personal_{{ key }}" value="{{ structured.personal_info.get(key, '') }}"></label>
+        {% endfor %}
+      </div>
+    </div>
+  </details>
+
+  <details class="resume-form-section" open>
+    <summary><span>职业摘要</span><small>招聘方首先看到的能力概览</small></summary>
+    <div class="resume-section-body"><label class="field"><textarea name="summary" rows="6">{{ structured.summary }}</textarea></label></div>
+  </details>
+
+  <details class="resume-form-section">
+    <summary><span>工作经历</span><small>{{ work_rows|length }} 段经历</small></summary>
+    <div class="resume-section-body">
+      <div id="resume-work-rows">
+        {% for row in work_rows %}
+        <article class="resume-row">
+          <div class="field-grid">
+            <label class="field"><span>职位</span><input name="work_title" value="{{ row.title }}"></label>
+            <label class="field"><span>公司</span><input name="work_company" value="{{ row.company }}"></label>
+            <label class="field"><span>地点</span><input name="work_location" value="{{ row.location }}"></label>
+            <label class="field"><span>时间</span><input name="work_years" value="{{ row.years }}"></label>
+          </div>
+          <label class="field"><span>成果描述（每行一条）</span><textarea name="work_description" rows="5">{{ row.description|join('\n') }}</textarea></label>
+        </article>
+        {% endfor %}
+      </div>
+      <button class="text-button" type="button" data-resume-add="work">＋ 添加工作经历</button>
+    </div>
+  </details>
+
+  <details class="resume-form-section">
+    <summary><span>教育经历</span><small>{{ education_rows|length }} 段经历</small></summary>
+    <div class="resume-section-body">
+      <div id="resume-education-rows">
+        {% for row in education_rows %}
+        <article class="resume-row">
+          <div class="field-grid">
+            <label class="field"><span>院校</span><input name="education_institution" value="{{ row.institution }}"></label>
+            <label class="field"><span>学历 / 专业</span><input name="education_degree" value="{{ row.degree }}"></label>
+            <label class="field"><span>时间</span><input name="education_years" value="{{ row.years }}"></label>
+          </div>
+          <label class="field"><span>补充说明</span><textarea name="education_description" rows="3">{{ row.description }}</textarea></label>
+        </article>
+        {% endfor %}
+      </div>
+      <button class="text-button" type="button" data-resume-add="education">＋ 添加教育经历</button>
+    </div>
+  </details>
+
+  <details class="resume-form-section">
+    <summary><span>项目证据</span><small>{{ projects|length }} 个候选项目</small></summary>
+    <div class="resume-section-body">
+      <p class="section-note">项目来自工作台项目证据库。这里的表达调整不会反向改写证据库。</p>
+      <div class="resume-project-picker">
+        {% for project in projects %}
+        {% set selected = selected_projects.get(project.id) %}
+        <article>
+          <label class="checkbox-row"><input type="checkbox" name="project_ids" value="{{ project.id }}" {{ 'checked' if selected else '' }}><strong>{{ project.name }}</strong><small>{{ project.status }}</small></label>
+          <div class="field-grid">
+            <label class="field"><span>简历项目名</span><input name="project_name_{{ project.id }}" value="{{ selected.name if selected else project.name }}"></label>
+            <label class="field"><span>职责</span><input name="project_role_{{ project.id }}" value="{{ selected.role if selected else project.role }}"></label>
+            <label class="field"><span>时间</span><input name="project_years_{{ project.id }}" value="{{ selected.years if selected else project.timeframe }}"></label>
+            <label class="field"><span>GitHub</span><input name="project_github_{{ project.id }}" value="{{ selected.github if selected else '' }}"></label>
+          </div>
+          <label class="field"><span>项目描述（每行一条）</span><textarea name="project_description_{{ project.id }}" rows="5">{% if selected %}{{ selected.description|join('\n') }}{% else %}{{ [project.summary, project.actions, project.outcome]|select|join('\n') }}{% endif %}</textarea></label>
+        </article>
+        {% else %}<div class="empty-note">项目证据库为空，先在求职驾驶舱补充真实项目。</div>{% endfor %}
+      </div>
+    </div>
+  </details>
+
+  <details class="resume-form-section">
+    <summary><span>自我评价</span><small>每行一条</small></summary>
+    <div class="resume-section-body"><label class="field"><textarea name="self_evaluation" rows="6">{{ structured.self_evaluation|join('\n') }}</textarea></label></div>
+  </details>
+
+  <details class="resume-form-section">
+    <summary><span>技能与版式</span><small>技能、区块名称与显示顺序</small></summary>
+    <div class="resume-section-body">
+      <label class="field"><span>技能（每行一个）</span><textarea name="skills" rows="7">{{ structured.skills|join('\n') }}</textarea></label>
+      <div class="resume-section-settings">
+        {% for section in structured.sections %}
+        <article>
+          <label><input type="checkbox" name="visible_sections" value="{{ section.key }}" {{ 'checked' if section.visible else '' }}> 显示</label>
+          <input name="section_title_{{ section.key }}" value="{{ section.title }}" aria-label="区块标题">
+          <input type="number" name="section_order_{{ section.key }}" value="{{ section.order }}" min="0" max="20" aria-label="区块顺序">
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+  </details>
+</div>
+
+<template id="resume-work-template"><article class="resume-row"><div class="field-grid"><label class="field"><span>职位</span><input name="work_title"></label><label class="field"><span>公司</span><input name="work_company"></label><label class="field"><span>地点</span><input name="work_location"></label><label class="field"><span>时间</span><input name="work_years"></label></div><label class="field"><span>成果描述（每行一条）</span><textarea name="work_description" rows="5"></textarea></label></article></template>
+<template id="resume-education-template"><article class="resume-row"><div class="field-grid"><label class="field"><span>院校</span><input name="education_institution"></label><label class="field"><span>学历 / 专业</span><input name="education_degree"></label><label class="field"><span>时间</span><input name="education_years"></label></div><label class="field"><span>补充说明</span><textarea name="education_description" rows="3"></textarea></label></article></template>

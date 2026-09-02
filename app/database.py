@@ -57,6 +57,14 @@ def _snapshot_database(path: Path, snapshot_root: Path, label: str) -> Path:
     return target
 
 
+def snapshot_database(path: Path, snapshot_root: Path, label: str) -> Path:
+    """Create a permission-hardened SQLite backup for an explicit operation."""
+
+    if not path.exists() or path.stat().st_size == 0:
+        raise FileNotFoundError(path)
+    return _snapshot_database(path, snapshot_root, label)
+
+
 def ensure_migration_registry(
     path: Path,
     *,

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}赚钱画像 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/income.css') }}?v=20260831-money-method">{% endblock %}
+{% block content %}
+<header class="income-header compact-header">
+  <div><a class="back-link" href="{{ url_for('income') }}">← 返回收入面板</a><p class="eyebrow">MONEY PROFILE</p><h1>赚钱画像</h1><p>画像只决定什么机会值得研究；信息不外发，也不会自动触发模型。</p></div>
+</header>
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<section class="money-sheet">
+  <form class="money-sheet-form" action="{{ url_for('update_income_profile') }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <div class="form-pair">
+      <label><span>当前能力层级</span><select name="tier">{% for key,label in money_tier_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == profile.tier else '' }}>{{ key }} · {{ label }}</option>{% endfor %}</select></label>
+      <label><span>每周可投入小时</span><input type="number" min="0" name="weekly_hours" value="{{ profile.weekly_hours if profile.weekly_hours is not none else '' }}" placeholder="暂不确定可留空"></label>
+    </div>
+    <label><span>层级判断依据</span><textarea name="tier_reason" rows="3">{{ profile.tier_reason }}</textarea></label>
+    <label><span>已有技能</span><textarea name="skills" rows="3">{{ profile.skills }}</textarea></label>
+    <div class="form-pair">
+      <label><span>可用启动资金（元）</span><input name="startup_capital" inputmode="decimal" value="{{ '%.2f'|format(profile.startup_capital_fen / 100) }}"></label>
+      <label><span>是否愿意出镜</span><select name="can_show_face"><option value="unknown" {{ 'selected' if profile.can_show_face == 'unknown' else '' }}>暂不确定</option><option value="yes" {{ 'selected' if profile.can_show_face == 'yes' else '' }}>可以</option><option value="no" {{ 'selected' if profile.can_show_face == 'no' else '' }}>不出镜</option></select></label>
+      <label><span>地区</span><input name="region" value="{{ profile.region }}"></label>
+      <label><span>语言</span><input name="languages" value="{{ profile.languages }}"></label>
+    </div>
+    <label><span>当前收入目标</span><textarea name="goal" rows="3" required>{{ profile.goal }}</textarea></label>
+    <label class="check-row"><input type="checkbox" name="willing_to_learn" {{ 'checked' if profile.willing_to_learn else '' }}><span>愿意为目标补充新技能</span></label>
+    <div class="sheet-actions"><button class="primary-button">保存画像</button></div>
+  </form>
+</section>
+{% endblock %}

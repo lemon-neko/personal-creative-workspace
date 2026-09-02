@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from app.assistant import AssistantRepository
+from app.income import IncomeRepository
 from app.career import CareerRepository
 from app.content import (
     load_items,
@@ -31,6 +32,9 @@ from app.routers.career_learning import router as career_learning_router
 from app.routers.knowledge_models import router as knowledge_models_router
 from app.routers.workspace_content import router as workspace_content_router
 from app.routers.assistant import router as assistant_router
+from app.routers.income import router as income_router
+from app.routers.wechat import router as wechat_router
+from app.routers.resumes import router as resumes_router
 from app.privacy import (
     LocalOnlyMiddleware,
     default_data_root,
@@ -41,6 +45,7 @@ from app.search import SearchRepository
 from app.video import (
     VideoProjectRepository,
 )
+from app.wechat import WechatPublisher
 from app.web import (
     APP_DIR,
     REPO_ROOT,
@@ -84,21 +89,22 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        task = None
+        tasks = []
         try:
             await asyncio.to_thread(_sync_search_index, application)
         except (OSError, RuntimeError, TypeError, ValueError) as error:
             application.state.search_sync_error = str(error)
         if enable_scheduler:
-            task = asyncio.create_task(
+            tasks.append(asyncio.create_task(
                 run_summary_scheduler(
                     application.state.content_root,
                     summarizer=None,
                 ),
-            )
+            ))
         yield
-        if task is not None:
+        for task in tasks:
             task.cancel()
+        for task in tasks:
             with suppress(asyncio.CancelledError):
                 await task
 
@@ -150,6 +156,11 @@ def create_app(
     )
     workspace_app.state.search = SearchRepository(resolved_data_root)
     workspace_app.state.assistant = AssistantRepository(resolved_data_root)
+    workspace_app.state.income = IncomeRepository(resolved_data_root)
+    workspace_app.state.wechat = WechatPublisher(
+        resolved_data_root,
+        workspace_app.state.content_root,
+    )
     workspace_app.state.search_sync_error = ""
     workspace_app.state.mobile_store = MobileStore(resolved_data_root)
     workspace_app.state.obsidian = ObsidianBridge(
@@ -194,9 +205,12 @@ def create_app(
 
     workspace_app.include_router(workspace_content_router)
     workspace_app.include_router(assistant_router)
+    workspace_app.include_router(income_router)
     workspace_app.include_router(knowledge_models_router)
 
     workspace_app.include_router(creation_router)
+    workspace_app.include_router(wechat_router)
+    workspace_app.include_router(resumes_router)
     workspace_app.include_router(career_learning_router)
     workspace_app.include_router(system_router)
 

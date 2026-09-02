@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}推送预检失败 · 羽白工作台{% endblock %}
+
+{% block content %}
+<header class="page-header compact-header">
+    <p class="eyebrow">WECHAT PREFLIGHT</p>
+    <h1>暂时不能推送</h1>
+    <p>没有向微信发送任何内容。</p>
+</header>
+<div class="message error">{{ error }}</div>
+<section class="paper-panel narrow-panel">
+    <h2>{{ item.title }}</h2>
+    <p>返回发布页处理提示后，可以继续使用富文本复制，或重新准备草稿箱推送。</p>
+    <a class="primary-button inline-button" href="{{ url_for('publish_item', item_id=item.id) }}">返回公众号排版</a>
+</section>
+{% endblock %}

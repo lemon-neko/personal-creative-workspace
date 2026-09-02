@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}收支记录 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/income.css') }}?v=20260824-income3">{% endblock %}
+{% block content %}
+<header class="income-header"><div><a class="back-link" href="{{ url_for('income') }}">← 收入面板</a><p class="eyebrow">LEDGER</p><h1>收支记录</h1><p>新记录先进入待确认，确认后才影响真实数据。</p></div></header>
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+<div class="income-entry-layout">
+  <section class="income-panel entry-form-panel"><h2>记录一笔</h2><form action="{{ url_for('create_income_entry') }}" method="post" class="income-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <label><span>收入来源</span><select name="source_key">{% for source in sources %}<option value="{{ source.key }}" {{ 'selected' if form_data.source_key == source.key else '' }}>{{ source.display_name }}</option>{% endfor %}</select></label>
+    <label><span>类型</span><select name="entry_type"><option value="revenue" {{ 'selected' if form_data.entry_type == 'revenue' else '' }}>收入</option><option value="expense" {{ 'selected' if form_data.entry_type == 'expense' else '' }}>费用</option><option value="refund" {{ 'selected' if form_data.entry_type == 'refund' else '' }}>退款</option></select></label>
+    <label><span>金额（元）</span><input name="gross" value="{{ form_data.gross or '' }}" inputmode="decimal" required></label>
+    <label><span>平台费用（元）</span><input name="platform_fee" value="{{ form_data.platform_fee or '0' }}" inputmode="decimal"><small>只用于收入；费用和退款请保持为 0。</small></label>
+    <label><span>发生日期</span><input type="date" name="occurred_at" value="{{ form_data.occurred_at or '' }}"></label>
+    <label class="full"><span>备注</span><textarea name="note" rows="3">{{ form_data.note or '' }}</textarea></label>
+    <button class="primary-button">保存为待确认</button>
+  </form></section>
+  <aside class="income-panel entry-rules"><h2>数据口径</h2><ul><li>收入确认后计入实际到账。</li><li>平台费用会从该笔收入中扣除。</li><li>费用和退款确认后降低净现金。</li><li>已确认记录不能作废，错误请另记退款或费用。</li></ul></aside>
+</div>
+<section class="income-panel all-entries"><header><div><p class="eyebrow">ALL ENTRIES</p><h2>全部记录</h2></div></header>
+  {% if entries %}<div class="income-entry-list detailed">{% for entry in entries %}<article>
+    <div><small>{{ entry.occurred_at }} · {{ source_lookup[entry.source_key].display_name }} · {{ cash_labels[entry.cash_status] }}</small><strong>{{ entry_labels[entry.entry_type] }} · {{ entry.note or '无备注' }}</strong>{% if entry.platform_fee_fen %}<span>平台费用 {{ format_cny(entry.platform_fee_fen) }}</span>{% endif %}</div>
+    <b class="{{ 'negative' if entry.entry_type != 'revenue' else '' }}">{{ format_cny(entry.net_fen) }}</b>
+    {% if entry.cash_status == 'pending' %}<div class="entry-actions"><form action="{{ url_for('confirm_income_entry', entry_id=entry.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="small-button">{{ '确认到账' if entry.entry_type == 'revenue' else '确认记账' }}</button></form><form action="{{ url_for('void_income_entry', entry_id=entry.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="text-button">作废</button></form></div>{% endif %}
+  </article>{% endfor %}</div>{% else %}<div class="empty-income"><strong>账本是空的</strong><p>先记录第一笔待确认收入。</p></div>{% endif %}
+</section>
+{% endblock %}

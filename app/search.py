@@ -146,7 +146,9 @@ class SearchRepository:
             ("resumes", "resume", "简历版本", "/career/resumes", ("title", "target_role", "notes")),
             ("skills", "skill", "技能", "/learning", ("name", "category", "notes")),
             ("learning_tasks", "learning-task", "学习任务", "/learning", ("title", "notes")),
-            ("learning_references", "learning-reference", "开源研读", "/learning", ("name", "study_focus", "deliverable", "reflection")),
+            ("learning_stages", "learning-stage", "学习阶段", "/learning", ("title", "objective", "focus", "deliverable")),
+            ("learning_stage_references", "learning-stage-reference", "阶段参考项目", "/learning", ("name", "role", "target_modules", "repo_url")),
+            ("learning_references", "learning-reference", "历史开源研读", "/learning", ("name", "study_focus", "deliverable", "reflection")),
         ):
             method = getattr(career, method_name, None)
             if not callable(method):
@@ -161,7 +163,9 @@ class SearchRepository:
                         title,
                         "\n".join(values[2:]),
                         " ".join(values),
-                        f"{url_prefix}/{value.id}" if result_type == "career-job" else url_prefix,
+                        f"{url_prefix}/{value.id}"
+                        if result_type in {"career-job", "resume"}
+                        else url_prefix,
                         label,
                     ),
                 )

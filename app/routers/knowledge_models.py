@@ -27,6 +27,11 @@ from app.knowledge_store import (
     supersede_knowledge_card,
 )
 from app.model_gateway import POLICIES, ModelGateway, ModelTaskKind
+from app.resume_studio import (
+    apply_tailoring_suggestions,
+    normalize_structured_resume,
+    validate_tailoring_suggestions,
+)
 from app.obsidian import obsidian_uri
 from app.web import TEMPLATES, collection, not_found
 from app.workspace import create_item, current_week_items, save_weekly_review
@@ -287,6 +292,14 @@ async def run_local_model_task(request: Request, task_id: str) -> HTMLResponse:
         elif task.task_type == ModelTaskKind.JOB_SKILLS.value:
             skills = await asyncio.to_thread(gateway.job_skill_candidate, task.payload)
             payload = {"skills": list(skills)}
+        elif task.task_type == ModelTaskKind.RESUME_PARSE.value:
+            payload = await asyncio.to_thread(
+                gateway.resume_parse_candidate, task.payload
+            )
+        elif task.task_type == ModelTaskKind.RESUME_TAILOR.value:
+            payload = await asyncio.to_thread(
+                gateway.resume_tailor_candidate, task.payload
+            )
         else:
             raise ValueError("未知模型任务")
         request.app.state.model_tasks.store_result(task.id, payload)
@@ -482,6 +495,86 @@ async def confirm_model_task(request: Request, task_id: str) -> HTMLResponse:
                 )
             redirect_url = str(
                 request.url_for("career_job_detail", job_id=job_id)
+            )
+        elif task.task_type == ModelTaskKind.RESUME_PARSE.value:
+            material = json.loads(task.payload)
+            document_id = str(material.get("document_id", ""))
+            document = request.app.state.career.document(document_id)
+            if document is None:
+                raise ValueError("原始简历文件已经不存在")
+            structured = normalize_structured_resume(result["resume"])
+            project_ids = {
+                str(row.get("project_id", ""))
+                for row in structured.projects
+                if row.get("project_id")
+            }
+            allowed = {
+                str(value) for value in material.get("allowed_project_ids", [])
+            }
+            if not project_ids <= allowed:
+                raise ValueError("候选包含虚构的项目证据 ID")
+            created = request.app.state.career.add_structured_resume(
+                title=str(form.get("title", "主简历")),
+                target_role=str(form.get("target_role", "")),
+                document_id=document.id,
+                structured=structured,
+                resume_kind="master",
+                status="active",
+                is_primary=True,
+            )
+            redirect_url = str(
+                request.url_for("resume_detail", resume_id=created.id)
+            )
+        elif task.task_type == ModelTaskKind.RESUME_TAILOR.value:
+            material = json.loads(task.payload)
+            resume = request.app.state.career.resume(
+                str(material.get("resume_id", ""))
+            )
+            job = request.app.state.career.job(
+                str(material.get("job", {}).get("id", ""))
+            )
+            if (
+                resume is None
+                or resume.resume_kind != "master"
+                or resume.revision != int(material.get("resume_revision", -1))
+                or job is None
+            ):
+                raise ValueError("主简历或职位已经变化，请重新生成候选")
+            selected = {
+                str(value) for value in form.getlist("selected")
+            }
+            raw = []
+            for index, row in enumerate(result["suggestions"]):
+                if str(index) not in selected:
+                    continue
+                raw.append(
+                    {
+                        **row,
+                        "after": str(form.get(f"after_{index}", "")),
+                    }
+                )
+            suggestions = validate_tailoring_suggestions(
+                raw,
+                request.app.state.career.structured_resume(resume),
+                {
+                    str(value)
+                    for value in material.get("allowed_evidence_ids", [])
+                },
+            )
+            tailored = apply_tailoring_suggestions(
+                request.app.state.career.structured_resume(resume), suggestions
+            )
+            created = request.app.state.career.add_structured_resume(
+                title=f"{job.company} · {job.title}",
+                target_role=job.title,
+                structured=tailored,
+                resume_kind="tailored",
+                parent_id=resume.id,
+                job_id=job.id,
+                photo_asset_id=resume.photo_asset_id or "",
+            )
+            redirect_url = str(
+                request.url_for("resume_detail", resume_id=created.id)
             )
         else:
             raise ValueError("未知模型任务")

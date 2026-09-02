@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import plistlib
+import pwd
 import re
 import shutil
 import socket
@@ -22,6 +23,7 @@ DESKTOP_LABEL = "com.lemon-neko.personal-creative-workspace.desktop"
 MOBILE_LABEL = "com.lemon-neko.personal-creative-workspace.mobile"
 MAX_LOG_BYTES = 5 * 1024 * 1024
 LAUNCHCTL = "/bin/launchctl"
+SAFE_RUNTIME_PATH = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 
 @dataclass(frozen=True)
@@ -77,11 +79,26 @@ def build_launch_agent(
     data_root: Path,
 ) -> dict:
     logs = data_root / "logs"
+    # Keep the virtual-environment entry point intact. Resolving this symlink
+    # points launchd at the base interpreter, which cannot see dependencies
+    # installed in ``.venv`` (for example uvicorn).
+    python_executable = Path(os.path.abspath(python))
+    username = pwd.getpwuid(os.getuid()).pw_name
     return {
         "Label": label,
-        "ProgramArguments": [str(python), "-m", module],
+        "ProgramArguments": [str(python_executable), "-m", module],
         "WorkingDirectory": str(repository_root),
-        "EnvironmentVariables": {"WORKSPACE_DATA_DIR": str(data_root)},
+        "EnvironmentVariables": {
+            "WORKSPACE_DATA_DIR": str(data_root),
+            # Tailscale's macOS CLI talks to the GUI app through the current
+            # user's runtime environment. launchd does not reliably inherit
+            # these values from an interactive shell.
+            "HOME": str(Path.home()),
+            "USER": username,
+            "LOGNAME": username,
+            "TMPDIR": os.environ.get("TMPDIR", tempfile.gettempdir()),
+            "PATH": SAFE_RUNTIME_PATH,
+        },
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ThrottleInterval": 15,
@@ -155,14 +172,13 @@ def install_service(
     value = build_launch_agent(
         label=label,
         module=module,
-        python=(python or Path(sys.executable)).resolve(),
+        python=python or Path(sys.executable),
         repository_root=repository_root.resolve(),
         data_root=data_root.resolve(),
     )
     _write_agent(path, value)
     _launchctl("bootout", _domain(), str(path), check=False)
     _launchctl("bootstrap", _domain(), str(path))
-    _launchctl("kickstart", "-k", f"{_domain()}/{label}")
     return path
 
 

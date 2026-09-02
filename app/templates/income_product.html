@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Money Engine · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/income.css') }}?v=20260825-money-engine1">{% endblock %}
+{% block content %}
+<header class="income-header">
+  <div><a class="back-link" href="{{ url_for('income') }}">← 返回收入面板</a><p class="eyebrow">MONEY ENGINE V1</p><h1>{{ product.name }}</h1><p>只验证一个产品、一条交易链和一笔真实到账。</p></div>
+  <b class="engine-price">{{ format_cny(product.price_fen) }}</b>
+</header>
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<section class="money-engine-hero compact {{ 'cleared' if first_yuan_cleared else '' }}">
+  <div class="engine-copy"><p class="eyebrow">FIRST YUAN</p><h2>{{ '第一笔 ¥1 已跑通' if first_yuan_cleared else '链路仍在进行中' }}</h2><p>{{ product.target_user }} · v{{ product.package_version }} · {{ product_stage_labels[product.current_stage] }}</p><strong class="engine-next">下一步：{{ product.next_action }}</strong></div>
+  <div class="engine-pass"><strong>{{ '✓' if first_yuan_cleared else '0 / 1' }}</strong><small>陌生购买＋无私聊销售＋第三方付款＋自动交付＋过退款期＋净到账至少 ¥1</small></div>
+</section>
+
+<div class="product-control-grid">
+  <section class="income-panel">
+    <header><div><p class="eyebrow">PRODUCT</p><h2>产品与公开入口</h2></div></header>
+    <form class="income-form product-form" action="{{ url_for('update_income_product', product_id=product.id) }}" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <label><span>版本</span><input name="package_version" value="{{ product.package_version }}" required></label>
+      <label><span>当前阶段</span><select name="current_stage">{% for key,label in product_stage_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == product.current_stage else '' }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="full"><span>GitHub 精简仓库</span><input name="github_url" value="{{ product.github_url }}" placeholder="https://github.com/.../agent-reliability-launch-kit"></label>
+      <label class="full"><span>公众号介绍文章</span><input name="article_url" value="{{ product.article_url }}" placeholder="https://mp.weixin.qq.com/s/..."></label>
+      <label class="full"><span>面包多商品页</span><input name="store_url" value="{{ product.store_url }}" placeholder="https://mbd.pub/..."></label>
+      <label class="full"><span>当前唯一下一步</span><textarea name="next_action" rows="2" maxlength="500">{{ product.next_action }}</textarea></label>
+      <button class="primary-button">保存产品状态</button>
+    </form>
+    <div class="product-links">
+      {% if product.github_url %}<a href="{{ product.github_url }}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>{% endif %}
+      {% if product.article_url %}<a href="{{ product.article_url }}" target="_blank" rel="noopener noreferrer">公众号 ↗</a>{% endif %}
+      {% if product.store_url %}<a href="{{ product.store_url }}" target="_blank" rel="noopener noreferrer">面包多 ↗</a>{% endif %}
+    </div>
+  </section>
+
+  <section class="income-panel package-panel">
+    <header><div><p class="eyebrow">PACKAGE</p><h2>完整包清单</h2></div></header>
+    <ul>
+      <li>Agent 需求与验收画布</li><li>工具权限和风险矩阵</li>
+      <li>Eval 场景 YAML 模板及评分表</li><li>超时、重试、幂等与失败恢复清单</li>
+      <li>Trace 与 Badcase 复盘模板</li><li>发布、回滚与安全检查清单</li>
+      <li>虚构数据完整示例</li><li>快速说明、版本号和更新记录</li>
+    </ul>
+    <p>只使用 Markdown、YAML 和 CSV；平台自动交付，不承诺个性化咨询。</p>
+  </section>
+</div>
+
+<section class="income-panel metric-panel">
+  <header><div><p class="eyebrow">METRICS</p><h2>漏斗快照</h2></div><span>填写当前累计值</span></header>
+  <form class="metric-form" action="{{ url_for('create_product_metric', product_id=product.id) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <label><span>日期</span><input type="date" name="observed_at"></label>
+    <label><span>公开展示</span><input type="number" min="0" name="impressions" value="{{ latest_metric.impressions if latest_metric else 0 }}"></label>
+    <label><span>商品点击</span><input type="number" min="0" name="store_clicks" value="{{ latest_metric.store_clicks if latest_metric else 0 }}"></label>
+    <label><span>付款订单</span><input type="number" min="0" name="paid_orders" value="{{ latest_metric.paid_orders if latest_metric else 0 }}"></label>
+    <label><span>自动交付</span><input type="number" min="0" name="delivered_orders" value="{{ latest_metric.delivered_orders if latest_metric else 0 }}"></label>
+    <label><span>退款</span><input type="number" min="0" name="refunds" value="{{ latest_metric.refunds if latest_metric else 0 }}"></label>
+    <button class="secondary-button">记录快照</button>
+  </form>
+</section>
+
+<section class="roles-section">
+  <div class="section-heading"><div><p class="eyebrow">REVENUE ROLES</p><h2>五张收入职责卡</h2></div><p>它们不运行模型，只说明每一步如何帮助数字产品产生收入。</p></div>
+  <div class="role-card-grid">
+    {% for role in product_roles %}<article class="role-card {{ role.status }}">
+      <header><div><span>{{ '%02d'|format(role.position) }}</span><h3>{{ role.display_name }}</h3></div><b>{{ role_status_labels[role.status] }}</b></header>
+      <p>{{ role.purpose }}</p><small>影响环节：{{ role.funnel_stage }}</small>
+      <form action="{{ url_for('update_revenue_role', product_id=product.id, role_key=role.role_key) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <label><span>状态</span><select name="status">{% for key,label in role_status_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == role.status else '' }}>{{ label }}</option>{% endfor %}</select></label>
+        <label><span>可观察结果</span><textarea name="observable_result" rows="2">{{ role.observable_result }}</textarea></label>
+        <label><span>下一步</span><textarea name="next_action" rows="2">{{ role.next_action }}</textarea></label>
+        <label class="check-row"><input type="checkbox" name="requires_confirmation" {{ 'checked' if role.requires_confirmation else '' }}><span>需要作者一次性确认</span></label>
+        <button class="secondary-button">保存职责</button>
+      </form>
+    </article>{% endfor %}
+  </div>
+</section>
+
+<section class="income-panel validation-panel">
+  <header><div><p class="eyebrow">VALIDATION</p><h2>第一笔 ¥1 验证</h2></div><a href="{{ url_for('income_entries') }}">先记录收入 →</a></header>
+  {% if revenue_entries %}<form class="validation-form" action="{{ url_for('update_revenue_validation', product_id=product.id) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <label class="full"><span>关联收入记录</span><select name="income_entry_id" required>{% for entry in revenue_entries %}<option value="{{ entry.id }}">{{ entry.occurred_at }} · {{ format_cny(entry.net_fen) }} · {{ '已确认' if entry.cash_status == 'confirmed' else '待确认' }}</option>{% endfor %}</select></label>
+    <label class="check-row"><input type="checkbox" name="unfamiliar_buyer"><span>购买者不是本人或已知熟人</span></label>
+    <label class="check-row"><input type="checkbox" name="no_direct_sales"><span>没有私聊推销或人工讲解成交</span></label>
+    <label class="check-row"><input type="checkbox" name="third_party_payment"><span>付款由第三方商品页完成</span></label>
+    <label class="check-row"><input type="checkbox" name="automatic_delivery"><span>文件由平台自动交付</span></label>
+    <label class="check-row"><input type="checkbox" name="refund_window_ended"><span>平台退款期已经结束</span></label>
+    <label class="check-row"><input type="checkbox" name="no_refund"><span>订单没有退款</span></label>
+    <button class="primary-button">保存验证结果</button>
+  </form>{% else %}<div class="empty-income"><strong>还没有可验证的数字产品收入</strong><p>先在收支记录中新增一笔收入；待确认记录可以跟踪，但必须实际确认到账后才可能通关。</p></div>{% endif %}
+  {% if validations %}<div class="validation-list">{% for item in validations %}<article class="{{ 'cleared' if item.cleared else '' }}"><div><strong>{{ '已通关' if item.cleared else '链路进行中' }}</strong><span>{{ item.completed_checks }}/6 项 · {{ item.entry_status }} · {{ format_cny(item.net_received_fen) }}</span></div><b>{{ '✓' if item.cleared else '…' }}</b></article>{% endfor %}</div>{% endif %}
+</section>
+{% endblock %}

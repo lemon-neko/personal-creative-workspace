@@ -136,11 +136,45 @@ def test_usage_ledger_totals_and_price_roundtrip(tmp_path: Path) -> None:
             },
         ),
         ("job-skills", {"skills": [{"name": "Python", "importance": 4}]}),
+        (
+            "resume-parse",
+            {
+                "resume": {
+                    "personal_info": {"name": "测试作者"},
+                    "summary": "Agent 应用开发",
+                    "work_experience": [],
+                    "education": [],
+                    "projects": [],
+                    "skills": ["Python"],
+                    "sections": [],
+                }
+            },
+        ),
+        (
+            "resume-tailor",
+            {
+                "suggestions": [
+                    {
+                        "path": "summary",
+                        "before": "当前摘要",
+                        "after": "候选摘要",
+                        "reason": "突出岗位重点",
+                        "evidence_ids": ["career-profile"],
+                    }
+                ]
+            },
+        ),
     ],
 )
 def test_manual_result_validates_all_task_shapes(task_type: str, payload: dict) -> None:
     raw = f"```json\n{json.dumps(payload, ensure_ascii=False)}\n```"
-    assert validate_manual_result(task_type, raw) == payload
+    validated = validate_manual_result(task_type, raw)
+    if task_type == "resume-parse":
+        assert validated["resume"]["personal_info"]["name"] == "测试作者"
+        assert validated["resume"]["skills"] == ["Python"]
+        assert validated["resume"]["sections"]
+    else:
+        assert validated == payload
 
 
 @pytest.mark.parametrize(
@@ -152,6 +186,12 @@ def test_manual_result_validates_all_task_shapes(task_type: str, payload: dict) 
         ("profile", {"facts": []}, "必须是文本"),
         ("job-skills", {"skills": [{"name": ""}]}, "名称无效"),
         ("job-skills", {"skills": [{"name": "Python", "importance": "高"}]}, "重要度无效"),
+        ("resume-parse", {"resume": []}, "必须是对象"),
+        (
+            "resume-tailor",
+            {"suggestions": [{} for _ in range(41)]},
+            "最多 40 条",
+        ),
     ],
 )
 def test_manual_result_rejects_task_specific_invalid_values(
@@ -216,6 +256,36 @@ class FakeModelClient:
     def assistant_candidate(self, _material):
         return self._result({"assistant_summary": "先完成最小闭环"})
 
+    def resume_parse_candidate(self, _material):
+        return self._result(
+            {
+                "resume": {
+                    "personal_info": {"name": "测试作者"},
+                    "summary": "Agent 应用开发",
+                    "work_experience": [],
+                    "education": [],
+                    "projects": [],
+                    "skills": ["Python"],
+                    "sections": [],
+                }
+            }
+        )
+
+    def resume_tailor_candidate(self, _material):
+        return self._result(
+            {
+                "suggestions": [
+                    {
+                        "path": "summary",
+                        "before": "当前摘要",
+                        "after": "候选摘要",
+                        "reason": "突出岗位重点",
+                        "evidence_ids": ["career-profile"],
+                    }
+                ]
+            }
+        )
+
 
 def test_gateway_records_local_success_failure_and_facade_calls(tmp_path: Path) -> None:
     client = FakeModelClient()
@@ -232,6 +302,8 @@ def test_gateway_records_local_success_failure_and_facade_calls(tmp_path: Path) 
     assert gateway.assistant_candidate("assistant") == {
         "assistant_summary": "先完成最小闭环"
     }
+    assert gateway.resume_parse_candidate("resume")["resume"]["summary"]
+    assert gateway.resume_tailor_candidate("tailor")["suggestions"]
     assert any(row.task_type == "assistant" for row in gateway.usage.recent())
     assert all(row.estimated_cost == 0 for row in gateway.usage.recent())
 

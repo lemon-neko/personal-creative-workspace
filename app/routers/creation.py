@@ -26,6 +26,7 @@ from app.workspace import (
     set_item_status,
     update_item,
 )
+from app.wechat import list_cover_assets
 
 
 router = APIRouter()
@@ -132,6 +133,9 @@ def _publish_context(request: Request, item: ContentItem, *, candidate: PolishRe
         "wechat_theme": theme,
         "wechat_font_labels": FONT_LABELS,
         "wechat_font_sizes": FONT_SIZES,
+        "wechat_status": request.app.state.wechat.credential_status(),
+        "wechat_cover_assets": list_cover_assets(request.app.state.content_root),
+        "source_revision": semantic_revision(item),
     }
 
 

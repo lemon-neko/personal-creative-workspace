@@ -14,9 +14,9 @@
         <a class="back-link" href="{{ url_for('publish_index') }}">← 返回发布列表</a>
         <p class="eyebrow">WECHAT PUBLISHER</p>
         <h1>{{ source.title }}</h1>
-        <p>使用参考 doocs/md 的标准排版转换正文。预览、复制和下载共享同一份结果，标题与摘要请在公众号后台单独填写。</p>
+        <p>使用参考 doocs/md 的标准排版转换正文。复制发布时标题与摘要请在公众号后台单独填写；也可在二次确认后直接创建公众号草稿。</p>
     </div>
-    <span class="platform-badge">微信公众号 · 人工发布</span>
+    <span class="platform-badge">微信公众号 · 草稿箱直推</span>
 </header>
 
 {% if error %}<div class="message error">{{ error }}</div>{% endif %}
@@ -79,6 +79,44 @@
             <button id="download-html" class="publish-secondary-action full-button" type="button">下载同版 HTML</button>
             <p class="copy-scope-note">仅复制当前预览正文与固定署名，不包含标题和摘要。</p>
             <p id="publish-status" class="publish-status" aria-live="polite">尚未复制。</p>
+        </section>
+
+        <section class="publish-card wechat-push-card">
+            <div class="card-heading-row">
+                <p class="control-label">草稿箱直推</p>
+                <span class="check-state">{{ '凭证已配置' if wechat_status.configured else '尚未配置' }}</span>
+            </div>
+            {% if candidate %}
+            <p class="publish-hint">当前是未保存的润色候选。请先保存为独立文章版本，再从新文章推送。</p>
+            {% elif not wechat_status.configured %}
+            <p class="publish-hint">先在本机配置公众号凭证和 IP 白名单。凭证只进入 macOS 钥匙串。</p>
+            <a class="publish-secondary-action full-button button-link" href="{{ url_for('wechat_settings') }}">配置公众号连接</a>
+            {% else %}
+            <form id="wechat-push-form" action="{{ url_for('wechat_push_preflight', item_id=item.id) }}" method="post" enctype="multipart/form-data" class="wechat-push-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <input type="hidden" name="article_revision" value="{{ source_revision }}">
+                <input type="hidden" name="primary_color" value="{{ wechat_theme.primary_color }}">
+                <input type="hidden" name="font_size" value="{{ wechat_theme.font_size }}">
+                <input type="hidden" name="font_family" value="{{ wechat_theme.font_family }}">
+                <input type="hidden" name="indent" value="{{ 1 if wechat_theme.indent else 0 }}">
+                <input type="hidden" name="justify" value="{{ 1 if wechat_theme.justify else 0 }}">
+                <textarea name="final_html" hidden></textarea>
+                <input type="hidden" name="formula_count" value="0">
+                <input type="hidden" name="image_fallback_count" value="0">
+                <input type="hidden" name="formula_fallback_count" value="0">
+                <label class="field"><span>标题</span><input name="title" value="{{ item.title }}" maxlength="64" required></label>
+                <label class="field"><span>作者</span><input name="author" value="羽白" maxlength="16" required></label>
+                <label class="field"><span>摘要</span><textarea name="digest" rows="3" maxlength="120">{{ item.summary }}</textarea></label>
+                <label class="field"><span>原文链接（可选 HTTPS）</span><input name="source_url" type="url" inputmode="url" placeholder="https://…"></label>
+                <label class="field"><span>选择已有封面</span><select name="cover_asset">
+                    <option value="">请选择</option>
+                    {% for asset_name in wechat_cover_assets %}<option value="{{ asset_name }}">{{ asset_name }}</option>{% endfor %}
+                </select></label>
+                <label class="field"><span>或现场上传 PNG/JPEG</span><input name="cover_upload" type="file" accept="image/png,image/jpeg"></label>
+                <button id="wechat-preflight-button" class="publish-primary-action full-button" type="submit">检查并准备推送</button>
+                <p class="publish-hint">预检只在本机完成。下一页二次确认后才访问微信并创建草稿。</p>
+            </form>
+            {% endif %}
         </section>
 
         {% if candidate %}

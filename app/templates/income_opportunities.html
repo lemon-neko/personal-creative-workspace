@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}候选机会 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/income.css') }}?v=20260831-money-method">{% endblock %}
+{% block content %}
+<header class="income-header compact-header">
+  <div><a class="back-link" href="{{ url_for('income') }}">← 返回收入面板</a><p class="eyebrow">OPPORTUNITIES</p><h1>候选机会</h1><p>不收集“教你赚钱”的内容，只记录谁有真实需求、谁会付钱，以及如何小步验证。</p></div>
+  <a href="{{ url_for('income_profile') }}">{{ profile.tier }} · {{ money_tier_labels[profile.tier] }}</a>
+</header>
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<section class="opportunity-list" aria-label="候选机会列表">
+  {% for item in opportunities %}<a class="opportunity-row" href="{{ url_for('income_opportunity', opportunity_id=item.id) }}">
+    <div><small>{{ category_labels[item.category] }} · 适合 {{ item.for_tier }}</small><strong>{{ item.name }}</strong><p>{{ item.money_flow }}</p></div>
+    <div><b class="verdict-{{ item.verdict }}">{{ verdict_labels[item.verdict] }}</b><span>{{ opportunity_status_labels[item.status] }} →</span></div>
+  </a>{% else %}<div class="empty-income"><strong>还没有候选机会</strong><p>从一个真实需求信号开始。</p></div>{% endfor %}
+</section>
+
+<details class="money-create-panel" {{ 'open' if error else '' }}>
+  <summary>新增一个候选机会</summary>
+  <form class="money-sheet-form" action="{{ url_for('create_income_opportunity') }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <div class="form-pair">
+      <label><span>机会名称</span><input name="name" value="{{ form_data.name or '' }}" required></label>
+      <label><span>关联收入来源</span><select name="source_key">{% for source in sources %}<option value="{{ source.key }}" {{ 'selected' if form_data.source_key == source.key else '' }}>{{ source.display_name }}</option>{% endfor %}</select></label>
+      <label><span>类型</span><select name="category">{% for key,label in category_labels.items() %}<option value="{{ key }}" {{ 'selected' if form_data.category == key else '' }}>{{ label }}</option>{% endfor %}</select></label>
+      <label><span>适合层级</span><select name="for_tier">{% for key,label in money_tier_labels.items() %}<option value="{{ key }}" {{ 'selected' if (form_data.for_tier or profile.tier) == key else '' }}>{{ key }} · {{ label }}</option>{% endfor %}</select></label>
+    </div>
+    <label><span>谁会付钱</span><input name="target_customer" value="{{ form_data.target_customer or '' }}" required></label>
+    <label><span>资金为什么流向你</span><textarea name="money_flow" rows="3" required>{{ form_data.money_flow or '' }}</textarea></label>
+    <label><span>最初看到的需求信号</span><textarea name="signal_summary" rows="3">{{ form_data.signal_summary or '' }}</textarea></label>
+    <div class="sheet-actions"><button class="primary-button">保存候选，进入核验</button></div>
+  </form>
+</details>
+{% endblock %}

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}收入 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/income.css') }}?v=20260831-money-method">{% endblock %}
+{% block content %}
+<header class="income-header">
+  <div><p class="eyebrow">INCOME</p><h1>收入面板</h1><p>只看真实到账、待到账和四个固定收入来源。</p></div>
+  <div class="income-header-actions"><a href="{{ url_for('income_opportunities') }}">候选机会</a><a href="{{ url_for('income_profile') }}">赚钱画像</a><a class="primary-button" href="{{ url_for('income_entries') }}">记录收支</a></div>
+</header>
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<section class="income-kpis" aria-label="收入概览">
+  <article class="income-kpi primary"><span>实际到账</span><strong>{{ format_cny(metrics.earned_fen) }}</strong><small>确认收入扣除平台费用</small></article>
+  <article class="income-kpi"><span>本月到账</span><strong>{{ format_cny(metrics.month_earned_fen) }}</strong><small>按发生日期统计</small></article>
+  <article class="income-kpi"><span>待到账</span><strong>{{ format_cny(metrics.pending_fen) }}</strong><small>确认前不算已赚</small></article>
+  <article class="income-kpi"><span>净现金</span><strong>{{ format_cny(metrics.net_cash_fen) }}</strong><small>累计扣减 {{ format_cny(metrics.deductions_fen) }}</small></article>
+</section>
+
+<section class="money-method-strip" aria-label="赚钱验证状态">
+  <div class="money-method-profile"><span>当前画像</span><strong>{{ money_profile.tier }} · {{ money_tier_labels[money_profile.tier] }}</strong><small>{{ money_profile.goal }}</small></div>
+  {% if current_opportunity %}<div class="money-method-current">
+    <span>当前候选</span><a href="{{ url_for('income_opportunity', opportunity_id=current_opportunity.id) }}">{{ current_opportunity.name }}</a>
+    <small>{{ verdict_labels[current_opportunity.verdict] }} · {{ opportunity_status_labels[current_opportunity.status] }} · {{ opportunity_verification.reason }}</small>
+  </div>{% endif %}
+  <ol class="money-method-steps"><li>找需求证据</li><li>做反诈核验</li><li>小步试钱</li><li>对照复盘</li></ol>
+</section>
+
+<section class="money-engine-hero {{ 'cleared' if first_yuan_cleared else '' }}">
+  <div class="engine-copy">
+    <p class="eyebrow">MONEY ENGINE V1</p>
+    <h2>先让机器自己赚到第一笔 ¥1。</h2>
+    <p>GitHub 免费精简版 → 公众号介绍 → 面包多付款与自动交付 → 手工确认真实到账</p>
+    <div class="engine-meta">
+      <span>{{ product.name }}</span><b>{{ format_cny(product.price_fen) }}</b><span>{{ product_stage_labels[product.current_stage] }}</span>
+    </div>
+    <strong class="engine-next">下一步：{{ product.next_action }}</strong>
+  </div>
+  <div class="engine-pass">
+    <span>{{ '已通关' if first_yuan_cleared else '链路进行中' }}</span>
+    <strong>{{ '¥1 ✓' if first_yuan_cleared else '0 / 1' }}</strong>
+    <small>{{ '存在一笔满足全部验证条件的真实到账' if first_yuan_cleared else '陌生购买、自动交付、过退款期、净到账 ≥ ¥1' }}</small>
+    <a class="primary-button" href="{{ url_for('income_product', product_id=product.id) }}">打开单产品控制面</a>
+  </div>
+</section>
+
+<section class="engine-funnel income-panel">
+  <header><div><p class="eyebrow">FUNNEL</p><h2>当前交易链</h2></div><span>数据手工快照，不连接平台账号</span></header>
+  <div class="funnel-grid">
+    {% set metric = latest_metric %}
+    <div><span>公开展示</span><strong>{{ metric.impressions if metric else 0 }}</strong></div>
+    <div><span>商品点击</span><strong>{{ metric.store_clicks if metric else 0 }}</strong></div>
+    <div><span>付款订单</span><strong>{{ metric.paid_orders if metric else 0 }}</strong></div>
+    <div><span>自动交付</span><strong>{{ metric.delivered_orders if metric else 0 }}</strong></div>
+    <div><span>退款</span><strong>{{ metric.refunds if metric else 0 }}</strong></div>
+    <div><span>实际到账</span><strong>{{ format_cny(metrics.earned_fen) }}</strong></div>
+  </div>
+  <div class="role-strip">
+    {% for role in product_roles %}<span class="{{ role.status }}"><b>{{ role.display_name }}</b>{{ role_status_labels[role.status] }}</span>{% endfor %}
+  </div>
+</section>
+
+<div class="income-dashboard-grid">
+  <section class="income-panel income-trend-panel">
+    <header><div><p class="eyebrow">12 MONTHS</p><h2>收入趋势</h2></div></header>
+    <div class="income-trend" role="img" aria-label="最近十二个月净现金趋势">
+      {% for point in trend %}<div class="trend-column">
+        <div class="trend-track"><i class="{{ 'negative' if point.net_fen < 0 else '' }}" style="height: {{ point.height }}%"></i></div>
+        <strong>{{ format_cny(point.net_fen) }}</strong><span>{{ point.label }}</span>
+      </div>{% endfor %}
+    </div>
+  </section>
+  <section class="income-panel distribution-panel">
+    <header><div><p class="eyebrow">SOURCES</p><h2>到账分布</h2></div></header>
+    <div class="source-distribution">
+      {% for summary in source_summaries %}<div>
+        <span>{{ summary.source.display_name }}</span><strong>{{ format_cny(summary.earned_fen) }}</strong>
+        <i><em style="width: {{ ((summary.earned_fen / metrics.earned_fen * 100) if metrics.earned_fen else 0)|round }}%"></em></i>
+      </div>{% endfor %}
+    </div>
+  </section>
+</div>
+
+<section class="income-sources-section">
+  <div class="section-heading"><div><p class="eyebrow">FOUR ENGINES</p><h2>收入来源</h2></div><p>数字产品优先，其他方向只在准备好时推进。</p></div>
+  <div class="income-source-grid">
+    {% for summary in source_summaries %}{% set source = summary.source %}
+    <article class="income-source-card {{ 'featured' if loop.first else '' }}">
+      <header><div><span>{{ '%02d'|format(source.position) }}</span><h3>{{ source.display_name }}</h3></div><b class="source-status {{ source.status }}">{{ status_labels[source.status] }}</b></header>
+      <p>{{ source.description }}</p>
+      <div class="source-cash"><div><span>累计到账</span><strong>{{ format_cny(summary.earned_fen) }}</strong></div><div><span>待到账</span><strong>{{ format_cny(summary.pending_fen) }}</strong></div><div><span>订单</span><strong>{{ summary.order_count }}</strong></div></div>
+      <dl><div><dt>当前产品</dt><dd>{{ source.current_product or '尚未确定' }}</dd></div><div><dt>价格</dt><dd>{{ source.price_note or '尚未设置' }}</dd></div><div><dt>下一步</dt><dd>{{ source.next_action or ('确定一个最小数字产品' if loop.first else '暂不推进') }}</dd></div></dl>
+      {% if source.sales_url %}<a class="source-link" href="{{ source.sales_url }}" target="_blank" rel="noopener noreferrer">打开销售页 ↗</a>{% endif %}
+      <details class="source-editor"><summary>编辑来源</summary><form action="{{ url_for('update_income_source', source_key=source.key) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <label><span>状态</span><select name="status">{% for key, label in status_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == source.status else '' }}>{{ label }}</option>{% endfor %}</select></label>
+        <label><span>当前产品</span><input name="current_product" value="{{ source.current_product }}" maxlength="300"></label>
+        <label><span>价格说明</span><input name="price_note" value="{{ source.price_note }}" maxlength="120"></label>
+        <label><span>HTTPS 销售页</span><input name="sales_url" value="{{ source.sales_url }}" inputmode="url"></label>
+        <label><span>下一步</span><textarea name="next_action" rows="2">{{ source.next_action }}</textarea></label>
+        <button class="secondary-button">保存</button>
+      </form></details>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="income-panel recent-income">
+  <header><div><p class="eyebrow">RECENT</p><h2>最近收支</h2></div><a href="{{ url_for('income_entries') }}">查看全部 →</a></header>
+  {% if recent_entries %}<div class="income-entry-list">{% for entry in recent_entries %}<article>
+    <div><small>{{ entry.occurred_at }} · {{ cash_labels[entry.cash_status] }}</small><strong>{{ entry_labels[entry.entry_type] }} · {{ entry.note or '无备注' }}</strong></div>
+    <b class="{{ 'negative' if entry.entry_type != 'revenue' else '' }}">{{ format_cny(entry.net_fen) }}</b>
+  </article>{% endfor %}</div>{% else %}<div class="empty-income"><strong>还没有收支记录</strong><p>不补写假收入，从第一笔真实交易开始。</p></div>{% endif %}
+</section>
+{% endblock %}

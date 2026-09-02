@@ -19,7 +19,13 @@ from app.knowledge_store import (
     load_knowledge_store,
 )
 from app.main import REPO_ROOT, create_app
-from app.runtime import DESKTOP_LABEL, MAX_LOG_BYTES, build_launch_agent, restart_service
+from app.runtime import (
+    DESKTOP_LABEL,
+    MAX_LOG_BYTES,
+    build_launch_agent,
+    install_service,
+    restart_service,
+)
 from app.workspace import create_item, items_directory, set_item_status
 
 
@@ -59,12 +65,60 @@ def test_launch_agent_contains_only_non_secret_local_configuration(
         data_root=tmp_path / "private-data",
     )
     assert value["ProgramArguments"][-2:] == ["-m", "app"]
-    assert value["EnvironmentVariables"] == {
-        "WORKSPACE_DATA_DIR": str(tmp_path / "private-data")
-    }
+    environment = value["EnvironmentVariables"]
+    assert environment["WORKSPACE_DATA_DIR"] == str(tmp_path / "private-data")
+    assert environment["HOME"] == str(Path.home())
+    assert environment["USER"]
+    assert environment["LOGNAME"] == environment["USER"]
+    assert environment["TMPDIR"]
+    assert environment["PATH"].startswith("/usr/local/bin:/opt/homebrew/bin:")
     serialized = json.dumps(value).casefold()
     assert "api_key" not in serialized
     assert "llm_api_key" not in serialized
+
+
+def test_launch_agent_preserves_virtual_environment_python_symlink(
+    tmp_path: Path,
+) -> None:
+    base_python = tmp_path / "python3.11"
+    base_python.touch()
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(base_python)
+
+    value = build_launch_agent(
+        label=DESKTOP_LABEL,
+        module="app",
+        python=venv_python,
+        repository_root=tmp_path / "repository",
+        data_root=tmp_path / "private-data",
+    )
+
+    assert value["ProgramArguments"][0] == str(venv_python)
+
+
+def test_runtime_install_relies_on_run_at_load_without_blocking_kickstart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = tmp_path / "agents" / f"{DESKTOP_LABEL}.plist"
+    calls: list[tuple[tuple[str, ...], bool]] = []
+    monkeypatch.setattr("app.runtime.agent_path", lambda _label: agent)
+    monkeypatch.setattr(
+        "app.runtime._launchctl",
+        lambda *arguments, check=True: calls.append((arguments, check)),
+    )
+
+    install_service(
+        "desktop",
+        repository_root=tmp_path / "repository",
+        data_root=tmp_path / "private-data",
+        python=tmp_path / ".venv" / "bin" / "python",
+    )
+
+    assert calls == [
+        (("bootout", f"gui/{os.getuid()}", str(agent)), False),
+        (("bootstrap", f"gui/{os.getuid()}", str(agent)), True),
+    ]
 
 
 def test_runtime_restart_rotates_oversized_logs(
@@ -122,9 +176,11 @@ def client(tmp_path: Path) -> TestClient:
         ("/career/profile", "候选人档案"),
         ("/career/documents", "私有文档"),
         ("/career/projects", "项目证据库"),
-        ("/career/resumes", "简历版本"),
+        ("/career/resumes", "简历工作室"),
         ("/career/jobs", "职位跟踪"),
-        ("/learning", "岗位雷达与开源研读"),
+        ("/learning", "Agent 应用开发路线"),
+        ("/income", "收入面板"),
+        ("/income/entries", "收支记录"),
         ("/settings/backups", "私有备份"),
         ("/settings/runtime", "本机运行状态"),
         ("/trash", "回收站"),
@@ -146,6 +202,7 @@ def test_static_assets_are_local_and_available(client: TestClient) -> None:
         ("/static/styles/base.css", "--cyan"),
         ("/static/styles/knowledge-system.css", ".knowledge"),
         ("/static/styles/assistant.css", ".assistant"),
+        ("/static/styles/income.css", ".income-kpis"),
         ("/static/publishing.css", ".publish-layout"),
         ("/static/publishing.js", "ClipboardItem"),
         ("/static/knowledge.js", "forceSimulation"),

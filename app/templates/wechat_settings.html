@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}微信公众号 · 设置 · 羽白工作台{% endblock %}
+
+{% block content %}
+<header class="page-header compact-header">
+    <p class="eyebrow">WECHAT OFFICIAL ACCOUNT</p>
+    <h1>微信公众号草稿箱</h1>
+    <p>凭证只保存在 macOS 钥匙串；只有测试连接或最终确认推送时才访问微信。</p>
+</header>
+
+{% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+<div class="settings-grid">
+    <section class="paper-panel">
+        <p class="eyebrow">ACCOUNT</p>
+        <h2>羽白的幻想栈</h2>
+        <dl class="settings-list">
+            <div><dt>状态</dt><dd>{{ '凭证已配置' if wechat_status.configured else '尚未配置' }}</dd></div>
+            <div><dt>AppID</dt><dd><code>{{ wechat_status.masked_app_id or '未保存' }}</code></dd></div>
+            <div><dt>存储</dt><dd>{{ wechat_status.storage }}</dd></div>
+            <div><dt>草稿接口</dt><dd>{{ '已验证可用' if wechat_report and wechat_report.draft_api_available else '尚未验证' }}</dd></div>
+        </dl>
+        {% if wechat_report %}<p class="message success">{{ wechat_report.message }}</p>{% endif %}
+        {% if wechat_status.error %}<p class="message error">{{ wechat_status.error }}</p>{% endif %}
+        {% if wechat_status.configured %}
+        <div class="inline-actions">
+            <form action="{{ url_for('test_wechat_connection') }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <button class="primary-button" type="submit">测试凭证、白名单与草稿权限</button>
+            </form>
+            {% if wechat_status.storage == 'macOS 钥匙串' %}<form action="{{ url_for('delete_wechat_credentials') }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <button class="secondary-button" type="submit">删除本机凭证</button>
+            </form>{% endif %}
+        </div>
+        {% endif %}
+    </section>
+
+    <section class="paper-panel">
+        <p class="eyebrow">KEYCHAIN</p>
+        <h2>{{ '更新凭证' if wechat_status.configured else '保存凭证' }}</h2>
+        <form action="{{ url_for('save_wechat_credentials') }}" method="post" class="stack-form" autocomplete="off">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <label class="field"><span>AppID</span><input name="app_id" required placeholder="wx…" autocomplete="off"></label>
+            <label class="field"><span>AppSecret</span><input name="app_secret" type="password" required autocomplete="new-password"></label>
+            <button class="primary-button" type="submit">写入 macOS 钥匙串</button>
+        </form>
+        <p class="settings-note">AppSecret 不会出现在页面、SQLite、日志、备份或 Git 中。也可在启动前设置后端环境变量，但钥匙串是本机长期运行的推荐方式。请不要把真实凭证粘贴到聊天或 Issue。</p>
+    </section>
+
+    <section class="paper-panel safety-panel">
+        <p class="eyebrow">BOUNDARY</p>
+        <h2>推送边界</h2>
+        <p>只创建公众号草稿，不自动发表、群发、更新或删除。连接测试会通过只读草稿数量接口验证权限；每次推送前都会展示最终正文、封面和图片数量，并要求二次确认。</p>
+        <a class="secondary-button inline-button" href="{{ url_for('publish_index') }}">进入公众号发布台</a>
+    </section>
+</div>
+{% endblock %}

@@ -100,7 +100,7 @@ def test_career_repository_builds_evidence_to_learning_chain(tmp_path: Path) -> 
         tmp_path / "documents" / document.stored_name
     ).stat().st_mode & 0o777 == 0o600
     with repository.connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_campaign_seed_links_existing_tasks_and_unlocks_with_evidence(
@@ -184,6 +184,17 @@ def test_career_radar_seeds_static_baseline_and_preserves_private_evidence(
         3,
         4,
     ]
+    assert all(reference.archived_at for reference in references)
+    paths = repository.learning_paths()
+    assert len(paths) == 1
+    assert paths[0].title == "Agent 应用开发路线"
+    stages = repository.learning_stages(paths[0].id)
+    assert [stage.title for stage in stages] == [
+        "手写最小 Agent",
+        "拆 OpenHands",
+        "学 LangGraph",
+        "看框架与产品化",
+    ]
     assert repository.campaign(old_campaign.id).status == "archived"
     assert next(task for task in repository.learning_tasks() if task.id == old_task.id).status == "paused"
     assert repository.profile().target_roles == "Agent 应用开发"
@@ -204,6 +215,18 @@ def test_career_radar_seeds_static_baseline_and_preserves_private_evidence(
     assert saved is not None
     assert saved.status == "building"
     assert saved.commit_sha == "abc123"
+    repository.update_learning_stage(
+        "agent-path-minimal-agent",
+        status="reading",
+        commit_sha="route123",
+        test_result="3 passed",
+        reflection="理解最小循环。",
+    )
+    repository.seed_career_radar()
+    stage = repository.learning_stage("agent-path-minimal-agent")
+    assert stage is not None
+    assert stage.status == "reading"
+    assert stage.commit_sha == "route123"
 
 
 def test_learning_radar_page_and_reference_progress(tmp_path: Path) -> None:
@@ -212,27 +235,78 @@ def test_learning_radar_page_and_reference_progress(tmp_path: Path) -> None:
 
     page = client.get("/learning")
     assert page.status_code == 200
-    assert "目标岗位雷达" in page.text
-    assert "Open Deep Research" in page.text
-    assert "静态快照 · 不自动抓取" in page.text
-    assert "B4F6AAF8C5C1FEB7D6C131231EBAB46F" in page.text
+    assert "Agent 应用开发路线" in page.text
+    assert "工程底座" in page.text
+    assert "最小 Agent" in page.text
+    assert "可靠 Runtime" in page.text
+    assert "状态化编排" in page.text
+    assert "产品化交付" in page.text
+    assert "Model" in page.text
+    assert "Recovery" in page.text
+    assert "阶段进度与证据" not in page.text
+    assert "Commit SHA" not in page.text
+    assert "私人复盘" not in page.text
 
-    saved = client.post(
-        "/learning/references/open-deep-research",
+    evidence = client.post(
+        "/learning/stages/agent-path-minimal-agent",
         data={
             "status": "reading",
             "commit_sha": "deadbee",
             "test_result": "pytest: green",
-            "reflection": "先读状态图。",
+            "reflection": "先写清停止边界。",
         },
         follow_redirects=True,
     )
+    assert evidence.status_code == 200
+
+    saved = client.post(
+        "/learning/stages/agent-path-minimal-agent/status",
+        data={"status": "building"},
+        follow_redirects=True,
+    )
     assert saved.status_code == 200
-    assert "研读进度与验收证据已保存" in saved.text
-    reference = repository.learning_reference("open-deep-research")
-    assert reference is not None
-    assert reference.status == "reading"
-    assert reference.commit_sha == "deadbee"
+    assert "阶段状态已更新" in saved.text
+    stage = repository.learning_stage("agent-path-minimal-agent")
+    assert stage is not None
+    assert stage.status == "building"
+    assert stage.commit_sha == "deadbee"
+    assert stage.test_result == "pytest: green"
+    assert stage.reflection == "先写清停止边界。"
+
+    history = client.get("/learning/history")
+    assert history.status_code == 200
+    assert "学习历史" in history.text
+    assert "deadbee" in history.text
+    assert "pytest: green" in history.text
+
+    maintenance = client.get("/learning/maintenance")
+    assert maintenance.status_code == 200
+    assert "技能与额外任务" in maintenance.text
+
+    # The legacy route remains writable from its historical interface.
+    old = client.post(
+        "/learning/references/open-deep-research",
+        data={"status": "reading", "commit_sha": "legacy123"},
+        follow_redirects=True,
+    )
+    assert old.status_code == 200
+    assert repository.learning_reference("open-deep-research").commit_sha == "legacy123"
+
+    repository.update_learning_stage_status(
+        "agent-path-minimal-agent", status="verified"
+    )
+    next_stage = client.get("/learning")
+    assert "02 · 可靠 Runtime" in next_stage.text
+
+    for stage_id in (
+        "agent-path-openhands",
+        "agent-path-langgraph",
+        "agent-path-productization",
+    ):
+        repository.update_learning_stage_status(stage_id, status="verified")
+    complete = client.get("/learning")
+    assert "路线已完成" in complete.text
+    assert "/ 4 已验收" in complete.text
 
 
 def test_campaign_page_start_evidence_and_clear_forms(tmp_path: Path) -> None:

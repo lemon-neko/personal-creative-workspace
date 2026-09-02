@@ -231,6 +231,9 @@ def _workspace_context(
     video_projects = request.app.state.video.projects()
     jobs = career.jobs()
     learning_tasks = career.learning_tasks()
+    income_metrics = request.app.state.income.metrics()
+    income_sources = request.app.state.income.source_summaries()
+    income_product = request.app.state.income.active_product()
     return {
         "active_page": "workspace",
         "today_items": today_items,
@@ -261,6 +264,12 @@ def _workspace_context(
         "learning_tasks": tuple(
             task for task in learning_tasks if task.status in {"backlog", "active"}
         )[:4],
+        "income_metrics": income_metrics,
+        "primary_income_source": income_sources[0] if income_sources else None,
+        "income_product": income_product,
+        "first_yuan_cleared": request.app.state.income.first_yuan_cleared(
+            income_product.id
+        ),
         "diagnostics": collection.diagnostics,
         "notice": notices.get(saved or ""),
         "error": error,

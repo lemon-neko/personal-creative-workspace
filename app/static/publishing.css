@@ -353,6 +353,27 @@
 }
 .wechat-canvas.is-editor .publish-preview { padding-inline: 42px; }
 
+.wechat-push-card { border-color: rgba(37, 143, 155, 0.3); }
+.wechat-push-form { display: grid; gap: 12px; }
+.wechat-push-form .field { display: grid; gap: 6px; }
+.wechat-push-form .field > span { color: #687476; font-size: 10px; }
+.wechat-push-form input,
+.wechat-push-form textarea,
+.wechat-push-form select {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #d9dfdd;
+  border-radius: 5px;
+  background: #fff;
+  color: #273335;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 9px 10px;
+}
+.wechat-push-form input[type="file"] { padding: 7px; font-size: 10px; }
+.button-link { box-sizing: border-box; display: block; text-align: center; text-decoration: none; }
+
 @media (max-width: 980px) {
   .publish-layout { grid-template-columns: 1fr; }
   .publish-controls {
@@ -361,6 +382,7 @@
     grid-template-columns: 1fr 1fr;
   }
   .action-card,
+  .wechat-push-card,
   .save-candidate,
   .publish-disclosure { grid-column: 1 / -1; }
 }
@@ -371,13 +393,15 @@
   .publish-layout { grid-template-columns: 1fr; }
   .publish-controls { display: contents; }
   .action-card { grid-row: 1; }
-  .publish-stage { grid-row: 2; }
-  .source-card-panel { grid-row: 3; }
-  .theme-card { grid-row: 4; }
-  .diagnostics-card { grid-row: 5; }
-  .save-candidate { grid-row: 6; }
-  .publish-disclosure { grid-row: 7; }
+  .wechat-push-card { grid-row: 2; }
+  .publish-stage { grid-row: 3; }
+  .source-card-panel { grid-row: 4; }
+  .theme-card { grid-row: 5; }
+  .diagnostics-card { grid-row: 6; }
+  .save-candidate { grid-row: 7; }
+  .publish-disclosure { grid-row: 8; }
   .action-card,
+  .wechat-push-card,
   .save-candidate,
   .publish-disclosure { grid-column: auto; }
   .preview-toolbar { align-items: flex-start; flex-direction: column; gap: 8px; }

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}确认主简历候选 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/resume-studio.css') }}?v=20260827-3">{% endblock %}
+{% block content %}
+<header class="page-header"><a class="back-link" href="{{ url_for('career_resumes') }}">← 放弃候选</a><h1>确认主简历候选</h1><p>这是本地规则整理结果。只有确认后才会创建主简历，原文件和事实库不会被修改。</p></header>
+{% if error %}<div class="message error">{{ error }}</div>{% endif %}
+{% if import_diagnostics %}<div class="resume-import-diagnostics"><strong>本地解析检查</strong><ul>{% for diagnostic in import_diagnostics %}<li>{{ diagnostic }}</li>{% endfor %}</ul></div>{% endif %}
+<form action="{{ url_for('resume_import_confirm') }}" method="post" class="resume-editor-layout">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  <input type="hidden" name="document_id" value="{{ document_id }}">
+  <input type="hidden" name="include_photo" value="{{ '1' if photo_url else '0' }}">
+  <section class="resume-form-panel">
+    {% if photo_url %}<div class="resume-photo-confirm"><img src="{{ photo_url }}" alt="从 DOCX 识别的证件照"><div><strong>已识别证件照</strong><p>确认后保存到仓库外私有目录，ATS 导出不会包含照片。</p></div></div>{% endif %}
+    <div class="resume-version-fields field-grid"><label class="field"><span>版本名称</span><input name="title" value="{{ resume_title }}" required></label><label class="field"><span>目标方向</span><input name="target_role" value="{{ target_role }}"></label></div>
+    {% include '_resume_fields.html' %}
+    <div class="resume-savebar"><div><strong>建立主简历</strong><span>确认后设为唯一主简历。</span></div><button class="primary-button" type="submit">确认创建</button></div>
+  </section>
+  <aside class="resume-preview-panel">
+    <header class="resume-preview-toolbar"><div><strong>导入预览</strong><span>国内照片版</span></div><span data-resume-preview-scale>适应宽度</span></header>
+    <div class="resume-preview-stage"><div class="resume-preview-frame" data-resume-preview-frame><div class="resume-preview-sheet" data-resume-preview-sheet>{% set show_photo = true %}{% include '_resume_preview.html' %}</div></div></div>
+    <p class="resume-preview-note">预览按 A4 等比缩放。确认前请检查文字和照片是否正确。</p>
+  </aside>
+</form>
+{% endblock %}
+{% block extra_scripts %}<script defer src="{{ url_for('static', path='/resume-studio.js') }}?v=20260827-3"></script>{% endblock %}
