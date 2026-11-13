@@ -49,7 +49,8 @@ def _png() -> bytes:
     return b"\x89PNG\r\n\x1a\n" + b"safe-image"
 
 
-def test_keychain_store_never_places_secret_in_command_arguments() -> None:
+def test_keychain_store_never_places_secret_in_command_arguments(monkeypatch) -> None:
+    monkeypatch.setattr(MacOSKeychainCredentialStore, "_security", staticmethod(lambda: "/fixture/security"))
     calls: list[tuple[list[str], str | None]] = []
 
     def runner(arguments, **kwargs):
