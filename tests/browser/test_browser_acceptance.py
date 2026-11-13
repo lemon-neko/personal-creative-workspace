@@ -642,7 +642,8 @@ def test_career_autosave_queue_failure_retry_and_creation_replay(browser_workspa
         assert repository.job(job.id).notes == "断线时仍保留的输入"
         # Navigating through the filter flushes the active text field first.
         row.get_by_label("备注", exact=True).fill("筛选前的最后改动")
-        page.get_by_role("button", name="筛选", exact=True).click()
+        with page.expect_navigation(wait_until="load"):
+            page.get_by_role("button", name="筛选", exact=True).click()
         expect(page).to_have_url(re.compile(r"#applications$"))
         assert repository.job(job.id).notes == "筛选前的最后改动"
         # The server creates the row but the first response is lost: retry must not duplicate.
