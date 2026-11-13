@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
-import app.career as career_module
+from app.career.infrastructure.sqlite import migrations as career_migrations
 from app.career import JOB_STATUS_LABELS, SCHEMA_VERSION, CareerRepository
 from app.main import create_app
 from app.resume_studio import normalize_structured_resume
@@ -169,13 +169,13 @@ def test_blank_jd_manual_tailoring_and_model_boundaries(tmp_path):
 
 
 def test_v7_migration_preserves_records_and_rolls_back_failed_v8(tmp_path, monkeypatch):
-    migrate = career_module.apply_migrations
+    migrate = career_migrations.apply_migrations
 
     def only_v7(*args, **kwargs):
         kwargs["migrations"] = {key: sql for key, sql in kwargs["migrations"].items() if key <= 7}
         return migrate(*args, **kwargs)
 
-    monkeypatch.setattr(career_module, "apply_migrations", only_v7)
+    monkeypatch.setattr(career_migrations, "apply_migrations", only_v7)
     repository = CareerRepository(tmp_path)
     job = repository.add_job(company="历史公司", title="历史岗位", status="interviewing")
 
@@ -183,14 +183,14 @@ def test_v7_migration_preserves_records_and_rolls_back_failed_v8(tmp_path, monke
         kwargs["migrations"][8] += "\nINSERT INTO nonexistent_table VALUES(1);"
         return migrate(*args, **kwargs)
 
-    monkeypatch.setattr(career_module, "apply_migrations", fail_v8)
+    monkeypatch.setattr(career_migrations, "apply_migrations", fail_v8)
     with pytest.raises(sqlite3.OperationalError):
         CareerRepository(tmp_path)
     with repository.connect() as connection:
         assert connection.execute("SELECT version FROM schema_migrations WHERE subsystem='career'").fetchone()[0] == 7
         assert connection.execute("SELECT name FROM sqlite_master WHERE name='job_resume_submissions'").fetchone() is None
         assert connection.execute("SELECT status FROM jobs WHERE id=?", (job.id,)).fetchone()[0] == "interviewing"
-    monkeypatch.setattr(career_module, "apply_migrations", migrate)
+    monkeypatch.setattr(career_migrations, "apply_migrations", migrate)
     migrated = CareerRepository(tmp_path)
     assert migrated.job(job.id) == job and migrated.job_submissions() == ()
     with migrated.connect() as connection:

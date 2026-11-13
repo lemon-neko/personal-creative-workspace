@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,20 +45,24 @@ def test_lifespan_starts_and_drains_resources_in_order(application, monkeypatch)
             events.append("scheduler stop")
 
     @asynccontextmanager
-    async def plugins(root, workflow):
-        assert root == state.container.plugin_directory
-        assert workflow is state.workflow
+    async def plugins(*, enabled):
+        assert enabled
         await asyncio.sleep(0)
         events.append("plugins start")
         try:
-            yield True
+            yield SimpleNamespace(daily_ready=True)
         finally:
             assert state.daily_verified is False
             assert scheduler_tasks[0].cancelled()
             events.append("plugins stop")
 
     monkeypatch.setattr(lifespan, "run_summary_scheduler", scheduler)
-    monkeypatch.setattr(lifespan, "start_plugins", plugins)
+    def manager(root, workflow):
+        assert root == state.container.plugin_directory
+        assert workflow is state.workflow
+        return SimpleNamespace(running=plugins)
+
+    monkeypatch.setattr(lifespan, "PluginRuntimeManager", manager)
     with TestClient(application):
         assert state.daily_verified is True
         assert events == ["recover", "search", "scheduler start", "plugins start"]
@@ -92,7 +97,7 @@ def test_agent_recovery_failure_still_aborts_startup(application, monkeypatch):
 
     monkeypatch.setattr(application.state.agent_core, "recover_interrupted_runs", fail)
     monkeypatch.setattr(lifespan, "refresh_search_index", unexpected)
-    monkeypatch.setattr(lifespan, "start_plugins", unexpected)
+    monkeypatch.setattr(lifespan, "PluginRuntimeManager", unexpected)
     monkeypatch.setattr(lifespan, "run_summary_scheduler", unexpected)
     with pytest.raises(RuntimeError, match="synthetic recovery failure"):
         with TestClient(application):
@@ -120,14 +125,14 @@ def test_partial_plugin_startup_failure_releases_plugins_and_awaits_scheduler(ap
             released.append("plugin")
 
     @asynccontextmanager
-    async def plugins(*_args):
+    async def plugins(*, enabled):
         async with first_plugin():
             await asyncio.sleep(0)
             raise OSError("synthetic plugin startup failure")
         yield False
 
     monkeypatch.setattr(lifespan, "run_summary_scheduler", scheduler)
-    monkeypatch.setattr(lifespan, "start_plugins", plugins)
+    monkeypatch.setattr(lifespan, "PluginRuntimeManager", lambda *_: SimpleNamespace(running=plugins))
     with pytest.raises(OSError, match="synthetic plugin startup failure"):
         with TestClient(application):
             pytest.fail("startup failure was swallowed")

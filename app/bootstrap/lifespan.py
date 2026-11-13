@@ -10,7 +10,7 @@ from app.bootstrap.container import AppContainer
 from app.content import load_items
 from app.knowledge_store import load_knowledge_store
 from app.library import load_materials
-from app.plugin_runtime import start_plugins
+from app.plugin_runtime import PluginRuntimeManager
 from app.workspace import items_directory, run_summary_scheduler
 
 
@@ -51,13 +51,13 @@ async def workspace_lifespan(application: FastAPI, *, enable_scheduler: bool):
                 scheduler = asyncio.create_task(
                     run_summary_scheduler(container.content_root, summarizer=None),
                 )
-            root = container.plugin_directory if container.plugins_enabled else None
-            state.daily_verified = await resources.enter_async_context(
-                start_plugins(root, container.workflow),
+            manager = PluginRuntimeManager(container.plugin_directory, container.workflow)
+            state.plugin_runtime = await resources.enter_async_context(
+                manager.running(enabled=container.plugins_enabled),
             )
             yield
         finally:
-            state.daily_verified = False
+            state.plugin_runtime = None
             if scheduler is not None:
                 scheduler.cancel()
                 with suppress(asyncio.CancelledError):

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.agent_core import AgentCoreRepository
+from app.agent_runtime.infrastructure.adapters.model_adapter import ModelAdapter
+from app.agent_runtime.infrastructure.adapters.search_adapter import SearchAdapter
 from app.assistant import AssistantRepository
 from app.bootstrap.config import WorkspaceAppConfig
 from app.career import CareerRepository
@@ -14,7 +16,7 @@ from app.llm import OpenAICompatibleClient, StyleClient
 from app.mobile import MobileStore
 from app.model_gateway import ModelGateway, ModelTaskStore
 from app.obsidian import ObsidianBridge
-from app.plugins import plugin_root
+from app.plugin_paths import plugin_root
 from app.privacy import prepare_private_root
 from app.search import SearchRepository
 from app.video import VideoProjectRepository
@@ -62,7 +64,7 @@ def build_container(
     focus = FocusRepository(root)
     video = VideoProjectRepository(root, config.content_root)
     search = SearchRepository(root)
-    agent_core = AgentCoreRepository(root)
+    agent_core = AgentCoreRepository(root, search=SearchAdapter(search), model=ModelAdapter(gateway))
     assistant = AssistantRepository(root)
     income = IncomeRepository(root)
     wechat = WechatPublisher(root, config.content_root)

@@ -1,24 +1,25 @@
 # 模块清单
 
-覆盖基线的全部 70 个 Python 模块，包含包入口与函数内导入。依赖列为 AST 直接导入，省略共同的 `app.` 前缀。依赖于 FastAPI state 注入、子进程、HTTP、SQL 和浏览器消息的关系见[依赖图](dependency-map.md)。数据栏中「调用」表示经所有者接口触发，表归属见[数据所有权](data-ownership.md)。变更诱因列描述主要变化原因，未用 Git 次数估计变更频率。P0/P1/P2 定义见[审计报告](audit-report.md)。
+以 Task 01 的模块清单为基线，补充已拆分的领域和插件运行时。依赖列为 AST 直接导入，省略共同的 `app.` 前缀。依赖于 FastAPI state 注入、子进程、HTTP、SQL 和浏览器消息的关系见[依赖图](dependency-map.md)。数据栏中「调用」表示经所有者接口触发，表归属见[数据所有权](data-ownership.md)。变更诱因列描述主要变化原因，未用 Git 次数估计变更频率。P0/P1/P2 定义见[审计报告](audit-report.md)。
 
 | Module | Responsibility | Dependencies | Data Ownership | External Integration | Change Frequency（主要诱因） | Coupling | Refactor Priority |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [`app`](../../app/__init__.py) | Python 包标记 | — | — | — | 包入口调整 | 无业务依赖 | P2 |
 | [`app.__main__`](../../app/__main__.py) | 桌面 CLI 调用 Uvicorn | — | — | Uvicorn | 启动参数 | 字符串指定 ASGI | P1 |
-| [`app.agent_core`](../../app/agent_core.py) | 旧任务、依赖、运行、验收和产物登记 | `atomic`, `database`, `focus`, `search`, `workspace` | 旧 Agent 表与工作纸 | — | 状态转换、交接与审核 | 直接读 Focus 表并同事务写活动 | P1 |
+| [`app.agent_core`](../../app/agent_core.py) | 旧任务运行时兼容入口 | `agent_runtime`, `database` | 保留旧连接接口 | — | 转发至领域服务 | AppContainer 装配依赖 | — |
+| [`app.agent_runtime`](agent-runtime.md) | 项目、任务、运行、产物与执行策略 | SQLite、Focus、Search、ModelGateway 经端口和适配器 | 旧 Agent 表与私有工作纸 | Gateway 经适配器 | 状态转换、交接、人工验收 | 与 Focus 共用交接事务 | — |
 | [`app.asgi`](../../app/asgi.py) | 桌面生产 ASGI 装配 | `main` | 运行目录初始化 | Uvicorn | 装配入口调整 | 导入即调用工厂，有预期副作用 | P0 |
 | [`app.assistant`](../../app/assistant.py) | 白名单上下文、模型结果验证、对话摘要和决策 | `career`, `content`, `database`, `focus`, `knowledge_quality`, `knowledge_store`, `workspace` | 助手表 | — | 上下文、建议和隐私规则 | 读取 Career、Focus、Vault；Gateway 反向引用验证 | P1 |
 | [`app.atomic`](../../app/atomic.py) | 文件锁和原子替换 | — | 锁文件 | 文件系统、fcntl | 并发与持久性 | Unix 实现，多域共用 | P2 |
 | [`app.backup`](../../app/backup.py) | AES 归档、清单核验和分步恢复 | — | 备份包与回滚目录 | pyzipper、SQLite backup | 备份范围与恢复 | 恢复跨文件，缺少应用级停写屏障 | P1 |
-| [`app.career`](../../app/career.py) | 档案、文档、证据、简历、投递、学习事务 | `career_radar`, `database`, `resume_assets`, `resume_studio` | Career 子系统和私有文档 | SQLite、文件系统 | 招聘流程、文档、课程、简历结构 | 共享 Repository、SQL 与快照外键 | P1 |
+| [`app.career`](career-domain.md) | 档案、文档、证据、简历、投递、学习事务 | `career_radar`, `database`, `resume_assets`, `resume_studio` | Career 子系统和私有文档 | SQLite、文件系统 | 招聘流程、文档、课程、简历结构 | 共享 Repository、SQL 与快照外键 | P1 |
 | [`app.career_radar`](../../app/career_radar.py) | 通用课程、能力与参考项目种子 | — | 源码中的课程初值 | 开源仓库链接 | 课程与能力更新 | 由 Career seed 调用 | P2 |
 | [`app.content`](../../app/content.py) | 解析、加载、渲染 Markdown 和改写链接 | `knowledge_store` | ContentItem 解析表示 | Markdown-it、PyYAML | 内容语法、链接兼容 | 函数内反向导入 KnowledgeStore | P1 |
 | [`app.database`](../../app/database.py) | SQLite 连接、版本注册、快照和事务迁移 | — | 两份迁移注册表、升级前快照 | SQLite WAL/backup | 迁移与权限 | Repository 构造时隐式触发迁移 | P0 |
 | [`app.deepseek_harness`](../../app/deepseek_harness.py) | stdio SDK、单次模型代理和遥测 | `llm` | 进程内会话与遥测 | dsh、DeepSeek、HTTPX | SDK 协议、凭据、退出 | 与具体 LLM 客户端耦合，Worker 识别具体类型 | P1 |
 | [`app.focus`](../../app/focus.py) | 阶段、目标、行动、旧待办与排期 | `database`, `workspace` | Focus 子系统 | SQLite | 状态、排期和可见性 | 活动 SQL 被旧 Agent 事务复用 | P1 |
 | [`app.income`](../../app/income.py) | 账本、首品验证、机会验证与复盘 | `database` | Income 与历史赏金迁移 | SQLite | 指标、证据、归档和复盘 | 共享 Repository 同时承载金额规则和流程门控 | P1 |
-| [`app.install_plugins`](../../app/install_plugins.py) | 校验、复制安装包、配置引擎及启停标记 | `atomic`, `plugins`, `privacy`, `workflow_hub` | 安装包、校验清单、配置、服务端凭据 | Git、tar、Node CLI | 固定版本和安装方式 | 运行监督器复用安装器校验，安装器依赖注册模块 | P0 |
+| [`app.install_plugins`](../../app/install_plugins.py) | 安装、刷新 Web 和启用标记 | `plugin_packages`, `plugin_paths`, `workflow_hub` | 安装包、清单、配置、凭据 | Git、tar、Node CLI | 固定版本和安装方式 | 更新使用临时目录与回退 | — |
 | [`app.knowledge`](../../app/knowledge.py) | 来源筛选、检索上下文与知识关系视图 | `content`, `workspace` | 派生图和材料选择 | — | 关系与上下文选择 | 直接依赖 Vault 内容生命周期 | P1 |
 | [`app.knowledge_quality`](../../app/knowledge_quality.py) | 内容质量、链接与缺失项检查 | `content`, `knowledge_store`, `obsidian` | 派生诊断 | — | 诊断规则 | 引入 Obsidian 实现 | P2 |
 | [`app.knowledge_store`](../../app/knowledge_store.py) | 知识卡/地图解析、版本、写入和复核 | `atomic`, `content`, `workspace` | 知识 Markdown | 文件系统、PyYAML | 分类、引用和 Revision | 与通用内容/Workspace 循环 | P1 |
@@ -35,10 +36,10 @@
 | [`app.model_gateway`](../../app/model_gateway.py) | 提供方策略、模型用量、人工桥接与调用 | `assistant`, `database`, `deepseek_harness`, `llm`, `resume_studio`, `workspace` | 模型 SQLite、手工任务文件 | 模型 HTTP、Harness | 任务策略、成本、解析器 | 引用助手与简历校验；具体 Provider 识别 | P1 |
 | [`app.obsidian`](../../app/obsidian.py) | Vault 扫描、链接、导入、迁移与回滚 | `atomic`, `content`, `database`, `knowledge_store`, `workspace` | Vault 集成状态及派生链接 | 本机 Obsidian、文件系统 | 同步、Revision、权限 | 直接组合多个知识/内容实现 | P1 |
 | [`app.planner`](../../app/planner.py) | 旧排期视图辅助和日期计算 | `focus`, `workspace` | 派生月历和时间段 | — | 展示和排期规则 | 读取 Focus DTO | P2 |
-| [`app.plugin_runtime`](../../app/plugin_runtime.py) | 校验并拉起 Web/Hub、管理 Worker 生命周期 | `install_plugins`, `plugins`, `workflow`, `workflow_hub`, `workflow_worker` | 进程锁与运行状态 | Node、HTTPX、子进程 | 健康检查、启动与恢复 | 固定重启、丢弃输出、生命周期嵌套 | P0 |
-| [`app.plugin_web`](../../app/plugin_web.py) | 独立源只读静态 Web 服务及 CSP | `plugins`, `privacy` | — | Uvicorn、静态文件 | Web 包安全和端口 | 从 Feature Registry 取常量 | P1 |
-| [`app.plugins`](../../app/plugins.py) | 内置 Feature 清单、路由、导航、源和目录约定 | `routers.agent_core`, `routers.assistant`, `routers.career_learning`, `routers.creation`, `routers.daily`, `routers.focus`, `routers.income`, `routers.knowledge_models`, `routers.resumes`, `routers.system`, `routers.wechat`, `routers.workflow`, `routers.workspace_content` | FastAPI 注册元数据 | FastAPI | 导航、功能注册、插件版本 | 内核常量和 Router 装配互相引用 | P0 |
-| [`app.privacy`](../../app/privacy.py) | 本机访问、CSRF、安全头和数据目录 | `plugins` | CSRF Cookie、目录约束 | FastAPI/Starlette | 隐私与访问政策 | CSP 延迟读取 Feature Registry 常量 | P0 |
+| [`app.plugin_runtime`](../../app/plugin_runtime.py) | 插件独占锁与生命周期 | `daily_plugin`, `autoloop_plugin`, `process_supervisor` | 进程锁与运行状态 | 本机文件锁 | 启停、诊断与清理 | [监督和适配器](plugin-runtime.md) | — |
+| [`app.plugin_web`](../../app/plugin_web.py) | 独立源只读静态 Web 服务及 CSP | `daily_plugin`, `plugin_paths`, `privacy` | — | Uvicorn、静态文件 | Web 包安全和端口 | 响应 CSP 与签名挑战 | P1 |
+| [`app.plugins`](../../app/plugins.py) | 内置 PluginSpec、导航与依赖验证 | `plugin_paths` | 静态元数据 | — | 插件查询和验证 | Router 由 Bootstrap 装配 | — |
+| [`app.privacy`](../../app/privacy.py) | 本机访问、CSRF、安全头和数据目录 | `plugin_paths` | CSRF Cookie、目录约束 | FastAPI/Starlette | 隐私与访问政策 | CSP 按请求的 Web 探针结果开放 iframe 源 | — |
 | [`app.publishing`](../../app/publishing.py) | 公众号排版生成、私有发布包及复制 | `content`, `publishing_preprocess`, `publishing_theme`, `workspace` | 导出 HTML 与私有文件 | Markdown 渲染 | 平台格式和内容政策 | 复用 Content/Workspace | P2 |
 | [`app.publishing_preprocess`](../../app/publishing_preprocess.py) | 清理 Markdown 链接与图片、规划版面 | — | 派生文稿及诊断 | — | 排版和清理规则 | 纯转换可独立测试 | P2 |
 | [`app.publishing_theme`](../../app/publishing_theme.py) | 公众号主题、Markdown 转版式 | `publishing_preprocess` | 派生 HTML | Markdown 渲染 | 样式与兼容 | 复用发布预处理 | P2 |
@@ -49,11 +50,11 @@
 | [`app.resume_pdf`](../../app/resume_pdf.py) | Chromium 打印受控简历 HTML | — | 派生 PDF | Playwright Chromium | 模板输出和浏览器兼容 | 导出适配边界已较清晰 | P2 |
 | [`app.resume_studio`](../../app/resume_studio.py) | 结构化简历、校验、本地匹配与候选合并 | — | 简历 DTO 与派生建议 | — | 简历规则和候选字段 | 被持久层、模型网关和 HTTP 共用 | P1 |
 | [`app.routers`](../../app/routers/__init__.py) | HTTP 包标记 | — | — | — | 路由组织 | 无业务依赖 | P2 |
-| [`app.routers.agent_core`](../../app/routers/agent_core.py) | 旧任务/运行/产物和模型授权 HTTP | `agent_core`, `model_gateway`, `web` | 调用旧 Agent 写入 | FastAPI | 旧 Agent 操作 | 直接调用 Repository 与 Gateway | P1 |
+| [`app.routers.agent_core`](../../app/routers/agent_core.py) | 旧任务/运行/产物和模型授权 HTTP | `agent_core`, `agent_runtime`, `web` | 调用运行时服务 | FastAPI | 旧 Agent 操作 | HTTP 层委托预览和执行 | P1 |
 | [`app.routers.assistant`](../../app/routers/assistant.py) | 助手表单、预览、确认与跨域动作 HTTP | `assistant`, `model_gateway`, `web`, `workspace` | 调用助手、Vault 和学习写入 | FastAPI | 来源白名单与人工确认 | 跨模块编排在 HTTP 层 | P1 |
 | [`app.routers.career_learning`](../../app/routers/career_learning.py) | 档案、附件、投递、技能与学习 HTTP | `career`, `model_gateway`, `web` | 调用 Career 写入 | FastAPI | 投递、技能、学习变更 | 多类用例同文件，直接组合 Gateway 与 Repository | P1 |
 | [`app.routers.creation`](../../app/routers/creation.py) | 文章、排版、创作模型与视频 HTTP | `content`, `llm`, `model_gateway`, `obsidian`, `publishing`, `publishing_theme`, `video`, `web`, `wechat`, `workspace` | 调用 Vault、视频和派生检索写入 | FastAPI | 创作流程与导出 | 写入后直接刷新部分索引 | P1 |
-| [`app.routers.daily`](../../app/routers/daily.py) | Super Productivity 容器、旧入口和手机快照 HTTP | `mobile_daily`, `plugin_runtime`, `plugins`, `routers.workspace_content`, `web` | 写手机快照 | FastAPI、Web 健康探测 | iframe 和移动投影 | 依赖 Runtime，旧入口直接调用 Router | P0 |
+| [`app.routers.daily`](../../app/routers/daily.py) | Super Productivity 容器、旧入口和手机快照 HTTP | `mobile_daily`, `plugin_paths`, `routers.workspace_content`, `web` | 写手机快照 | FastAPI、Web 健康探测 | iframe 和移动投影 | 依赖 Runtime，旧入口直接调用 Router | P0 |
 | [`app.routers.focus`](../../app/routers/focus.py) | 阶段与行动 HTTP，发起旧 Agent 交接 | `agent_core`, `focus`, `web`, `workspace` | 调用 Focus/旧任务写入 | FastAPI | 阶段状态、交接、周检查 | 直接取两个 Repository | P1 |
 | [`app.routers.income`](../../app/routers/income.py) | 账本、产品验证、机会和复盘 HTTP | `income`, `web` | 调用 Income 写入 | FastAPI | 记账和证据动作 | 业务用例和表单编排集中 | P1 |
 | [`app.routers.knowledge_models`](../../app/routers/knowledge_models.py) | 知识、模型预览及用量 HTTP | `content`, `knowledge`, `knowledge_quality`, `knowledge_store`, `model_gateway`, `obsidian`, `resume_studio`, `web`, `workspace` | 调用知识、Vault、模型和索引写入 | FastAPI | 拆卡、地图和模型设置 | 混合知识及模型运维，直接刷新索引 | P1 |
@@ -71,6 +72,6 @@
 | [`app.workflow`](../../app/workflow.py) | 预览、批准和执行后端装配 | `deepseek_harness`, `llm`, `model_gateway`, `workflow_hub`, `workflow_store` | 通过 WorkflowStore 写入审批 | Harness/Hub 经适配器 | 模型审批和选择 | 构造具体 Provider 和 Hub；持有就绪及 Trace 缓存 | P1 |
 | [`app.workflow_control`](../../app/workflow_control.py) | Hub 事实投影、Trace、安全摘要与 SSE | `workflow_hub` | 派生快照和缓存 | Hub 经适配器 | 事件协议和控制中心字段 | 透过 Workflow 持有可变缓存和 Store 引用 | P1 |
 | [`app.workflow_hub`](../../app/workflow_hub.py) | Hub 连接、角色凭据、请求与事件流 | — | 内存客户端及凭据 | Autoloop 回环 HTTP | 协议、鉴权和超时 | 协议路径部分仍由调用方决定 | P1 |
-| [`app.workflow_store`](../../app/workflow_store.py) | 工作项、批准、候选、回答和验收存储 | `atomic`, `database`, `plugins` | Workflow 表、results、归档视图 | SQLite、文件系统 | 状态事务、关联和文件恢复 | 通过 Feature Registry 取目录，SQL 与文件无共同事务 | P1 |
+| [`app.workflow_store`](../../app/workflow_store.py) | 工作项、批准、候选、回答和验收存储 | `atomic`, `database`, `plugin_paths` | Workflow 表、results、归档视图 | SQLite、文件系统 | 状态事务、关联和文件恢复 | SQL 与文件无共同事务 | P1 |
 | [`app.workflow_worker`](../../app/workflow_worker.py) | 派发、领取、执行、回执和中断处理 | `atomic`, `deepseek_harness`, `model_gateway`, `workflow`, `workflow_hub`, `workflow_store` | 调用 WorkflowStore 和 Hub；领取标识 | Autoloop、Gateway/Harness | 协议回执、重试和恢复 | 识别具体 Harness；就绪写入 Workflow 对象 | P1 |
 | [`app.workspace`](../../app/workspace.py) | 随想/文章生命周期、修订、回收站及确定性周回顾 | `atomic`, `content` | 私有 Markdown 和调度写入 | 文件系统、PyYAML | Revision、回收与总结 | 文件操作、用例和调度并存 | P1 |

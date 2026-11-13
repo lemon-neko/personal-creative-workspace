@@ -60,6 +60,9 @@
 | 2026-11-13 | security | [公开源码准备](2026/2026-11-13-public-source.md) | 数据隔离、备份、桌面插件 |
 | 2026-11-13 | docs | [Task 01 架构基线](2026/2026-11-13-architecture-baseline.md) | 架构、存储、依赖检查 |
 | 2026-11-13 | refactor | [Task 02 桌面启动装配](2026/2026-11-13-application-bootstrap.md) | 桌面启动、依赖注入、资源生命周期 |
+| 2026-11-13 | refactor | [Task 03 Career 领域拆分](2026/2026-11-13-career-domain.md) | 求职、简历、投递和学习 |
+| 2026-11-13 | refactor | [Task 04 · Agent Runtime 领域拆分](2026/2026-11-13-agent-runtime-domain.md) | 旧任务、执行器、产物、事务 |
+| 2026-11-13 | refactor | [Task 05 · 插件注册与进程监督](2026/2026-11-13-plugin-runtime.md) | 注册、包、子进程、运行诊断 |
 
 ## 完成功能批次时
 

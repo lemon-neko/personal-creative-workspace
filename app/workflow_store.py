@@ -9,7 +9,7 @@ from pathlib import Path
 
 from app.atomic import atomic_write_text
 from app.database import WORKSPACE_REGISTRY, apply_migrations, connect_database
-from app.plugins import plugin_root
+from app.plugin_paths import plugin_root
 
 ANSWER_REFERENCE = "workbench-answer:"
 SCHEMA = """

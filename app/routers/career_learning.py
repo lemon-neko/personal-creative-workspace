@@ -251,7 +251,11 @@ async def analyze_profile_import(
     if document is None or not client.enabled or not callable(analyzer):
         return _not_found(request, "career")
     try:
-        candidate = await asyncio.to_thread(analyzer, outbound_text)
+        candidate = await asyncio.to_thread(
+            request.app.state.career.profile_service.import_profile, document_id, outbound_text, analyzer,
+        )
+    except KeyError:
+        return _not_found(request, "career")
     except (RuntimeError, ValueError, httpx.HTTPError) as error:
         return TEMPLATES.TemplateResponse(
             request=request,
@@ -691,7 +695,9 @@ async def analyze_job_skills(
         )
 
     try:
-        candidates = await asyncio.to_thread(analyzer, outbound_text)
+        candidates = await asyncio.to_thread(
+            request.app.state.career.job_service.analyze_job_skills, job, outbound_text, analyzer,
+        )
     except (RuntimeError, ValueError, httpx.HTTPError) as error:
         return TEMPLATES.TemplateResponse(
             request=request,
@@ -745,20 +751,15 @@ async def confirm_job_skills(request: Request, job_id: str) -> HTMLResponse:
             if not name or len(name) > 120 or importance not in range(1, 6):
                 raise ValueError("技能名称或重要度无效")
             reviewed.append((name, category[:120], importance, requirement[:2000]))
+        repository.job_service.confirm_job_skills(job.id, reviewed)
+    except KeyError:
+        return _not_found(request, "career")
     except (TypeError, ValueError) as error:
         return TEMPLATES.TemplateResponse(
             request=request,
             name="career_job_detail.html",
             context=_career_job_context(request, job, error=str(error)),
             status_code=422,
-        )
-    for name, category, importance, requirement in reviewed:
-        skill = repository.find_or_add_skill(name=name, category=category)
-        repository.set_job_skill_gap(
-            job_id=job.id,
-            skill_id=skill.id,
-            importance=importance,
-            gap_note=requirement,
         )
     return RedirectResponse(
         request.url_for("career_job_detail", job_id=job.id).include_query_params(

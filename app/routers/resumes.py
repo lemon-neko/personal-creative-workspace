@@ -21,7 +21,6 @@ from app.resume_studio import (
     RESUME_TEMPLATE_KEYS,
     RESUME_TEMPLATE_LABELS,
     StructuredResume,
-    apply_tailoring_suggestions,
     build_import_candidate,
     display_sections,
     deserialize_structured_resume,
@@ -30,7 +29,6 @@ from app.resume_studio import (
     normalize_structured_resume,
     project_has_structured_content,
     project_structure_candidates,
-    validate_tailoring_suggestions,
 )
 from app.web import TEMPLATES, not_found
 
@@ -508,20 +506,11 @@ async def resume_import_model_run(
     if document is None or document.kind != "resume":
         return _not_found(request)
     try:
-        json.loads(outbound_text)
-        payload = await asyncio.to_thread(
-            request.app.state.model_gateway.resume_parse_candidate,
+        candidate = await asyncio.to_thread(
+            repository.resume_service.analyze_import,
             outbound_text,
+            request.app.state.model_gateway.resume_parse_candidate,
         )
-        candidate = normalize_structured_resume(payload["resume"])
-        allowed_projects = {project.id for project in repository.projects()}
-        candidate_projects = {
-            str(row.get("project_id", ""))
-            for row in candidate.projects
-            if row.get("project_id")
-        }
-        if not candidate_projects <= allowed_projects:
-            raise ValueError("模型返回了虚构的项目证据 ID")
     except (
         httpx.HTTPError,
         json.JSONDecodeError,
@@ -596,15 +585,11 @@ async def resume_import_confirm(request: Request) -> HTMLResponse:
             if resume is None:
                 raise ValueError("主简历创建失败")
         else:
-            repository.snapshot("resume-primary-import")
-            resume = repository.add_structured_resume(
+            resume = repository.resume_service.import_structured_resume(
+                document,
                 title=str(form.get("title", "主简历")),
                 target_role=str(form.get("target_role", "")),
-                document_id=document.id,
                 structured=structured,
-                resume_kind="master",
-                status="active",
-                is_primary=True,
             )
     except (TypeError, ValueError) as error:
         fallback = structured or normalize_structured_resume({})
@@ -947,15 +932,10 @@ async def resume_tailor_copy(
     job = repository.job(job_id)
     if resume is None or resume.resume_kind != "master" or job is None:
         return _not_found(request)
-    created = repository.add_structured_resume(
-        title=f"{job.company} · {job.title}",
-        target_role=job.title,
-        structured=repository.structured_resume(resume),
-        resume_kind="tailored",
-        parent_id=resume.id,
-        job_id=job.id,
-        photo_asset_id=resume.photo_asset_id or "",
-    )
+    try:
+        created = repository.resume_service.tailor_resume(resume, job)
+    except KeyError:
+        return _not_found(request)
     return RedirectResponse(
         request.url_for("resume_detail", resume_id=created.id), status_code=303
     )
@@ -1021,14 +1001,8 @@ async def resume_tailor_run(
         return HTMLResponse("请先补充 JD，再进行岗位分析或模型定制。", status_code=422)
 
     try:
-        payload = await asyncio.to_thread(
-            gateway.resume_tailor_candidate, outbound_text
-        )
-        json.loads(outbound_text)
-        suggestions = validate_tailoring_suggestions(
-            payload["suggestions"],
-            repository.structured_resume(resume),
-            {"career-profile", *resume.project_ids},
+        suggestions = await asyncio.to_thread(
+            repository.resume_service.analyze_tailoring, resume, outbound_text, gateway.resume_tailor_candidate,
         )
     except (httpx.HTTPError, KeyError, TypeError, ValueError, RuntimeError) as error:
         return HTMLResponse(str(error), status_code=422)
@@ -1106,23 +1080,7 @@ async def resume_tailor_confirm(
             }
         )
     try:
-        suggestions = validate_tailoring_suggestions(
-            raw,
-            repository.structured_resume(resume),
-            {"career-profile", *resume.project_ids},
-        )
-        tailored = apply_tailoring_suggestions(
-            repository.structured_resume(resume), suggestions
-        )
-        created = repository.add_structured_resume(
-            title=f"{job.company} · {job.title}",
-            target_role=job.title,
-            structured=tailored,
-            resume_kind="tailored",
-            parent_id=resume.id,
-            job_id=job.id,
-            photo_asset_id=resume.photo_asset_id or "",
-        )
+        created = repository.resume_service.tailor_resume(resume, job, raw)
     except (KeyError, TypeError, ValueError) as error:
         return HTMLResponse(str(error), status_code=422)
     return RedirectResponse(

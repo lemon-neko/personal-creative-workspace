@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 
 import httpx
@@ -17,7 +15,7 @@ from app.agent_core import (
     TASK_TYPE_LABELS,
     AgentCoreRepository,
 )
-from app.model_gateway import AGENT_INSTRUCTION, POLICIES, ModelTaskKind, estimate_tokens
+from app.agent_runtime.domain.exceptions import InputLimitError, PreviewError
 from app.web import TEMPLATES, not_found
 
 
@@ -40,10 +38,9 @@ def _task_context(
         return None
     project = repository.project(task.project_id)
     runs = repository.runs(task_id=task.id)
-    daily_source = repository.daily_task_source(task.id)
-    slot = request.app.state.focus.planner_slots().get(daily_source) if daily_source else None
+    daily_source, daily_day = repository.task_service.daily_task_context(task.id)
     return {
-        "daily_day": slot[0] if slot else "",
+        "daily_day": daily_day,
         "active_page": "tasks",
         "task": task,
         "project": project,
@@ -193,29 +190,10 @@ def _run_context(request: Request, run_id: str, *, error: str = "") -> dict | No
     if task is None:
         return None
     decision = repository.decision(run_id)
-    gateway = request.app.state.model_gateway
-    preview = None
-    if (run.status == "planned" and (not decision or decision["answer"])
-        and gateway.enabled and task.id not in repository.private_task_ids()):
-        payload = {"title": task.title, "objective": task.objective, "role": run.role_key}
-        if decision:
-            payload["decision"] = {"question": decision["question"], "answer": decision["answer"]}
-        material = json.dumps(payload, ensure_ascii=False, indent=2)
-        wire_text = AGENT_INSTRUCTION + "\n" + material
-        estimate = estimate_tokens(wire_text)
-        policy = POLICIES[ModelTaskKind.AGENT]
-        fingerprint = hashlib.sha256(json.dumps([
-            run.id, task.revision, gateway.provider.value, gateway.config.base_url, gateway.config.model, wire_text,
-        ]).encode()).hexdigest()
-        preview = {
-            "material": material, "instruction": AGENT_INSTRUCTION, "fingerprint": fingerprint,
-            "tokens": estimate, "input_limit": policy.max_input_tokens, "output_limit": policy.max_output_tokens,
-            "model": gateway.config.model, "external": gateway.provider.value == "external",
-        }
-    daily_source = repository.daily_task_source(task.id)
-    slot = request.app.state.focus.planner_slots().get(daily_source) if daily_source else None
+    preview = repository.run_service.model_preview(run, task, decision)
+    daily_source, daily_day = repository.task_service.daily_task_context(task.id)
     return {
-        "daily_day": slot[0] if slot else "",
+        "daily_day": daily_day,
         "active_page": "tasks",
         "run": run,
         "task": task,
@@ -223,7 +201,7 @@ def _run_context(request: Request, run_id: str, *, error: str = "") -> dict | No
         "daily_source": daily_source,
         "decision": decision,
         "ai_preview": preview,
-        "model_enabled": gateway.enabled,
+        "model_enabled": repository.run_service.model_enabled,
         "steps": repository.steps(run.id),
         "tool_calls": repository.tool_calls(run.id),
         "artifacts": repository.artifacts(run_id=run.id),
@@ -259,23 +237,7 @@ def execute_agent_model(
     request: Request, run_id: str, background_tasks: BackgroundTasks,
     preview_fingerprint: str = Form(), background: bool = Form(False),
 ) -> HTMLResponse:
-    context = _run_context(request, run_id)
-    if context is None:
-        return not_found(request, "tasks")
-    preview = context["ai_preview"]
-    if not preview or preview_fingerprint != preview["fingerprint"]:
-        return _run_error(request, run_id, "预览已失效，请刷新后重新确认。")
-    if preview["tokens"] > preview["input_limit"]:
-        return _run_error(request, run_id, "任务材料超过模型输入上限。", 422)
-    answer = context["decision"]["answer"] if context["decision"] else ""
     repository = _repository(request)
-    task = context["task"]
-    gateway = request.app.state.model_gateway
-
-    def run_model():
-        if task.id in repository.private_task_ids():
-            raise RuntimeError("这项任务已移出工作台")
-        return gateway.agent_candidate(preview["material"], answered=bool(answer))
 
     def finish_safely(finish):
         try:
@@ -284,10 +246,16 @@ def execute_agent_model(
             logging.getLogger(__name__).warning("Background agent run failed: %s", run_id)
 
     try:
-        repository.execute_run(
-            run_id, (), expected_answer=answer, expected_revision=task.revision, model=run_model,
+        repository.run_service.execute_model(
+            run_id, preview_fingerprint,
             dispatch=(lambda finish: background_tasks.add_task(finish_safely, finish)) if background else None,
         )
+    except KeyError:
+        return not_found(request, "tasks")
+    except InputLimitError as error:
+        return _run_error(request, run_id, str(error), 422)
+    except PreviewError as error:
+        return _run_error(request, run_id, str(error))
     except (RuntimeError, ValueError, OSError, httpx.HTTPError):
         return _run_error(request, run_id, "AI 未能完成本次运行。请刷新确认当前状态；若已失败，可重新规划。")
     return RedirectResponse(request.url_for("run_detail", run_id=run_id), status_code=303)
@@ -314,17 +282,10 @@ async def answer_agent_decision(request: Request, run_id: str, answer: str = For
 @router.post("/runs/{run_id}/execute", name="execute_agent_run")
 async def execute_agent_run(request: Request, run_id: str) -> HTMLResponse:
     repository = _repository(request)
-    run = repository.run(run_id)
-    if run is None:
-        return not_found(request, "tasks")
-    task = repository.task(run.task_id)
-    if task is None:
-        return not_found(request, "tasks")
-    results = request.app.state.search.search(task.objective, limit=8)
-    if not results:
-        results = request.app.state.search.search(task.title, limit=8)
     try:
-        repository.execute_run(run_id, results)
+        repository.run_service.execute_run(run_id)
+    except KeyError:
+        return not_found(request, "tasks")
     except (RuntimeError, ValueError, OSError) as error:
         context = _run_context(request, run_id, error=str(error))
         if context is None:
@@ -384,7 +345,7 @@ async def agent_artifact(request: Request, artifact_id: str) -> HTMLResponse:
         return not_found(request, "tasks")
     try:
         content = repository.artifact_content(artifact_id)
-    except (KeyError, FileNotFoundError):
+    except (KeyError, FileNotFoundError, ValueError):
         return not_found(request, "tasks")
     task = repository.task(artifact.task_id)
     return TEMPLATES.TemplateResponse(

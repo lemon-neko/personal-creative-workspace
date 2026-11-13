@@ -2,15 +2,16 @@
 
 ## 执行顺序
 
-桌面启动与依赖注入已完成，下一步拆静态注册与进程职责。检索改造随后建立业务投影契约，求职和收入分别落地，工作流最后消除具体后端耦合。任务编号沿用原约定，表中是建议执行顺序。
+桌面启动与依赖注入、静态注册和进程监督已完成。检索改造随后建立业务投影契约，求职和收入分别落地，工作流最后消除具体后端耦合。任务编号沿用原约定，表中是建议执行顺序。
 
 | 顺序 | 任务 | 依赖与实施切片 | 交付和回退 |
 | --- | --- | --- | --- |
 | 1 | [Task 02 · Application Bootstrap 与 DI](application-bootstrap.md)（完成） | 抽出桌面容器并保留工厂兼容导出；记录迁移顺序；移动独立装配；私有附件路由验证 Depends。 | 路由、权限、schema、工厂 import 无副作用和 Lifespan 启停对照。拆分提交保留旧工厂桥接以便回退。 |
-| 2 | Task 05 · Plugin Registry 与 Process Supervisor | 先独立源、目录与包校验，使注册只依赖 API；再将 Web 与 Hub 逐项挂到受监督进程。Worker 作为受管协程，launchd 继续负责主服务。 | 降低循环基线；校验健康、退出、停止和启动恢复；保留启动入口、协议、端口与现有私有配置。 |
+| 2 | [Task 05 · Plugin Registry 与 Process Supervisor](plugin-runtime.md)（完成） | 先独立源、目录与包校验，使注册只依赖 API；再将 Web 与 Hub 逐项挂到受监督进程。Worker 作为受管协程，launchd 继续负责主服务。 | 降低循环基线；校验健康、退出、停止和启动恢复；保留启动入口、协议、端口与现有私有配置。 |
 | 3 | Task 06 · Search Incremental Indexing | 先以现有单条内容更新作对照，接通提交后内容事件与删除；再补知识、求职、视频与外部 Vault 对账。 | 无关写入不扫描，目标更新且并发无陈旧覆盖；保留手工 rebuild。逐来源切换，回退时使用现有同步与重建。 |
-| 4 | Task 03 · Career 领域拆分 | 先分档案/证据与投递 API/use cases，再分简历导入、编辑、定制、导出和学习；依赖 Task 06 的 Career 投影契约。 | 保留同一 SQLite 事务、快照、迁移和 API；逐个切片回退到兼容 Repository。 |
-| 5 | Task 04 · Income 领域拆分 | 在 Task 02 后可独立推进。先抽金额/证据规则，再分账本、首品、机会证据/复盘。 | 账本与验证一致，历史迁移测试仍过；逐个切片回退。 |
+| 4 | [Task 03 · Career 领域拆分](career-domain.md)（完成） | 已建立四个领域、兼容入口和共享事务。Career 搜索投影随 Task 06 推进。 | 保留同一 SQLite 事务、快照、迁移和 API；逐个切片回退到兼容 Repository。 |
+| 5 | [Task 04 · Agent Runtime 领域拆分](agent-runtime.md)（完成） | 已拆分领域、服务、执行器和存储，保留旧路由及数据。 | 旧运行状态和人工确认回归；Autoloop 保持独立。 |
+| 后续 | Income 领域拆分 | 在 Task 02 后可独立推进。先抽金额/证据规则，再分账本、首品、机会证据/复盘。 | 账本与验证一致，历史迁移测试仍过；逐个切片回退。 |
 | 6 | Task 07 · Workflow 与 Integration 边界 | Task 02/05 后先把协议路径、就绪和执行器从 Workflow 取出，明确审批、派发、执行和投影端口；再完善恢复演练。 | 真实 Hub、虚构模型联调；未知结果不会重放，副作用可对账。保持上游协议、事件 ID 和恢复语义。 |
 
 系统 API 的材料、搜索、运行、备份和设备入口随其所有者逐步归位。恢复停写与多源对账先给出独立变更和隔离演练，避免夹在业务拆分中上线。每个切片先锁住契约，再移动代码，最后移除已失效的过渡引用。风险和验收详见[审计报告](audit-report.md)。
@@ -34,8 +35,8 @@
 | Enforced | 业务不能反向 import 组合入口；现有适配器不能直接导入 Router | 检查明确的 ASGI/工厂边与现有五个外部适配器。 |
 | Enforced | 桌面 Router 无底层 SQL 调用；工厂导入无数据根创建 | 检查 Router 的 SQLite 连接及执行调用，另以独立进程验证工厂导入。运行工厂和 ASGI 的验证使用临时目录。 |
 | Enforced | 数据表、所有者和注册版本可核对 | 从文档读取归属与版本，比较隔离初始化的真实 schema，检测漏报或重复归属。现有迁移测试验证事务和回滚。 |
-| Planned | Domain 禁 FastAPI/数据库，Application 禁 Router，Integration 只实现端口 | 目前平铺的混合模块不靠目录名假定层次。Task 02 后对新切片启用路径规则，现有模块逐个迁移。 |
-| Planned | 全域 SQL 写入边界和故障隔离 | SQLite 归属校验不分析 SQL 读写语义。先保留旧 Agent 同事务关联与派生活动，再把写入收归相应端口；Task 05 验证外部进程隔离。 |
+| Planned | Domain 禁 FastAPI/数据库，Application 禁 Router，Integration 只实现端口 | Agent Runtime 已检查 Domain、Application 和 Executor 的内部导入方向；其他混合模块逐个迁移。 |
+| Planned | 全域 SQL 写入边界和故障隔离 | SQLite 归属校验不分析 SQL 读写语义。旧 Agent 已通过适配器保留关联和派生活动的同一事务；Task 05 已验证外部进程和 Worker 故障隔离。 |
 | Planned | Provider 全经适配器、按用例注入可替换依赖 | 现有 Workflow 和 Gateway 有具体 Provider 依赖；Task 02/07 收敛后再启用全量规则。 |
 
 架构检查随现有 Pytest 流程运行。开发者可以单独执行 `.venv/bin/python -m pytest -q tests/architecture`。

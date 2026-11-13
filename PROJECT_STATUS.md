@@ -59,7 +59,7 @@
 2. 重建本地 Python 3.13 虚拟环境，执行一次完整 Playwright 实机验收。
 3. 在应用 Obsidian 旧结构迁移前，完成一次真实内容的冲突与未拆卡审阅。
 4. 推进 Agent 应用开发四阶段路线，用真实 Commit、测试结果和复盘验证 P0/P1 技能差距是否缩小。
-5. 按[重构路线图](docs/architecture/refactoring-roadmap.md)推进 Task 05 进程监督与插件注册，再处理索引边界。
+5. Task 05 插件注册与进程监督已完成。后续索引边界见[重构路线图](docs/architecture/refactoring-roadmap.md)。
 6. 完成 Agent 应用可靠性上线包、公开精简仓库和面包多商品的一次性发布，验证第一笔陌生用户净到账。
 7. 用真实但非敏感任务验证本地任务运行时，再决定是否增加 Checkpoint、通用审批和 LangGraph 适配。
 

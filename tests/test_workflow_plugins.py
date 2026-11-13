@@ -6,18 +6,22 @@ import os
 import re
 import socket
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import install_plugins, plugin_runtime
+from app import autoloop_plugin, daily_plugin, install_plugins
 from app.install_plugins import provision
 from app.llm import LLMConfig, OpenAICompatibleClient
 from app.main import create_app
 from app.plugins import DAILY_ORIGIN, WORKBENCH_ORIGIN, plugin_root
-from app.routers import daily
+from app.plugin_packages import HUB_ENTRYPOINTS
+from app.plugin_paths import HUB_URL
+from app.process_supervisor import ProcessState, RunningService
+from app.workflow_hub import AutoloopClient
 from app.workflow import Workflow
 from app.workflow_worker import answer_body
 
@@ -89,6 +93,13 @@ def test_handoff_requires_workspace_origin_and_approval(tmp_path):
     assert not model.calls
 
 
+def write_fixture_engine(engine):
+    for name in HUB_ENTRYPOINTS:
+        path = engine / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture")
+
+
 @pytest.mark.parametrize("broken", ["web", "autoloop", "harness"])
 def test_plugin_startup_keeps_the_other_plugin_available(tmp_path, monkeypatch, broken):
     root = plugin_root(tmp_path)
@@ -97,13 +108,12 @@ def test_plugin_startup_keeps_the_other_plugin_available(tmp_path, monkeypatch, 
     bridge.parent.mkdir(parents=True)
     bridge.write_text("// synthetic bridge")
     (web / "index.html").write_text("synthetic daily work")
+    write_fixture_engine(root / "autoloop")
     engine = root / "autoloop/bin/agent-autoloop.ts"
-    engine.parent.mkdir(parents=True)
-    engine.write_text("// synthetic engine")
     home = root / "autoloop-data"
     home.mkdir()
     (home / "config.json").write_text(json.dumps({
-        "url": plugin_runtime.HUB_URL, "hub": {"listen": plugin_runtime.HUB_URL.removeprefix("http://")},
+        "url": HUB_URL, "hub": {"listen": HUB_URL.removeprefix("http://")},
         "owner": "test-owner",
     }))
     (home / "workbench-keys.json").write_text(json.dumps({
@@ -121,22 +131,31 @@ def test_plugin_startup_keeps_the_other_plugin_available(tmp_path, monkeypatch, 
 
     started = []
 
-    async def supervise_fixture(command, **_kwargs):
+    @asynccontextmanager
+    async def spawn_fixture(command, *, health, **_kwargs):
         started.append("web" if "app.plugin_web" in command else "autoloop")
+        yield RunningService(health, lambda: False, pid=1234)
+
+    async def idle_worker(self):
+        self.workflow.ready = True
         await asyncio.Future()
 
-    async def idle_worker(_self):
-        await asyncio.Future()
-
-    async def web_ready():
+    async def ready(_):
         return True
 
-    monkeypatch.setattr(plugin_runtime, "supervise", supervise_fixture)
-    monkeypatch.setattr(plugin_runtime.WorkflowWorker, "run", idle_worker)
-    monkeypatch.setattr(plugin_runtime.shutil, "which", lambda _: "/fixture/node")
-    monkeypatch.setattr(daily, "daily_available", web_ready)
+    monkeypatch.setattr(autoloop_plugin, "child_process", spawn_fixture)
+    monkeypatch.setattr(daily_plugin, "child_process", spawn_fixture)
+    monkeypatch.setattr(daily_plugin, "daily_available", ready)
+    monkeypatch.setattr(AutoloopClient, "healthy", ready)
+    monkeypatch.setattr(autoloop_plugin.WorkflowWorker, "run", idle_worker)
+    monkeypatch.setattr(autoloop_plugin.shutil, "which", lambda _: "/fixture/node")
     app = create_app(data_root=tmp_path, enable_scheduler=False)
     with TestClient(app, base_url=WORKBENCH_ORIGIN) as client:
+        manager = app.state.plugin_runtime
+        until(lambda: all(
+            supervisor.snapshot.state in {ProcessState.READY, ProcessState.FAILED}
+            for supervisor in manager.controls.values()
+        ))
         daily_page = client.get("/")
         assert ('class="daily-frame"' in daily_page.text) is (broken != "web")
         assert (f"frame-src {DAILY_ORIGIN};" in daily_page.headers["content-security-policy"]) is (broken != "web")
@@ -154,17 +173,16 @@ def prepare_real_hub(tmp_path, monkeypatch):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
-    monkeypatch.setattr(plugin_runtime, "HUB_URL", origin)
+    monkeypatch.setattr(autoloop_plugin, "HUB_URL", origin)
     monkeypatch.setattr(install_plugins, "HUB_URL", origin)
-    supervise = plugin_runtime.supervise
 
-    async def hub_only(command, **kwargs):
-        if "app.plugin_web" in command:
-            await asyncio.Future()
-        else:
-            await supervise(command, **kwargs)
+    @asynccontextmanager
+    async def web_fixture(*_args, **_kwargs):
+        async def unavailable():
+            return False
+        yield RunningService(unavailable, lambda: False)
 
-    monkeypatch.setattr(plugin_runtime, "supervise", hub_only)
+    monkeypatch.setattr(daily_plugin, "child_process", web_fixture)
     provision(tmp_path, Path(os.environ["WORKBENCH_E2E_WEB"]), Path(os.environ["WORKBENCH_E2E_ENGINE"]))
     (plugin_root(tmp_path) / "enabled").touch()
     return origin
@@ -216,6 +234,13 @@ def test_real_autoloop_decision_resume_restart_and_timeout(tmp_path, monkeypatch
         assert not any(key in str(history) for key in json.loads((workflow.store.root / 'autoloop-data/workbench-keys.json').read_text()).values())
         assert "已验收" in client.post(f"{item}/accept", headers=headers, data={"turn_id": draft["id"]}).text
         assert "虚构产物" in client.get(f"{item}/artifacts/{draft['id']}").text
+        hub = app.state.plugin_runtime.autoloop.hub
+        original_pid = hub.snapshot.pid
+        assert client.post("/settings/runtime/plugins/workflow/restart", headers=headers, follow_redirects=False).status_code == 303
+        until(lambda: workflow.ready and hub.snapshot.pid != original_pid)
+        assert len(model.calls) == 2
+        assert "已验收" in client.get(item).text
+
         assert client.post("/workflow/rules/pause", headers=headers, data={"name": "工作台任务"}).status_code == 200
         assert client.get("/workflow/control/state").json()["lines"][0]["paused"]
         blocked = client.post("/workflow/rules/run", headers=headers | {"Accept": "application/json"}, data={"name": "工作台任务"})
@@ -260,8 +285,7 @@ def test_refresh_web_preserves_installed_data_and_restores_previous_bundle(tmp_p
         (bridge / "plugin.js").write_text("// fixture")
         (bundle / "index.html").write_text(label)
     engine = root / "autoloop"
-    engine.mkdir()
-    (engine / "test.txt").write_text("upstream")
+    write_fixture_engine(engine)
     data = root / "autoloop-data"
     data.mkdir()
     (data / "test.txt").write_text("persisted")

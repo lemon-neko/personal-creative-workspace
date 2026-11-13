@@ -98,6 +98,7 @@ Agent 工程通用能力
 
 - [求职学习指南](../guides/career-workflow.md)
 - [存储架构](../architecture/storage.md)
+- [Career 领域架构与事务](../architecture/career-domain.md)
 - [Agent 应用开发学习路线更新](../changes/2026/2026-08-28-agent-learning-path.md)
 - [学习路线极简化](../changes/2026/2026-08-28-learning-roadmap-simplification.md)
 - [简历模板系统优化](../changes/2026/2026-09-12-resume-template-system.md)

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 
 from app.agent_core import AgentCoreRepository
+from app.agent_runtime.infrastructure.adapters.model_adapter import ModelAdapter
 from app.llm import LLMConfig, OpenAICompatibleClient
 from app.main import create_app
 from app.workspace import SHANGHAI
@@ -63,7 +64,7 @@ def test_daily_event_model_decision_resume_and_acceptance(tmp_path, monkeypatch)
     assert post(run_url + "/approve").status_code == 409
 
     # A new repository instance continues from the saved state.
-    app.state.agent_core = AgentCoreRepository(tmp_path)
+    app.state.agent_core = AgentCoreRepository(tmp_path, model=ModelAdapter(app.state.model_gateway))
     assert "用哪种形式？" in client.get(run_url).text
     assert post(run_url + "/decision", answer="清单").status_code == 303
     assert post(run_url + "/ai", preview_fingerprint=initial).status_code == 409
