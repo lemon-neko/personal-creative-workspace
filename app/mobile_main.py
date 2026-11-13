@@ -29,24 +29,7 @@ from app.mobile import (
     OfflineCapture,
     manifest_payload,
 )
-from app.mobile_knowledge import (
-    CARD_STATUS_LABELS,
-    CARD_TYPE_LABELS,
-    active_cards,
-    cards_for_map,
-    child_maps,
-    latest_knowledge_update,
-    relation_projections,
-    render_mobile_markdown,
-    source_summaries,
-)
-from app.atomic import content_lock
-from app.knowledge_store import (
-    CARD_TYPES,
-    create_knowledge_card,
-    load_knowledge_store,
-    subjects_for_topic_maps,
-)
+from app.mobile_daily import daily_now, read_daily_snapshot
 from app.privacy import default_data_root, prepare_private_root
 from app.search import SearchRepository
 
@@ -196,7 +179,13 @@ def create_mobile_app(
 
     @mobile_app.get("/", response_class=HTMLResponse)
     async def mobile_home(request: Request) -> HTMLResponse:
-        session = _session(request)
+        if _session(request) is not None:
+            now = daily_now()
+            snapshot = read_daily_snapshot(resolved_data_root, now.date())
+            return MOBILE_TEMPLATES.TemplateResponse(
+                request=request, name="daily.html",
+                context={"paired": True, "active_page": "daily", "snapshot": snapshot, "today": now.date()},
+            )
         pair_csrf = request.cookies.get(PAIR_CSRF_COOKIE, "") or secrets.token_urlsafe(
             32
         )
@@ -204,22 +193,29 @@ def create_mobile_app(
             request=request,
             name="index.html",
             context={
-                "paired": session is not None,
+                "paired": False,
                 "pair_csrf": pair_csrf,
                 "active_page": "capture",
             },
         )
-        if session is None:
-            response.set_cookie(
-                PAIR_CSRF_COOKIE,
-                pair_csrf,
-                httponly=True,
-                secure=True,
-                samesite="strict",
-                max_age=10 * 60,
-                path="/pair",
-            )
+        response.set_cookie(
+            PAIR_CSRF_COOKIE,
+            pair_csrf,
+            httponly=True,
+            secure=True,
+            samesite="strict",
+            max_age=10 * 60,
+            path="/pair",
+        )
         return response
+
+    @mobile_app.get("/capture", response_class=HTMLResponse)
+    async def mobile_capture(request: Request) -> Response:
+        if _session(request) is None:
+            return RedirectResponse("/", status_code=303)
+        return MOBILE_TEMPLATES.TemplateResponse(
+            request=request, name="index.html", context={"paired": True, "active_page": "capture"},
+        )
 
     @mobile_app.get("/offline", response_class=HTMLResponse)
     async def offline(request: Request) -> HTMLResponse:
@@ -234,25 +230,6 @@ def create_mobile_app(
         if session is None:
             return RedirectResponse("/", status_code=303)
         return session
-
-    def knowledge_not_found(request: Request) -> HTMLResponse:
-        return MOBILE_TEMPLATES.TemplateResponse(
-            request=request,
-            name="knowledge_404.html",
-            context={"paired": True, "active_page": "knowledge"},
-            status_code=404,
-        )
-
-    def knowledge_page(
-        request: Request, name: str, context: dict[str, object]
-    ) -> HTMLResponse:
-        response = MOBILE_TEMPLATES.TemplateResponse(
-            request=request,
-            name=name,
-            context={"paired": True, "active_page": "knowledge", **context},
-        )
-        response.headers["X-PCW-Offline-Knowledge"] = "1"
-        return response
 
     def idea_snapshot_payload(item) -> dict[str, object]:
         return {
@@ -281,7 +258,7 @@ def create_mobile_app(
             return MOBILE_TEMPLATES.TemplateResponse(
                 request=request,
                 name="idea_404.html",
-                context={"paired": True, "active_page": "ideas"},
+                context={"paired": True, "active_page": "capture"},
                 status_code=404,
             )
         return MOBILE_TEMPLATES.TemplateResponse(
@@ -289,7 +266,7 @@ def create_mobile_app(
             name="idea_edit.html" if item_id or edit_shell else "ideas.html",
             context={
                 "paired": True,
-                "active_page": "ideas",
+                "active_page": "capture",
                 "idea_id": item_id,
             },
         )
@@ -305,113 +282,6 @@ def create_mobile_app(
     @mobile_app.get("/ideas/{item_id}", response_class=HTMLResponse)
     async def mobile_idea_detail(request: Request, item_id: str) -> Response:
         return idea_page(request, item_id)
-
-    @mobile_app.get("/knowledge", response_class=HTMLResponse)
-    async def mobile_knowledge(request: Request) -> Response:
-        if isinstance(paired_or_redirect(request), RedirectResponse):
-            return RedirectResponse("/", status_code=303)
-        knowledge = load_knowledge_store(resolved_content_root)
-        cards = active_cards(knowledge)
-        subjects = tuple(item for item in knowledge.maps if item.kind == "subject")
-        topics = tuple(item for item in knowledge.maps if item.kind == "topic")
-        subject_rows = tuple(
-            {
-                "map": item,
-                "children": child_maps(knowledge, item.id),
-                "card_count": len(cards_for_map(knowledge, item)),
-            }
-            for item in subjects
-        )
-        offline_paths = (
-            "/knowledge",
-            *(f"/knowledge/maps/{item.id}" for item in knowledge.maps),
-            *(
-                f"/knowledge/cards/{card.id}"
-                for card in knowledge.cards
-                if card.status != "archived"
-            ),
-        )
-        return knowledge_page(
-            request,
-            "knowledge.html",
-            {
-                "subjects": subject_rows,
-                "topics": topics,
-                "cards": cards,
-                "recent_cards": cards[:12],
-                "latest_update": latest_knowledge_update(knowledge),
-                "diagnostic_count": len(knowledge.diagnostics),
-                "card_type_labels": CARD_TYPE_LABELS,
-                "offline_paths": offline_paths,
-            },
-        )
-
-    @mobile_app.get("/knowledge/maps/{map_id}", response_class=HTMLResponse)
-    async def mobile_knowledge_map(request: Request, map_id: str) -> Response:
-        if isinstance(paired_or_redirect(request), RedirectResponse):
-            return RedirectResponse("/", status_code=303)
-        knowledge = load_knowledge_store(resolved_content_root)
-        item = knowledge.map(map_id)
-        if item is None:
-            return knowledge_not_found(request)
-        maps = {candidate.id: candidate for candidate in knowledge.maps}
-        return knowledge_page(
-            request,
-            "knowledge_map.html",
-            {
-                "item": item,
-                "parents": tuple(
-                    maps[parent_id]
-                    for parent_id in item.parent_ids
-                    if parent_id in maps
-                ),
-                "children": child_maps(knowledge, item.id),
-                "cards": cards_for_map(knowledge, item),
-                "body_html": render_mobile_markdown(
-                    item.body,
-                    source=item.source,
-                    content_root=resolved_content_root,
-                    store=knowledge,
-                )
-                if item.body
-                else "",
-                "card_type_labels": CARD_TYPE_LABELS,
-            },
-        )
-
-    @mobile_app.get("/knowledge/cards/{card_id}", response_class=HTMLResponse)
-    async def mobile_knowledge_card(request: Request, card_id: str) -> Response:
-        if isinstance(paired_or_redirect(request), RedirectResponse):
-            return RedirectResponse("/", status_code=303)
-        knowledge = load_knowledge_store(resolved_content_root)
-        card = knowledge.card(card_id)
-        if card is None:
-            return knowledge_not_found(request)
-        maps = {item.id: item for item in knowledge.maps}
-        replacement = knowledge.card(card.superseded_by) if card.superseded_by else None
-        return knowledge_page(
-            request,
-            "knowledge_card.html",
-            {
-                "card": card,
-                "body_html": render_mobile_markdown(
-                    card.body,
-                    source=card.source,
-                    content_root=resolved_content_root,
-                    store=knowledge,
-                ),
-                "maps": tuple(
-                    maps[map_id] for map_id in card.map_ids if map_id in maps
-                ),
-                "sources": source_summaries(resolved_content_root, card),
-                "relations": relation_projections(
-                    resolved_content_root, knowledge, card
-                ),
-                "replacement": replacement,
-                "card_type_labels": CARD_TYPE_LABELS,
-                "card_status_labels": CARD_STATUS_LABELS,
-            },
-        )
 
     @mobile_app.get("/manifest.webmanifest")
     async def manifest() -> Response:
@@ -502,17 +372,7 @@ def create_mobile_app(
     @mobile_app.get("/api/ideas/snapshot")
     async def ideas_snapshot(request: Request) -> JSONResponse:
         _require_session(request)
-        knowledge = load_knowledge_store(resolved_content_root)
-        topics = tuple(item for item in knowledge.maps if item.kind == "topic")
-        return JSONResponse(
-            {
-                "items": [idea_snapshot_payload(item) for item in service.ideas()],
-                "topics": [
-                    {"id": item.id, "title": item.title, "summary": item.summary}
-                    for item in topics
-                ],
-            }
-        )
+        return JSONResponse({"items": [idea_snapshot_payload(item) for item in service.ideas()]})
 
     async def read_images(images: list[UploadFile]) -> list[bytes]:
         if len(images) > MAX_IMAGES:
@@ -626,51 +486,6 @@ def create_mobile_app(
             tags,
             category,
             images,
-        )
-
-    @mobile_app.post("/api/ideas/{item_id}/knowledge/cards")
-    async def create_mobile_knowledge_card(
-        request: Request,
-        item_id: str,
-        title: str = Form(...),
-        body: str = Form(...),
-        card_type: str = Form(...),
-        map_ids: list[str] = Form(default=[]),
-        concepts: str = Form(default=""),
-    ) -> JSONResponse:
-        session = _require_session(request)
-        _require_mobile_csrf(request, session)
-        if service.idea(item_id) is None:
-            raise HTTPException(status_code=404, detail="随想不存在或已归档")
-        if card_type not in CARD_TYPES:
-            raise HTTPException(status_code=422, detail="知识卡类型无效")
-        selected_maps = tuple(dict.fromkeys(map_ids))
-        clean_concepts = tuple(
-            dict.fromkeys(
-                value.strip()
-                for value in concepts.replace("，", ",").split(",")
-                if value.strip()
-            )
-        )
-        try:
-            with content_lock(resolved_content_root):
-                knowledge = load_knowledge_store(resolved_content_root)
-                subjects = subjects_for_topic_maps(knowledge, selected_maps)
-                card = create_knowledge_card(
-                    resolved_content_root,
-                    title=title,
-                    body=body,
-                    card_type=card_type,
-                    subjects=subjects,
-                    source_ids=(item_id,),
-                    map_ids=selected_maps,
-                    concepts=clean_concepts,
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        return JSONResponse(
-            {"card_id": card.id, "title": card.title, "created": True},
-            status_code=201,
         )
 
     @mobile_app.post("/api/captures")

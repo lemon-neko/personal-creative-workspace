@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}日常工作 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/workbench-plugins.css') }}">{% endblock %}
+{% block content %}
+{% if ready %}
+<iframe class="daily-frame" title="日常工作" src="{{ daily_origin }}/#/schedule"
+    allow="keyboard-map" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads" data-handoff="{{ url_for('handoff') }}"
+    {% if mobile_enabled %}data-mobile-snapshot="{{ url_for('publish_daily_snapshot') }}"{% endif %}></iframe>
+<p class="workflow-message" role="status" id="daily-message" hidden></p>
+{% else %}
+<section class="workflow-surface">
+    <h1>日常工作</h1>
+    <p>Super Productivity 正在启动或暂不可用。</p>
+    <a href="{{ url_for('workspace') }}">重新加载</a> · <a href="{{ url_for('legacy_workspace') }}">打开旧待办</a>
+</section>
+{% endif %}
+{% endblock %}
+{% block extra_scripts %}<script defer src="{{ url_for('static', path='/workbench-plugins.js') }}"></script>{% endblock %}

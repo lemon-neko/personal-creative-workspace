@@ -1,0 +1,27 @@
+{% set value = form_values if edit_id == form_id else {} %}
+<form method="post" action="{{ url_for('create_career_job') if form_id == 'new' else url_for('update_career_job', job_id=job.id) }}" class="edit-form career-row-form">
+  {% if detail_form|default(false) %}<input type="hidden" name="return_to" value="detail">{% endif %}
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  <input type="hidden" name="filter_q" value="{{ filters.q }}">
+  <input type="hidden" name="filter_status" value="{{ filters.status }}">
+  {% if error and edit_id == form_id %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
+  <div class="field-grid">
+    <label class="field"><span>公司</span><input name="company" value="{{ value.get('company', job.company if job else '') }}" maxlength="160" required></label>
+    <label class="field"><span>岗位</span><input name="title" value="{{ value.get('title', job.title if job else '') }}" maxlength="160" required></label>
+    <label class="field"><span>当前进度</span><select name="status" aria-label="当前进度">{% for key, label in job_status_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == value.get('status', job.status if job else 'saved') else '' }}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="field"><span>投递日期</span><input type="date" name="applied_on" value="{{ value.get('applied_on', job.applied_on if job else '') }}"></label>
+    <label class="field"><span>下一步</span><input name="next_action" maxlength="300" value="{{ value.get('next_action', job.next_action if job else '') }}" placeholder="例如：准备二面项目介绍"></label>
+    <label class="field"><span>下一步日期</span><input type="date" name="next_action_on" value="{{ value.get('next_action_on', job.next_action_on if job else '') }}"></label>
+  </div>
+  <label class="field"><span>备注</span><textarea name="notes" rows="2">{{ value.get('notes', job.notes if job else '') }}</textarea></label>
+  <details class="career-extra-fields" {{ 'open' if detail_form|default(false) or (error and edit_id == form_id) else '' }}><summary>JD、来源与其他信息</summary>
+    <div class="field-grid">
+      <label class="field"><span>地点</span><input name="location" value="{{ value.get('location', job.location if job else '') }}"></label>
+      <label class="field"><span>来源链接（仅记录）</span><input name="source_url" value="{{ value.get('source_url', job.source_url if job else '') }}"></label>
+      <label class="field"><span>目标档位</span><select name="tier" aria-label="目标档位">{% for tier in ['A','B','C'] %}<option {{ 'selected' if tier == value.get('tier', job.tier if job else 'B') else '' }}>{{ tier }}</option>{% endfor %}</select></label>
+    </div>
+    <label class="field"><span>职位描述 JD（可后补）</span><textarea name="jd_text" rows="6">{{ value.get('jd_text', job.jd_text if job else '') }}</textarea></label>
+    {% if job %}<label class="field"><span>阶段备注（仅变更进度时记录）</span><input name="stage_note" value="{{ value.get('stage_note', '') }}" maxlength="2000"></label>{% endif %}
+  </details>
+  <div class="inline-actions"><button class="primary-button" type="submit">{{ '添加记录' if not job else '保存修改' }}</button><a class="secondary-button inline-button" href="{{ url_for('career_job_detail', job_id=job.id) if detail_form|default(false) else url_for('career').include_query_params(q=filters.q, status=filters.status) ~ '#applications' }}">取消</a></div>
+</form>

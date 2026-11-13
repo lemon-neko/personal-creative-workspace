@@ -1,1 +1,132 @@
-<article class="ats-sheet {{ 'has-photo' if show_photo and photo_url else '' }}"><header><div class="ats-identity"><h1>{{ structured.personal_info.name or resume_title or '姓名' }}</h1><p class="ats-role">{{ structured.personal_info.title or target_role }}</p><p class="ats-contact">{% for key in ['phone','email','experience_years','age','location','website','github'] %}{% if structured.personal_info.get(key) %}<span>{{ structured.personal_info.get(key) }}{% if key == 'age' %}岁{% endif %}</span>{% endif %}{% endfor %}</p></div>{% if show_photo and photo_url %}<img class="ats-photo" src="{{ photo_url }}" alt="简历照片">{% endif %}</header>{% for section in structured.sections if section.visible %}{% if section.key == 'summary' and structured.summary %}<section><h2>{{ section.title }}</h2>{% for paragraph in structured.summary.split('\n') if paragraph %}<p>{{ paragraph }}</p>{% endfor %}</section>{% endif %}{% if section.key == 'work_experience' and structured.work_experience %}<section><h2>{{ section.title }}</h2>{% for row in structured.work_experience %}<div class="ats-entry"><div><strong>{{ row.title }}</strong><span>{{ row.years }}</span></div><p class="ats-subline">{{ row.company }}{% if row.location %} · {{ row.location }}{% endif %}</p><ul>{% for bullet in row.description %}<li>{{ bullet }}</li>{% endfor %}</ul></div>{% endfor %}</section>{% endif %}{% if section.key == 'education' and structured.education %}<section><h2>{{ section.title }}</h2>{% for row in structured.education %}<div class="ats-entry"><div><strong>{{ row.institution }}</strong><span>{{ row.years }}</span></div><p class="ats-subline">{{ row.degree }}</p>{% if row.description %}<p>{{ row.description }}</p>{% endif %}</div>{% endfor %}</section>{% endif %}{% if section.key == 'projects' and structured.projects %}<section><h2>{{ section.title }}</h2>{% for row in structured.projects %}<div class="ats-entry"><div><strong>{{ row.name }}</strong><span>{{ row.years }}</span></div>{% if row.role %}<p class="ats-subline">{{ row.role }}</p>{% endif %}<ul>{% for bullet in row.description %}<li>{{ bullet }}</li>{% endfor %}</ul></div>{% endfor %}</section>{% endif %}{% if section.key == 'skills' and structured.skills %}<section><h2>{{ section.title }}</h2><p>{{ structured.skills|join(' · ') }}</p></section>{% endif %}{% if section.key == 'self_evaluation' and structured.self_evaluation %}<section><h2>{{ section.title }}</h2><ul>{% for bullet in structured.self_evaluation %}<li>{{ bullet }}</li>{% endfor %}</ul></section>{% endif %}{% endfor %}</article>
+{% from '_resume_icons.html' import resume_contact_item %}
+{% set personal = structured.personal_info %}
+<article class="ats-sheet resume-template-{{ active_template_key }} {{ 'has-photo' if show_photo and photo_url else '' }}" data-resume-template="{{ active_template_key }}">
+  <header>
+    <div class="ats-identity">
+      <h1>{{ personal.name or resume_title or '姓名' }}</h1>
+      {% if active_template_key == 'china_single_photo' %}
+      {% set has_primary_contact = personal.phone or personal.email or personal.website or personal.github %}
+      {% set education_label = '' %}
+      {% if structured.education %}
+        {% set education_label = structured.education[0].institution ~ ('（' ~ structured.education[0].degree ~ '）' if structured.education[0].degree else '') %}
+      {% endif %}
+      {% set role_label = personal.title or target_role %}
+      {% set has_secondary_contact = personal.experience_years or role_label or education_label or personal.location or personal.age %}
+      {% if has_primary_contact %}
+      <p class="ats-contact ats-contact-primary">
+        {% if personal.phone %}{{ resume_contact_item('phone', personal.phone) }}{% endif %}
+        {% if personal.email %}{{ resume_contact_item('mail', personal.email) }}{% endif %}
+        {% if personal.website %}{{ resume_contact_item('world', personal.website) }}{% endif %}
+        {% if personal.github %}{{ resume_contact_item('brand-github', personal.github) }}{% endif %}
+      </p>
+      {% endif %}
+      {% if has_secondary_contact %}
+      <p class="ats-contact ats-contact-secondary">
+        {% if personal.experience_years %}{{ resume_contact_item('briefcase', personal.experience_years ~ ('' if '经验' in personal.experience_years else '经验')) }}{% endif %}
+        {% if role_label %}{{ resume_contact_item('target', role_label) }}{% endif %}
+        {% if education_label %}{{ resume_contact_item('school', education_label) }}{% endif %}
+        {% if personal.location %}{{ resume_contact_item('map-pin', personal.location) }}{% endif %}
+        {% if personal.age %}{{ resume_contact_item('calendar-user', personal.age ~ '岁') }}{% endif %}
+      </p>
+      {% endif %}
+      {% else %}
+        {% if personal.title or target_role %}<p class="ats-role">{{ personal.title or target_role }}</p>{% endif %}
+        <p class="ats-contact">
+          {% for key in ['phone','email','experience_years','age','location','website','github'] %}
+          {% if personal.get(key) %}<span>{{ personal.get(key) }}{% if key == 'age' %}岁{% endif %}</span>{% endif %}
+          {% endfor %}
+        </p>
+      {% endif %}
+    </div>
+    {% if show_photo and photo_url %}<img class="ats-photo" src="{{ photo_url }}" alt="简历照片">{% endif %}
+  </header>
+
+  {% for section in display_sections if section.visible %}
+    {% if section.key == 'summary' and structured.summary %}
+    <section class="resume-section-summary" data-section-key="summary">
+      <h2>{{ section.title }}</h2>
+      {% for paragraph in structured.summary.split('\n') if paragraph %}<p>{{ paragraph }}</p>{% endfor %}
+    </section>
+    {% endif %}
+
+    {% if section.key == 'skills' and structured.skills %}
+    <section class="resume-section-skills" data-section-key="skills">
+      <h2>{{ section.title }}</h2>
+      <ul class="ats-skill-list">{% for skill in structured.skills %}<li>{{ skill }}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+
+    {% if section.key == 'work_experience' and work_groups %}
+    <section data-section-key="work_experience">
+      <h2>{{ section.title }}</h2>
+      {% for group in work_groups %}
+      <div class="resume-employer">
+        <div class="resume-employer-heading">
+          <strong>{{ group.company }}</strong>
+          <span class="resume-employer-location">{{ group.location }}</span>
+          <span class="resume-employer-years">{{ group.years }}</span>
+        </div>
+        <div class="resume-position-list">
+          {% for position in group.positions %}
+          <div class="resume-position">
+            <div class="resume-position-heading"><strong>{{ position.title }}</strong><span>{% if group.positions|length > 1 and position.years != group.years %}{{ position.years }}{% endif %}</span></div>
+            {% if position.description_groups %}
+              {% if position.description_intro %}<ul>{% for bullet in position.description_intro %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}
+              <div class="resume-responsibility-list">
+                {% for responsibility in position.description_groups %}
+                <div class="resume-responsibility">
+                  <strong>{{ responsibility.title }}</strong>
+                  {% if responsibility.bullets %}<ul>{% for bullet in responsibility.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}
+                </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <ul>{% for bullet in position.description %}<li>{{ bullet }}</li>{% endfor %}</ul>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if section.key == 'projects' and structured.projects %}
+    <section data-section-key="projects">
+      <h2>{{ section.title }}</h2>
+      {% for row in structured.projects %}
+      {% set has_project_structure = row.summary or row.tech_stack or row.responsibilities %}
+      <div class="ats-entry resume-project-entry">
+        <div class="ats-entry-heading resume-project-heading"><strong>{{ row.name }}</strong><b>{{ row.role }}</b><span>{{ row.years }}</span></div>
+        {% if has_project_structure %}
+          {% if row.summary %}<div class="resume-project-block resume-project-summary"><strong>项目简介</strong><p>{{ row.summary }}</p></div>{% endif %}
+          {% if row.tech_stack %}<div class="resume-project-block resume-project-tech"><strong>技术栈</strong><p>{{ row.tech_stack|join(' · ') }}</p></div>{% endif %}
+          {% if row.responsibilities %}<div class="resume-project-block resume-project-responsibilities"><strong>个人职责</strong><ul>{% for bullet in row.responsibilities %}<li>{{ bullet }}</li>{% endfor %}</ul></div>{% endif %}
+        {% else %}
+          <ul>{% for bullet in row.description %}<li>{{ bullet }}</li>{% endfor %}</ul>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if section.key == 'education' and structured.education %}
+    <section data-section-key="education">
+      <h2>{{ section.title }}</h2>
+      {% for row in structured.education %}
+      <div class="ats-entry">
+        <div class="ats-entry-heading"><strong>{{ row.institution }}</strong><b>{{ row.degree }}</b><span>{{ row.years }}</span></div>
+        {% if row.description %}<p>{{ row.description }}</p>{% endif %}
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if section.key == 'self_evaluation' and structured.self_evaluation %}
+    <section data-section-key="self_evaluation">
+      <h2>{{ section.title }}</h2>
+      <ul>{% for bullet in structured.self_evaluation %}<li>{{ bullet }}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+  {% endfor %}
+</article>

@@ -11,9 +11,10 @@ import sqlite3
 import tempfile
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime
+from contextlib import closing
+from datetime import date, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
@@ -38,15 +39,17 @@ MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 MAX_DOCX_EXPANDED_BYTES = 50 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".md", ".txt", ".png", ".jpg", ".jpeg"}
 DOCUMENT_KINDS = {"resume", "certificate", "project", "job", "other"}
-JOB_STATUSES = {
-    "saved",
-    "assessing",
-    "applying",
-    "interviewing",
-    "offer",
-    "rejected",
-    "withdrawn",
-    "archived",
+JOB_STATUS_LABELS = {
+    "saved": "待投递", "assessing": "评估中", "applying": "已投递",
+    "written_test": "笔试", "interview_1": "一面", "interview_2": "二面",
+    "final_interview": "终面", "hr_interview": "HR 面",
+    "interviewing": "面试中（未分轮次）", "offer": "Offer",
+    "rejected": "未通过", "withdrawn": "已撤回", "archived": "已归档",
+}
+JOB_STATUSES = set(JOB_STATUS_LABELS)
+JOB_INLINE_FIELDS = {
+    "company": 160, "title": 160, "status": 40, "applied_on": 10,
+    "next_action": 300, "next_action_on": 10, "notes": 20_000,
 }
 PROJECT_STATUSES = {"draft", "active", "archived"}
 RESUME_STATUSES = {"draft", "active", "archived"}
@@ -56,7 +59,7 @@ CAMPAIGN_STATUSES = {"planned", "active", "completed", "archived"}
 REFERENCE_STATUSES = {"backlog", "reading", "building", "verified", "paused"}
 LEARNING_PATH_STATUSES = {"active", "completed", "archived"}
 LEARNING_STAGE_STATUSES = REFERENCE_STATUSES
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 
 def _now() -> str:
@@ -165,6 +168,10 @@ class JobOpportunity:
     captured_at: str = ""
     is_primary: int = 0
     capability_summary: str = ""
+    tier: str = "B"
+    applied_on: str = ""
+    next_action: str = ""
+    next_action_on: str = ""
 
 
 @dataclass(frozen=True)
@@ -174,6 +181,20 @@ class JobStageEvent:
     status: str
     note: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class JobResumeSubmission:
+    id: int
+    job_id: str
+    resume_id: str | None
+    revision: int
+    title: str
+    target_role: str
+    structured_data: str
+    template_key: str
+    photo_asset_id: str | None
+    recorded_at: str
 
 
 @dataclass(frozen=True)
@@ -587,6 +608,23 @@ class CareerRepository:
                 4: RESUME_STUDIO_SCHEMA,
                 5: RESUME_PHOTO_SCHEMA,
                 6: LEARNING_PATH_SCHEMA,
+                7: """ALTER TABLE jobs ADD COLUMN tier TEXT NOT NULL DEFAULT 'B';
+                ALTER TABLE jobs ADD COLUMN applied_on TEXT NOT NULL DEFAULT '';
+                ALTER TABLE jobs ADD COLUMN next_action TEXT NOT NULL DEFAULT '';
+                ALTER TABLE jobs ADD COLUMN next_action_on TEXT NOT NULL DEFAULT '';
+                PRAGMA user_version = 7;""",
+                8: """CREATE TABLE job_resume_submissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    resume_id TEXT REFERENCES resumes(id) ON DELETE SET NULL,
+                    revision INTEGER NOT NULL, title TEXT NOT NULL,
+                    target_role TEXT NOT NULL, structured_data TEXT NOT NULL,
+                    template_key TEXT NOT NULL,
+                    photo_asset_id TEXT REFERENCES resume_assets(id) ON DELETE SET NULL,
+                    recorded_at TEXT NOT NULL
+                );
+                CREATE INDEX ix_job_resume_submissions_job ON job_resume_submissions(job_id,id);
+                PRAGMA user_version = 8;""",
             },
         )
 
@@ -753,14 +791,17 @@ class CareerRepository:
             raise
 
     def delete_resume_asset_if_unreferenced(self, asset_id: str) -> bool:
-        """Remove an import-created asset only when no resume references it."""
+        """Keep photos referenced by either a live resume or a submitted snapshot."""
 
         asset = self.resume_asset(asset_id)
         if asset is None:
             return False
         with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             referenced = connection.execute(
-                "SELECT 1 FROM resumes WHERE photo_asset_id=? LIMIT 1", (asset_id,)
+                """SELECT 1 FROM resumes WHERE photo_asset_id=?
+                   UNION ALL SELECT 1 FROM job_resume_submissions WHERE photo_asset_id=? LIMIT 1""",
+                (asset_id, asset_id),
             ).fetchone()
             if referenced is not None:
                 return False
@@ -1030,12 +1071,16 @@ class CareerRepository:
         title: str,
         target_role: str = "",
         notes: str = "",
+        template_key: str | None = None,
     ) -> ResumeVersion:
         current = self.resume(resume_id)
         if current is None or not current.is_structured:
             raise KeyError(resume_id)
         if not title.strip():
             raise ValueError("简历名称不能为空")
+        template_key = template_key or current.template_key
+        if template_key not in RESUME_TEMPLATE_KEYS:
+            raise ValueError("简历模板无效")
         project_ids = tuple(
             dict.fromkeys(
                 str(row.get("project_id", ""))
@@ -1049,7 +1094,8 @@ class CareerRepository:
         with self.connect() as connection:
             cursor = connection.execute(
                 """UPDATE resumes SET title=?,target_role=?,notes=?,project_ids=?,
-                structured_data=?,source_fingerprint=?,revision=revision+1,updated_at=?
+                structured_data=?,source_fingerprint=?,template_key=?,
+                revision=revision+1,updated_at=?
                 WHERE id=? AND revision=?""",
                 (
                     title.strip()[:160],
@@ -1058,6 +1104,7 @@ class CareerRepository:
                     json.dumps(project_ids, ensure_ascii=False),
                     serialize_structured_resume(structured),
                     self.resume_source_fingerprint(project_ids),
+                    template_key,
                     _now(),
                     resume_id,
                     expected_revision,
@@ -1154,54 +1201,194 @@ class CareerRepository:
         )
 
     def jobs(self) -> tuple[JobOpportunity, ...]:
-        return self._rows("SELECT * FROM jobs ORDER BY updated_at DESC", JobOpportunity)
+        return self._rows("SELECT * FROM jobs ORDER BY updated_at DESC, rowid DESC", JobOpportunity)
 
     def job(self, job_id: str) -> JobOpportunity | None:
         rows = self._rows("SELECT * FROM jobs WHERE id = ?", JobOpportunity, (job_id,))
         return rows[0] if rows else None
 
-    def add_job(
-        self,
-        *,
-        company: str,
-        title: str,
-        jd_text: str,
-        location: str = "",
-        source_url: str = "",
-        notes: str = "",
-    ) -> JobOpportunity:
-        if not company.strip() or not title.strip() or not jd_text.strip():
-            raise ValueError("公司、岗位和职位描述不能为空")
-        stamp = _now()
-        job = JobOpportunity(
-            _id("job"),
-            company.strip()[:160],
-            title.strip()[:160],
-            location.strip()[:160],
-            source_url.strip()[:1000],
-            jd_text.strip()[:100_000],
-            "saved",
-            notes.strip()[:20_000],
-            stamp,
-            stamp,
-        )
-        self._insert("jobs", job)
-        self.add_job_event(job.id, "saved", "职位已加入工作台")
-        return job
-
-    def update_job_status(
-        self, job_id: str, status: str, note: str = ""
-    ) -> JobOpportunity:
+    @staticmethod
+    def _validate_job(*, company: str, title: str, status: str, tier: str,
+                      applied_on: str, next_action_on: str) -> None:
+        if not company.strip() or not title.strip():
+            raise ValueError("公司和岗位不能为空")
         if status not in JOB_STATUSES:
             raise ValueError("职位状态无效")
+        if tier not in {"A", "B", "C"}:
+            raise ValueError("岗位档位只能是 A、B 或 C")
+        for value in (applied_on, next_action_on):
+            if value:
+                try:
+                    date.fromisoformat(value)
+                except ValueError as error:
+                    raise ValueError("日期格式无效") from error
+
+    def add_job(
+        self, *, company: str, title: str, jd_text: str = "",
+        location: str = "", source_url: str = "", notes: str = "",
+        tier: str = "B", applied_on: str = "", next_action: str = "",
+        next_action_on: str = "", status: str = "saved",
+        creation_token: str = "",
+    ) -> JobOpportunity:
+        self._validate_job(company=company, title=title, status=status, tier=tier,
+                           applied_on=applied_on, next_action_on=next_action_on)
+        stamp = _now()
+        try:
+            job_id = f"job-inline-{UUID(creation_token).hex}" if creation_token else _id("job")
+        except (ValueError, AttributeError) as error:
+            raise ValueError("新记录标识无效，请刷新页面后重试") from error
+        job = JobOpportunity(
+            job_id, company.strip()[:160], title.strip()[:160],
+            location.strip()[:160], source_url.strip()[:1000], jd_text.strip()[:100_000],
+            status, notes.strip()[:20_000], stamp, stamp,
+            tier=tier, applied_on=applied_on, next_action=next_action.strip()[:300],
+            next_action_on=next_action_on,
+        )
+        data = job.__dict__
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if creation_token:
+                existing = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+                if existing is not None:
+                    return JobOpportunity(**dict(existing))
+            connection.execute(
+                f"INSERT INTO jobs({','.join(data)}) VALUES({','.join(':'+key for key in data)})", data
+            )
+            connection.execute(
+                "INSERT INTO job_events(job_id,status,note,created_at) VALUES(?,?,?,?)",
+                (job.id, status, "职位已加入工作台", stamp),
+            )
+        return job
+
+    def patch_job(self, job_id: str, changes: dict[str, str]) -> JobOpportunity:
+        """Update only table fields, preserving all other current values under one lock."""
+        if not changes or set(changes) - JOB_INLINE_FIELDS.keys():
+            raise ValueError("只能修改投递表中的字段")
+        if any(not isinstance(value, str) for value in changes.values()):
+            raise ValueError("字段内容必须是文本")
+        normalized = {key: (value.strip() if key in {"applied_on", "next_action_on", "status"}
+                            else value.strip()[:JOB_INLINE_FIELDS[key]]) for key, value in changes.items()}
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            current = dict(row)
+            merged = current | normalized
+            self._validate_job(**{key: merged[key] for key in (
+                "company", "title", "status", "tier", "applied_on", "next_action_on",
+            )})
+            changed = {key: value for key, value in normalized.items() if current[key] != value}
+            if changed:
+                stamp = _now()
+                connection.execute(
+                    f"UPDATE jobs SET {','.join(key+'=?' for key in changed)},updated_at=? WHERE id=?",
+                    (*changed.values(), stamp, job_id),
+                )
+                if "status" in changed:
+                    connection.execute(
+                        "INSERT INTO job_events(job_id,status,note,created_at) VALUES(?,?,?,?)",
+                        (job_id, changed["status"], "", stamp),
+                    )
+            saved = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            return JobOpportunity(**dict(saved))
+
+    def update_job(self, job_id: str, *, company: str, title: str, status: str,
+                   tier: str, applied_on: str, next_action: str, next_action_on: str,
+                   location: str = "", source_url: str = "", jd_text: str = "",
+                   notes: str = "", stage_note: str = "") -> JobOpportunity:
+        self._validate_job(company=company, title=title, status=status, tier=tier,
+                           applied_on=applied_on, next_action_on=next_action_on)
+        stamp = _now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            old = connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if old is None:
+                raise KeyError(job_id)
+            connection.execute(
+                """UPDATE jobs SET company=?,title=?,status=?,tier=?,applied_on=?,
+                   next_action=?,next_action_on=?,location=?,source_url=?,jd_text=?,notes=?,updated_at=?
+                   WHERE id=?""",
+                (company.strip()[:160], title.strip()[:160], status, tier, applied_on,
+                 next_action.strip()[:300], next_action_on, location.strip()[:160],
+                 source_url.strip()[:1000], jd_text.strip()[:100_000], notes.strip()[:20_000], stamp, job_id),
+            )
+            if old["status"] != status:
+                connection.execute(
+                    "INSERT INTO job_events(job_id,status,note,created_at) VALUES(?,?,?,?)",
+                    (job_id, status, stage_note.strip()[:2000], stamp),
+                )
+        return self.job(job_id)  # type: ignore[return-value]
+
+    def update_job_status(self, job_id: str, status: str, note: str = "") -> JobOpportunity:
+        if status not in JOB_STATUSES:
+            raise ValueError("职位状态无效")
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            old = connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if old is None:
+                raise KeyError(job_id)
+            if old["status"] != status:
+                stamp = _now()
+                connection.execute("UPDATE jobs SET status=?,updated_at=? WHERE id=?", (status, stamp, job_id))
+                connection.execute(
+                    "INSERT INTO job_events(job_id,status,note,created_at) VALUES(?,?,?,?)",
+                    (job_id, status, note.strip()[:2000], stamp),
+                )
+        return self.job(job_id)  # type: ignore[return-value]
+
+    def job_submissions(self, job_id: str | None = None) -> tuple[JobResumeSubmission, ...]:
+        where = " WHERE job_id=?" if job_id is not None else ""
+        return self._rows("SELECT * FROM job_resume_submissions" + where + " ORDER BY id DESC",
+                          JobResumeSubmission, (job_id,) if job_id is not None else ())
+
+    def job_submission(self, submission_id: int) -> JobResumeSubmission | None:
+        rows = self._rows("SELECT * FROM job_resume_submissions WHERE id=?",
+                          JobResumeSubmission, (submission_id,))
+        return rows[0] if rows else None
+
+    def record_job_submission(self, job_id: str, resume_id: str) -> JobResumeSubmission:
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute("SELECT id FROM jobs WHERE id=?", (job_id,)).fetchone() is None:
+                raise KeyError(job_id)
+            row = connection.execute("SELECT * FROM resumes WHERE id=?", (resume_id,)).fetchone()
+            if row is None:
+                raise ValueError("请选择有效简历")
+            resume = self._resume(row)
+            if not resume.is_structured or not (
+                resume.resume_kind == "master" or
+                (resume.resume_kind == "tailored" and resume.job_id == job_id)
+            ):
+                raise ValueError("只能记录主简历或该岗位的定制简历")
+            cursor = connection.execute(
+                """INSERT INTO job_resume_submissions(job_id,resume_id,revision,title,target_role,
+                   structured_data,template_key,photo_asset_id,recorded_at) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (job_id, resume.id, resume.revision, resume.title, resume.target_role,
+                 resume.structured_data, resume.template_key, resume.photo_asset_id, _now()),
+            )
+            submission_id = cursor.lastrowid
+        return self.job_submission(submission_id)  # type: ignore[arg-type,return-value]
+
+    def update_job_plan(
+        self, job_id: str, *, tier: str, applied_on: str,
+        next_action: str, next_action_on: str,
+    ) -> JobOpportunity:
+        if tier not in {"A", "B", "C"}:
+            raise ValueError("岗位档位只能是 A、B 或 C")
         if self.job(job_id) is None:
             raise KeyError(job_id)
+        for value in (applied_on, next_action_on):
+            if value:
+                try:
+                    date.fromisoformat(value)
+                except ValueError as error:
+                    raise ValueError("日期格式无效") from error
         with self.connect() as connection:
             connection.execute(
-                "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
-                (status, _now(), job_id),
+                "UPDATE jobs SET tier=?,applied_on=?,next_action=?,next_action_on=?,updated_at=? WHERE id=?",
+                (tier, applied_on, next_action.strip()[:300], next_action_on, _now(), job_id),
             )
-        self.add_job_event(job_id, status, note)
         return self.job(job_id)  # type: ignore[return-value]
 
     def add_job_event(self, job_id: str, status: str, note: str = "") -> None:

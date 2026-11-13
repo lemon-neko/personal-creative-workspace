@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}候选人档案 · 羽白工作台{% endblock %}
 {% block content %}
-<header class="page-header"><a class="back-link" href="{{ url_for('career') }}">← 返回求职驾驶舱</a><p class="eyebrow">SOURCE OF TRUTH</p><h1>候选人档案</h1><p>简历里的判断应当能回到这里的事实与证据。</p></header>
+<header class="page-header"><a class="back-link" href="{{ url_for('career') }}">← 返回求职</a><p class="eyebrow">SOURCE OF TRUTH</p><h1>候选人档案</h1><p>简历里的判断应当能回到这里的事实与证据。</p></header>
 {% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
 {% set values = candidate if candidate else profile %}
 <div class="editor-layout">

@@ -10,15 +10,24 @@ document.addEventListener("htmx:configRequest", (event) => {
 
 const palette = document.querySelector("#search-palette");
 const paletteInput = document.querySelector("#palette-query");
+function openSearch() {
+  if (palette && !palette.open) {
+    palette.showModal();
+    paletteInput?.focus();
+  }
+}
 document.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
-    if (palette?.showModal) {
-      palette.showModal();
-      window.setTimeout(() => paletteInput?.focus(), 0);
-    } else {
-      window.location.assign("/search");
-    }
+    if (palette?.showModal) openSearch();
+    else window.location.assign("/search");
+  }
+});
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-open-search]") && palette?.showModal
+      && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+    event.preventDefault();
+    openSearch();
   }
 });
 palette?.addEventListener("click", (event) => {

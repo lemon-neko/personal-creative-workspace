@@ -1,19 +1,24 @@
 {% extends "base.html" %}
 {% block title %}{{ resume.title }} · 简历工作室{% endblock %}
-{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/resume-studio.css') }}?v=20260827-3">{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/resume-studio.css') }}?v=20260913-3">{% endblock %}
 {% block content %}
 {% set status_label = '使用中' if resume.status == 'active' else ('已归档' if resume.status == 'archived' else '草稿') %}
 <div class="resume-studio-page">
-  <header class="resume-commandbar">
-    <div class="resume-command-context">
+  {% include '_resume_icon_library.html' %}
+  <header class="resume-workspace-header">
+    <div class="resume-workspace-copy">
       <a class="back-link" href="{{ url_for('career_resumes') }}">← 返回简历工作室</a>
-      <span>Revision {{ resume.revision }}</span>
+      <div class="resume-title-line">
+        <h1>{{ resume.title }}</h1>
+        <span>{{ status_label }}</span>
+      </div>
+      <p>{{ '主简历' if resume.resume_kind == 'master' else '岗位定制版' }} · Revision {{ resume.revision }}{% if resume.target_role %} · {{ resume.target_role }}{% endif %}</p>
     </div>
     <nav class="resume-export-actions" aria-label="简历导出">
-      <a class="resume-export-link resume-export-primary" href="{{ url_for('resume_pdf', resume_id=resume.id) }}?variant=china">导出国内版</a>
-      <a class="resume-export-link" href="{{ url_for('resume_pdf', resume_id=resume.id) }}?variant=ats">导出 ATS 版</a>
+      <a class="resume-export-link resume-export-primary" href="{{ url_for('resume_pdf', resume_id=resume.id) }}?variant=china">导出国内版 PDF</a>
+      <a class="resume-export-link" href="{{ url_for('resume_pdf', resume_id=resume.id) }}?variant=ats">导出 ATS PDF</a>
       <a class="resume-export-link" href="{{ url_for('resume_pdf', resume_id=resume.id) }}?variant=china&amp;html=true">打印 HTML</a>
-      <button class="resume-command-save" type="submit" form="resume-editor-form">保存修改</button>
+      <button class="resume-command-save" type="submit" form="resume-editor-form">保存</button>
     </nav>
   </header>
 
@@ -21,46 +26,32 @@
   {% if not source_current %}<div class="message warning">候选人档案或项目证据已经变化。这份简历不会被自动覆盖，请人工复核事实。</div>{% endif %}
   {% if error %}<div class="message error">{{ error }}</div>{% endif %}
 
-  <section class="resume-page-heading" aria-labelledby="resume-page-title">
-    <div>
-      <span class="resume-kind-label">{{ '主简历' if resume.resume_kind == 'master' else '岗位定制版' }}</span>
-      <h1 id="resume-page-title">编辑简历</h1>
-      <p>{{ resume.title }}{% if resume.target_role %}<span>{{ resume.target_role }}</span>{% endif %}</p>
-    </div>
-    <dl class="resume-page-meta">
-      <div><dt>状态</dt><dd>{{ status_label }}</dd></div>
-      <div><dt>版式</dt><dd>单栏 A4</dd></div>
-    </dl>
-  </section>
-
-  <section class="resume-photo-tools" aria-label="简历照片">
-    <div class="resume-photo-summary">
-      {% if photo_url %}<img src="{{ photo_url }}" alt="当前简历照片">{% endif %}
-      <div>
-        <strong>{{ '照片已安全保存' if photo_url else '当前未设置照片' }}</strong>
-        <p>仅用于工作台预览和国内版 PDF，不会进入模型、搜索或手机端。</p>
-      </div>
-    </div>
+  <details class="resume-photo-tools">
+    <summary>
+      <span>{% if photo_url %}<img src="{{ photo_url }}" alt="当前简历照片">{% endif %}</span>
+      <strong>{{ '照片与国内版设置' if photo_url else '添加国内版照片' }}</strong>
+      <small>照片不会进入 ATS 版、模型、搜索或手机端</small>
+    </summary>
     <div class="resume-photo-actions">
       <form class="resume-photo-form" action="{{ url_for('replace_resume_photo', resume_id=resume.id) }}" method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <input type="hidden" name="revision" value="{{ resume.revision }}">
         <label class="resume-file-picker">
           <input class="sr-only" type="file" name="upload" accept="image/png,image/jpeg" required data-resume-photo-input>
-          <span>选择新照片</span>
+          <span>选择照片</span>
         </label>
         <small data-resume-file-name>PNG 或 JPEG</small>
-        <button class="secondary-button" type="submit">更新照片</button>
+        <button class="secondary-button" type="submit">更新</button>
       </form>
       {% if photo_url %}
       <form action="{{ url_for('remove_resume_photo', resume_id=resume.id) }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <input type="hidden" name="revision" value="{{ resume.revision }}">
-        <button class="resume-remove-photo" type="submit">移除</button>
+        <button class="resume-remove-photo" type="submit">移除照片</button>
       </form>
       {% endif %}
     </div>
-  </section>
+  </details>
 
   <form id="resume-editor-form" action="{{ url_for('save_resume_detail', resume_id=resume.id) }}" method="post" class="resume-editor-layout">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
@@ -68,26 +59,26 @@
     <section class="resume-form-panel" aria-label="简历字段编辑">
       <header class="resume-editor-heading">
         <div>
-          <h2>简历内容</h2>
-          <p>展开需要调整的部分，右侧会同步生成真实 A4 预览。</p>
+          <h2>内容与结构</h2>
+          <p>按招聘者的阅读顺序整理，右侧同步生成 A4 预览。</p>
         </div>
-        <span>{{ status_label }}</span>
       </header>
-      <div class="resume-version-fields field-grid">
+      <div class="resume-version-fields field-grid resume-version-grid">
         <label class="field"><span>版本名称</span><input name="title" value="{{ resume.title }}" required></label>
         <label class="field"><span>目标岗位</span><input name="target_role" value="{{ resume.target_role }}"></label>
+        <label class="field resume-template-field"><span>简历模板</span><select name="template_key" data-resume-template-select>{% for key, label in resume_template_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == active_template_key else '' }}>{{ label }}</option>{% endfor %}</select><small>技术社招版固定按摘要、教育、技能、工作和项目组织；ATS 版保留自定义区块顺序。</small></label>
       </div>
       <label class="field resume-notes-field"><span>版本备注</span><textarea name="notes" rows="3">{{ resume.notes }}</textarea></label>
       {% include '_resume_fields.html' %}
       <div class="resume-savebar">
-        <div><strong>保存当前版本</strong><span>不会修改候选人档案、项目证据或其他简历。</span></div>
+        <div><strong>保存当前版本</strong><span>只更新这份表达，不修改档案与项目事实。</span></div>
         <button class="primary-button" type="submit">保存修改</button>
       </div>
     </section>
 
     <aside class="resume-preview-panel" aria-label="简历实时预览">
       <header class="resume-preview-toolbar">
-        <div><strong>实时预览</strong><span>国内照片版</span></div>
+        <div><strong>实时预览</strong><span>{{ resume_template_labels.get(active_template_key, 'ATS 基础版') }} · 国内版</span></div>
         <span data-resume-preview-scale>适应宽度</span>
       </header>
       <div class="resume-preview-stage">
@@ -116,4 +107,4 @@
   {% endif %}
 </div>
 {% endblock %}
-{% block extra_scripts %}<script defer src="{{ url_for('static', path='/resume-studio.js') }}?v=20260827-3"></script>{% endblock %}
+{% block extra_scripts %}<script defer src="{{ url_for('static', path='/resume-studio.js') }}?v=20260913-3"></script>{% endblock %}

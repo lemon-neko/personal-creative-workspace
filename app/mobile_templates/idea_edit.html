@@ -30,30 +30,4 @@
   </div>
 </section>
 
-<section class="paper-card distill-card">
-  <details>
-    <summary>整理为知识卡</summary>
-    <p class="quiet-note">只新增一张独立知识卡，不修改这条随想。手机端只做手工拆卡，不调用模型。</p>
-    <form id="mobile-distill-form">
-      <label>卡片类型
-        <select name="card_type">
-          <option value="claim">观点</option>
-          <option value="concept">概念</option>
-          <option value="question">问题</option>
-          <option value="method">方法</option>
-          <option value="observation">观察</option>
-        </select>
-      </label>
-      <label>标题<input name="title" maxlength="160" required></label>
-      <label>原子结论<textarea name="body" rows="6" required></textarea></label>
-      <label>概念<input name="concepts" placeholder="记忆，认知，Agent"></label>
-      <fieldset>
-        <legend>归入主题地图（可多选）</legend>
-        <div id="mobile-topic-options" class="topic-options"></div>
-      </fieldset>
-      <button class="primary-button" type="submit">创建知识卡</button>
-    </form>
-    <p id="distill-message" class="quiet-note" aria-live="polite"></p>
-  </details>
-</section>
 {% endblock %}

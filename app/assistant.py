@@ -14,6 +14,7 @@ from uuid import uuid4
 from app.career import CareerRepository
 from app.content import load_items
 from app.database import WORKSPACE_REGISTRY, apply_migrations, connect_database
+from app.focus import FocusRepository, focus_snapshot
 from app.knowledge_quality import inspect_knowledge_quality
 from app.knowledge_store import load_knowledge_store
 from app.workspace import SHANGHAI, items_directory
@@ -232,12 +233,13 @@ def validate_assistant_result(
 class AssistantContextBuilder:
     """Build a bounded, reviewable snapshot without private documents or secrets."""
 
-    def __init__(self, content_root: Path, career: CareerRepository, search, video, income=None) -> None:
+    def __init__(self, content_root: Path, career: CareerRepository, search, video, income=None, focus: FocusRepository | None = None) -> None:
         self.content_root = content_root
         self.career = career
         self.search = search
         self.video = video
         self.income = income
+        self.focus = focus
 
     def build(self, question: str, *, conversation_summary: str = "") -> AssistantContextSnapshot:
         clean_question = str(question).strip()[:MAX_ASSISTANT_QUESTION]
@@ -550,6 +552,38 @@ class AssistantContextBuilder:
                 },
             },
         }
+        if self.focus is not None:
+            phase = focus_snapshot(self.focus)
+            business_goals = phase["focus_business_goals"][:2]
+            state["phase_business"] = []
+            for goal in business_goals:
+                next_delivery = phase["focus_next_by_goal"][goal.id]
+                next_action = next(
+                    (
+                        action for action in self.focus.actions(next_delivery.id)
+                        if action.status not in {"done", "paused"}
+                    ),
+                    None,
+                ) if next_delivery else None
+                state["phase_business"].append({
+                    "id": goal.id,
+                    "area": goal.area,
+                    "title": _short(goal.title, 120),
+                    "status": goal.status,
+                    "target_on": goal.target_on,
+                    "next_deliverable": _short(next_delivery.title, 160) if next_delivery else "",
+                    "next_action": _short(next_action.title, 160) if next_action else "",
+                })
+                source(goal.id, "focus-goal", goal.title, f"/focus/goals/{goal.id}")
+            decision = phase["focus_next_decision"]
+            state["phase_next_decision"] = (
+                {
+                    "title": _short(decision.title, 120),
+                    "due_on": decision.due_on,
+                    "status": decision.status,
+                }
+                if decision else None
+            )
         envelope = {
             "task": "personal-decision-support",
             "question": clean_question,

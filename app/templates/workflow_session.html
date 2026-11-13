@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Agent 执行 #{{ run_id }} · AI 工作流{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/workflow-control.css') }}?v=3">{% endblock %}
+{% block content %}
+<div class="control control-inspector">
+    <nav class="control-inline" aria-label="执行导航"><a href="{{ url_for('tasks') }}">AI 工作流</a><a href="{{ url_for('workflow_run', run_id=run_id) }}">运行 #{{ run_id }}</a></nav>
+    <header class="control-title"><div><h1>Agent 执行</h1><p>{{ details.agent or 'Agent 未上报' }} · Run #{{ run_id }}</p></div>{% if details.link %}<a href="{{ details.link }}">打开原始会话</a>{% endif %}</header>
+    <div class="control-execution">
+        <section class="control-panel">
+            <header><h2>执行阶段</h2></header>
+            <ol class="control-session-stages">
+                <li><strong>Session</strong><small>{{ '已上报会话' if details.session else '未上报' }}</small></li>
+                <li><strong>Context</strong><small>独立上下文事件未采集</small></li>
+                <li><strong>Execution</strong><small>{{ time(details.started) }}</small></li>
+                <li><strong>Output</strong><small>{{ '已保存本地输出' if execution.output else '未采集' }}</small></li>
+                <li><strong>Result</strong><small>{{ details.state or '状态未知' }}</small></li>
+            </ol>
+        </section>
+        <section class="control-panel" aria-labelledby="session-stream-title">
+            <header><h2 id="session-stream-title">执行记录</h2></header>
+            <div class="control-inline control-filters">
+                <label>类型<select id="execution-kind"><option value="">全部</option><option value="sdk">SDK 遥测</option><option value="system">系统事实</option><option value="output">本地输出</option></select></label>
+                <label>搜索<input id="execution-search" type="search" placeholder="会话、结果或错误"></label>
+            </div>
+            <ol class="control-timeline" id="execution-events">
+                {% for event in execution.events %}
+                <li data-execution-kind="sdk" data-at="{{ event.at }}" data-tone="purple">
+                    <strong>{{ 'SDK 会话初始化' if event.type == 'session.ready' else 'SDK 轮次结束' }}</strong>
+                    <small class="control-run-meta">Adapter · {{ time(event.at) }}{% if event.outcome %} · {{ event.outcome }}{% endif %}</small>
+                    <details><summary>查看遥测字段</summary><pre>{{ event|tojson(indent=2) }}</pre></details>
+                </li>
+                {% endfor %}
+                {% for step in details.timeline if step.kind in ['start', 'receipt', 'unknown', 'stop'] %}
+                <li data-execution-kind="system" data-at="{{ step.at }}" data-tone="{{ 'orange' if step.kind == 'unknown' else 'blue' }}">
+                    <strong>{{ {'start':'Agent 开始','receipt':'已提交回执','unknown':'状态不确定','stop':'停止请求'}[step.kind] }}</strong>
+                    <small class="control-run-meta">Autoloop · {{ time(step.at) }} · Fact #{{ step.seq }}</small>
+                    <p>{{ step.summary or step.error or step.session or '' }}</p>
+                    <details><summary>查看事实字段（已脱敏）</summary><pre>{{ step|tojson(indent=2) }}</pre></details>
+                </li>
+                {% endfor %}
+                {% if execution.output %}
+                <li data-execution-kind="output" data-tone="green"><strong>最终输出</strong><small class="control-run-meta">工作台本地产物 · 已脱敏</small><details><summary>展开输出</summary><pre id="execution-output">{{ execution.output }}</pre><button type="button" data-copy-target="execution-output">复制输出</button></details></li>
+                {% endif %}
+            </ol>
+            <p id="execution-empty" class="control-empty" hidden>当前筛选没有记录。</p>
+            <p class="control-notice">未采集逐字输出、工具调用、工具结果、命令、终端日志及文件变化。</p>
+        </section>
+        <section class="control-panel">
+            <header><h2>执行指标</h2></header>
+            <dl class="control-metrics">
+                <dt>Agent</dt><dd>{{ details.agent or '未上报' }}</dd>
+                <dt>Worker</dt><dd>{{ details.worker or '未上报' }}</dd>
+                <dt>Session ID</dt><dd>{{ details.session or '未上报' }}{% if details.session %} <button type="button" data-copy="{{ details.session }}">复制</button>{% endif %}</dd>
+                <dt>会话续接</dt><dd>{% if details.resume %}{{ '已沿用' if details.session == details.resume else '派发时请求续接' }} {{ details.resume }}{% if details.session and details.session != details.resume %}<small class="control-run-meta">本轮启动了新会话</small>{% endif %}{% else %}未上报续接{% endif %}</dd>
+                <dt>Run ID</dt><dd>#{{ run_id }} <button type="button" data-copy="{{ run_id }}">复制</button></dd>
+                <dt>尝试</dt><dd>{{ details.attempts if details.attempts is not none else '未上报' }} 次失败</dd>
+                <dt>开始</dt><dd>{{ time(details.started) }}</dd>
+                <dt>结束</dt><dd>{{ time(details.finishedAt) }}</dd>
+                <dt>耗时</dt><dd>{{ duration ~ ' 秒' if duration is not none else '未上报' }}</dd>
+                <dt>输入 / 输出 Token</dt><dd>{{ tokens.get('input', '未上报') }} / {{ tokens.get('output', '未上报') }}</dd>
+                <dt>总 Token</dt><dd>{{ tokens.input + tokens.output if 'input' in tokens and 'output' in tokens else '未上报' }}</dd>
+                <dt>成本</dt><dd>{{ '$' ~ tokens.cost if 'cost' in tokens else '未上报' }}</dd>
+                <dt>工作项状态</dt><dd>{{ {'draft':'待验收','accepted':'已验收','decision':'待人工决策','failed':'待重新确认','approval':'待确认外发','cancelled':'已取消','running':'执行中'}.get(execution.localState, '未记录') }}</dd>
+            </dl>
+        </section>
+    </div>
+    <p id="inspect-feedback" role="status"></p>
+</div>
+{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static', path='/workflow-inspect.js') }}" defer></script>{% endblock %}

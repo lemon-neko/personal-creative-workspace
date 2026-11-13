@@ -62,6 +62,8 @@ WORKSPACE_DATA_DIR=/tmp/pcw-sandbox .venv/bin/python -m app
 
 `/settings/runtime` 只读展示 LaunchAgent、端口、Tailnet、数据权限和日志时间。LaunchAgent 不保存 API Key，日志达到限制时轮转。
 
+更新 Python 代码与模板后，执行 `.venv/bin/python -m app.runtime restart`，并检查实际页面能够正常打开；桌面启动器不启用自动重载，浏览器刷新不能代替服务重启。仅涉及桌面功能时无需使用 `--mobile`。
+
 ## Obsidian 初始化
 
 1. 在 Obsidian 把私有 `content/` 打开为 Vault。
@@ -94,3 +96,5 @@ WORKSPACE_DATA_DIR=/tmp/pcw-sandbox .venv/bin/python -m app
 - [备份与恢复](backup-restore.md)
 - [常见故障](troubleshooting.md)
 - [测试与 CI](../development/testing.md)
+
+- [桌面插件安装、切换与恢复](workbench-plugins.md)

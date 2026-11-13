@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ item.title }} · AI 工作流{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/workbench-plugins.css') }}">{% endblock %}
+{% block content %}
+<header class="workflow-heading">
+    <div><a href="{{ url_for('tasks') }}">返回 AI 工作流</a><h1>{{ item.title }}</h1></div>
+    <a href="{{ url_for('workflow_item', item_id=item.id) }}">刷新</a>
+</header>
+{% if error %}<p class="workflow-message" role="alert">{{ error }}</p>{% endif %}
+<section class="workflow-surface workflow-item">
+    {% if archived %}<p>此工作项已归档。</p>{% endif %}
+    {% if previous %}<h2>{{ state_labels.get(previous.state, previous.state) }}</h2>{% endif %}
+    {% if candidate and candidate.draft %}
+        <pre class="workflow-material">{{ candidate.draft }}</pre>
+        {% if previous.state == 'draft' and not archived %}
+        <form method="post" action="{{ url_for('workflow_accept', item_id=item.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <input type="hidden" name="turn_id" value="{{ previous.id }}">
+            <button class="primary-button">验收此产物</button>
+        </form>
+        {% endif %}
+    {% endif %}
+    {% if archived %}
+    {% elif previous and previous.state in ('approval', 'decision') and not card %}
+    <p>卡片尚未就绪或已关闭。请刷新查看。</p>
+    {% elif not previous or previous.state not in ('approved', 'running') %}
+    <form class="workflow-form" method="post" action="{{ url_for('workflow_preview', item_id=item.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <label for="workflow-objective">任务目标</label>
+        <textarea id="workflow-objective" name="objective" rows="4" maxlength="4000" required>{{ objective }}</textarea>
+        {% if card and candidate and candidate.question %}
+        <label for="workflow-choice">{{ candidate.question }}</label>
+        <select id="workflow-choice" name="choice">
+            <option value="">选择后预览</option>
+            {% for option in candidate.options %}<option value="{{ loop.index0 }}"{% if choice == loop.index0 %} selected{% endif %}>{{ option }}</option>{% endfor %}
+        </select>
+        <label for="workflow-answer">或输入文字回答</label>
+        <textarea id="workflow-answer" name="answer_text" rows="3" maxlength="4000">{{ answer_text }}</textarea>
+        {% endif %}
+        <div><button class="secondary-button">{{ '预览续跑' if card else '预览并重试' if previous and previous.state == 'failed' else '再次运行 · 预览' if previous else '预览外发' }}</button></div>
+    </form>
+    {% endif %}
+    {% if preview %}
+    <div class="workflow-preview">
+        <h2>外发预览</h2>
+        <p>{{ preview.provider }} / {{ preview.model or '尚未配置' }} · 输出上限 {{ preview.output_limit }} tokens</p>
+        <pre class="workflow-material">{{ preview.instruction }}
+
+{{ preview.material }}</pre>
+        <form method="post" action="{{ url_for('workflow_approve', item_id=item.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <input type="hidden" name="fingerprint" value="{{ preview.fingerprint }}">
+            <input type="hidden" name="previous_id" value="{{ previous.id if previous else '' }}">
+            <textarea name="objective" hidden>{{ objective }}</textarea>
+            {% if answer_text %}<textarea name="answer_text" hidden>{{ answer_text }}</textarea>{% endif %}
+            {% if choice is not none %}<input type="hidden" name="choice" value="{{ choice }}">{% endif %}
+            <button class="primary-button"{% if not model_enabled %} disabled{% endif %}>确认外发并运行</button>
+        </form>
+    </div>
+    {% endif %}
+    {% if not model_enabled and not archived %}<p>{{ execution_backend.name }} 尚未就绪。<a href="{{ url_for('models') }}">模型与成本</a></p>{% endif %}
+</section>
+{% if turns %}
+<section class="workflow-surface">
+    <h2>轮次</h2>
+    <ul class="workflow-list">{% for turn in turns %}
+        <li><span>{{ turn.created_at }} · {{ state_labels.get(turn.state, turn.state) }}</span>
+            {% if turn.run %}<a href="{{ url_for('workflow_run', run_id=turn.run) }}">运行 #{{ turn.run }}</a>{% endif %}
+            {% if turn.state in ('draft','accepted') %}<a href="{{ url_for('workflow_artifact', item_id=item.id, turn_id=turn.id) }}">查看产物</a>{% endif %}
+        </li>
+    {% endfor %}</ul>
+</section>
+{% endif %}
+{% endblock %}

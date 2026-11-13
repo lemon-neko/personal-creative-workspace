@@ -7,7 +7,9 @@
 | 想了解 | 权威入口 |
 |---|---|
 | 当前有哪些功能、入口和边界 | [功能模块](features/README.md) |
-| 系统边界、内容模型和存储方式 | [架构说明](architecture/README.md) |
+| 组件分工、技术栈和进程拓扑 | [架构说明](architecture/README.md) |
+| 从日常待办、模型请求或手机记录追踪到写入 | [关键数据流](architecture/data-flows.md) |
+| 权威数据存放位置及备份边界 | [存储架构](architecture/storage.md) |
 | Obsidian 里每个文件夹放什么 | [私有知识库目录说明](architecture/private-vault-folders.md) |
 | 日常如何记录、沉淀、创作和求职 | [操作指南](guides/README.md) |
 | 如何安装、启动、迁移、备份和排障 | [运行维护](operations/README.md) |

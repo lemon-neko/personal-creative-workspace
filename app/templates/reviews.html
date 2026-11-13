@@ -7,6 +7,7 @@
     <div><p class="eyebrow">WEEKLY ECHO</p><h1>周回顾</h1><p>不是替你总结人生，只是把散落的线索摆到同一张桌子上。</p></div>
     <div class="week-count"><strong>{{ week_items|length }}</strong><span>本周记录</span></div>
 </header>
+<section class="review-phase-note"><strong>阶段复盘</strong><p>回顾本周实际交付、空转之处和下周三件事；下方的内容周回顾仍只汇总随想记录。</p><a href="{{ url_for('focus_checkin') }}">填写阶段周复盘 →</a></section>
 
 {% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
 {% if error %}<div class="message error">{{ error }}</div>{% endif %}

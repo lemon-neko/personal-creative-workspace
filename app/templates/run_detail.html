@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}运行详情 · {{ task.title }}{% endblock %}
-{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/agent-core.css') }}?v=20260902-agent1">{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/agent-core.css') }}?v=20261111-agent2">{% endblock %}
 {% block content %}
 <div class="agent-shell agent-reading-shell">
-  <nav class="agent-back"><a href="{{ url_for('task_detail', task_id=task.id) }}">← 返回任务</a><a href="{{ url_for('runs') }}">全部运行</a></nav>
-  {% if error %}<div class="message error">{{ error }}</div>{% endif %}
+  <nav class="agent-back"><a href="{{ url_for('task_detail', task_id=task.id) }}">← 返回任务</a><a href="{{ url_for('runs') }}">全部运行</a>{% if source %}<a href="{{ url_for('focus_goal', goal_id=source[0]) }}#action-{{ source[1] }}">回到原行动</a>{% elif daily_source %}<a href="{{ url_for('legacy_workspace') if request.app.state.plugins_enabled else url_for('workspace') }}{{ '?day=' ~ daily_day if daily_day else '' }}#event-{{ daily_source }}">回到原待办</a>{% endif %}</nav>
+  {% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
   <header class="agent-detail-header run-header">
     <div><p class="agent-kicker">{{ role[1] }} · {{ run.id[-8:] }}</p><h1>{{ task.title }}</h1><p>{{ role[2] }}</p></div>
-    <span class="agent-status status-{{ run.status }}">{{ run_status_labels[run.status] }}</span>
+    <span class="agent-status status-{{ run.status }}">{{ '待决策' if run.status == 'planned' and decision and not decision.answer else '待继续' if run.status == 'planned' and decision else run_status_labels[run.status] }}</span>
   </header>
 
   <section class="agent-step-list" aria-label="执行步骤">
@@ -16,17 +16,54 @@
     {% endfor %}
   </section>
 
-  <section class="agent-run-actions">
-    {% if run.status == 'planned' %}
-    <div><strong>准备执行本地计划</strong><p>会检索最多 8 条本地来源并生成私有工作纸，不联网、不调用模型。</p></div>
-    <form action="{{ url_for('execute_agent_run', run_id=run.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="primary-button" type="submit">运行本地计划</button></form>
+  <section class="agent-run-actions" id="run-actions"{% if run.status == 'running' %} hx-get="{{ url_for('run_detail', run_id=run.id) }}" hx-trigger="every 3s" hx-select=".agent-reading-shell" hx-target=".agent-reading-shell" hx-swap="outerHTML"{% endif %}>
+    {% if run.status == 'planned' and decision and not decision.answer %}
+    <div><strong>需要你拍板</strong><p>{{ decision.question }}</p></div>
+    <form class="agent-decision-form" action="{{ url_for('answer_agent_decision', run_id=run.id) }}" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <fieldset><legend class="sr-only">决策选项</legend>{% for option in decision.options %}<label><input type="radio" name="answer" value="{{ option }}" required> {{ option }}</label>{% endfor %}</fieldset>
+      <button class="primary-button">保存选择</button>
+    </form>
+    {% elif run.status == 'planned' %}
+    {% if decision %}<div><strong>已保存选择</strong><p>{{ decision.answer }}</p></div>{% endif %}
+    {% if not decision %}
+    <details class="agent-ai-preview">
+      <summary>补充任务材料</summary>
+      <form class="agent-form" action="{{ url_for('update_agent_objective', run_id=run.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <label><span>任务目标与材料</span><textarea name="objective" maxlength="8000" rows="3" required>{{ task.objective }}</textarea></label>
+        <button class="secondary-button">保存并更新预览</button>
+      </form>
+    </details>
+    {% endif %}
+    {% if ai_preview %}
+    <details class="agent-ai-preview" {{ 'open' if decision else '' }}>
+      <summary>{{ '预览并继续 AI 工作' if decision else '预览并运行 AI' }}</summary>
+      <p>{{ '外部模型' if ai_preview.external else '本机模型' }} · {{ ai_preview.model }} · 预计输入 {{ ai_preview.tokens }} / {{ ai_preview.input_limit }} Token，输出上限 {{ ai_preview.output_limit }} Token</p>
+      <p>本轮只发送下列指令和任务材料。不会自动读取知识库、简历或其他工作台资料。</p>
+      <strong>模型指令</strong><pre>{{ ai_preview.instruction }}</pre>
+      <strong>任务材料</strong><pre>{{ ai_preview.material }}</pre>
+      <form action="{{ url_for('execute_agent_model', run_id=run.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="background" value="true">
+        <input type="hidden" name="preview_fingerprint" value="{{ ai_preview.fingerprint }}">
+        <button class="primary-button" {{ 'disabled' if ai_preview.tokens > ai_preview.input_limit else '' }}>{{ '确认发送并继续' if decision else '确认并在后台运行' }}</button>
+      </form>
+    </details>
+    {% elif not model_enabled %}<div><strong>尚未配置模型</strong><p><a href="{{ url_for('models') }}">查看模型设置</a>{% if not decision %}，也可以运行规则工作纸。{% endif %}</p></div>{% endif %}
+    {% if not decision %}
+
+    <form action="{{ url_for('execute_agent_run', run_id=run.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="secondary-button" type="submit">运行本地计划</button></form>{% endif %}
     {% elif run.status == 'reviewing' %}
-    <div><strong>等待人工确认</strong><p>接受只确认这份产物，不会把它写入知识库、文章或外部系统。</p></div>
+    <div><strong>等待人工确认</strong>{% if artifacts %}<p><a href="{{ url_for('agent_artifact', artifact_id=artifacts[0].id) }}">先查看候选产物</a></p>{% endif %}<p>接受只确认这份产物，不会把它写入知识库、文章或外部系统。{% if source or daily_source %}实际行动是否完成，请回到原事项确认。{% endif %}</p></div>
     <form action="{{ url_for('approve_agent_run', run_id=run.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="primary-button" type="submit">接受产物并完成</button></form>
+    {% elif run.status in ['failed', 'cancelled'] and task.status == run.status %}
+    <div><strong>{{ run_status_labels[run.status] }}</strong><p>重新规划会保留本次记录。</p></div>
+    <form action="{{ url_for('plan_workspace_task', task_id=task.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="secondary-button" type="submit">重新规划</button></form>
     {% else %}
     <div><strong>{{ run_status_labels[run.status] }}</strong><p>{{ task.next_action }}</p></div>
     {% endif %}
-    {% if run.status not in ['completed', 'cancelled'] %}<form action="{{ url_for('cancel_agent_run', run_id=run.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="danger-link" type="submit">取消本次运行</button></form>{% endif %}
+    {% if run.status in ['planned','reviewing'] %}<form action="{{ url_for('cancel_agent_run', run_id=run.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="danger-link" type="submit">取消本次运行</button></form>{% endif %}
   </section>
 
   {% if tool_calls %}<section class="agent-detail-section"><div class="agent-section-heading"><div><h2>工具调用</h2><p>只记录脱敏摘要。</p></div></div><div class="agent-ledger">{% for call in tool_calls %}<div><code>{{ call.tool_key }}</code><span>{{ call.input_summary }}</span><strong>{{ call.result_summary }}</strong></div>{% endfor %}</div></section>{% endif %}

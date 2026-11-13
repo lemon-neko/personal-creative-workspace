@@ -10,6 +10,12 @@
 
 先确认占用者确实是旧羽白工作台进程，再正常停止并重启。不要盲目结束其他 Python 服务。`/settings/runtime` 可查看当前运行状态。
 
+## 更新代码后页面显示 Internal Server Error
+
+桌面启动器关闭自动重载。更新 Python 路由及模板后，旧常驻进程可能仍使用旧页面上下文，模板却已从磁盘更新，出现 `filters is undefined` 等错误。仅刷新浏览器不能重新加载 Python 代码。
+
+确认是工作台常驻服务后，执行 `.venv/bin/python -m app.runtime restart`，再访问 `http://127.0.0.1:8765/career` 确认返回正常。重启会按现有统一迁移流程升级数据库，升级前自动备份。只更新桌面服务时无需重启手机网关。
+
 ## Serve 主机不一致
 
 - 使用 `tailscale serve status` 检查实际 HTTPS 主机和目标端口。

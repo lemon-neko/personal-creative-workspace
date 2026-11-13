@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.career import CareerRepository, validate_document
+from app.career import SCHEMA_VERSION, CareerRepository, validate_document
 from app.main import create_app
 
 
@@ -100,7 +100,7 @@ def test_career_repository_builds_evidence_to_learning_chain(tmp_path: Path) -> 
         tmp_path / "documents" / document.stored_name
     ).stat().st_mode & 0o777 == 0o600
     with repository.connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
 def test_campaign_seed_links_existing_tasks_and_unlocks_with_evidence(

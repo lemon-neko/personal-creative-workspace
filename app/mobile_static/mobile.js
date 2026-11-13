@@ -2,13 +2,12 @@
   "use strict";
 
   const DB_NAME = "yubai-mobile-captures";
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const STORES = {
     captures: "captures",
     ideas: "ideas",
     edits: "ideaEdits",
     conflicts: "ideaConflicts",
-    meta: "meta",
   };
   let csrfToken = "";
 
@@ -29,9 +28,7 @@
         if (!db.objectStoreNames.contains(STORES.conflicts)) {
           db.createObjectStore(STORES.conflicts, { keyPath: "itemId" });
         }
-        if (!db.objectStoreNames.contains(STORES.meta)) {
-          db.createObjectStore(STORES.meta, { keyPath: "key" });
-        }
+        if (db.objectStoreNames.contains("meta")) db.deleteObjectStore("meta");
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -71,28 +68,8 @@
     target.className = navigator.onLine ? "online" : "offline";
   }
 
-  async function serviceWorkerTarget() {
-    if (!("serviceWorker" in navigator)) return null;
-    const registration = await navigator.serviceWorker.ready;
-    return navigator.serviceWorker.controller || registration.active || registration.waiting;
-  }
-
-  async function sendToServiceWorker(payload) {
-    try {
-      const target = await serviceWorkerTarget();
-      target?.postMessage(payload);
-    } catch (_) {
-      // Online use remains available without the service worker.
-    }
-  }
-
-  async function clearOfflineKnowledge() {
-    await sendToServiceWorker({ type: "CLEAR_KNOWLEDGE_CACHE" });
-  }
-
   async function clearPrivateLocalData() {
     await Promise.all(Object.values(STORES).map(store => clear(store)));
-    await clearOfflineKnowledge();
   }
 
   async function session() {
@@ -298,7 +275,6 @@
       for (const item of current) {
         if (!received.has(item.id) && !edits.has(item.id)) await remove(STORES.ideas, item.id);
       }
-      await put(STORES.meta, { key: "topics", value: payload.topics || [] });
       setMessage("#idea-list-message", `已更新 ${payload.items.length} 条随想快照。`);
     } catch (error) {
       setMessage("#idea-list-message", `${error.message} 使用手机上的最近快照。`);
@@ -419,34 +395,6 @@
     if (heading) heading.textContent = item.title || "未命名想法";
   }
 
-  async function renderTopics() {
-    const target = document.querySelector("#mobile-topic-options");
-    if (!target) return;
-    const meta = await get(STORES.meta, "topics");
-    const topics = meta?.value || [];
-    target.replaceChildren();
-    if (!topics.length) {
-      target.innerHTML = '<p class="quiet-note">还没有可用主题地图，请先在桌面或 Obsidian 创建主题。</p>';
-      return;
-    }
-    topics.forEach(topic => {
-      const label = document.createElement("label");
-      label.className = "topic-option";
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      input.name = "map_ids";
-      input.value = topic.id;
-      const copy = document.createElement("span");
-      const title = document.createElement("b");
-      title.textContent = topic.title;
-      const summary = document.createElement("small");
-      summary.textContent = topic.summary || "";
-      copy.append(title, summary);
-      label.append(input, copy);
-      target.append(label);
-    });
-  }
-
   async function renderConflict(itemId) {
     const panel = document.querySelector("#idea-conflict");
     if (!panel) return;
@@ -468,7 +416,6 @@
         return;
       }
       fillIdeaForm(capture);
-      document.querySelector(".distill-card")?.setAttribute("hidden", "");
       return;
     }
     if (navigator.onLine && !(await get(STORES.edits, itemId))) await refreshIdeasSnapshot();
@@ -478,7 +425,6 @@
       return;
     }
     fillIdeaForm(item);
-    await renderTopics();
     await renderConflict(itemId);
   }
 
@@ -575,75 +521,6 @@
     await syncIdeaEdits();
   }
 
-  async function createKnowledgeCard(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const itemId = currentIdeaId();
-    if (!navigator.onLine) {
-      setMessage("#distill-message", "知识卡只在联网时创建；随想编辑仍可离线保存。");
-      return;
-    }
-    if (itemId.startsWith("local--")) {
-      setMessage("#distill-message", "请先把这条新随想同步到 Mac，再整理为知识。");
-      return;
-    }
-    await syncIdeaEdits();
-    if (await get(STORES.edits, itemId)) {
-      setMessage("#distill-message", "请先解决随想同步或版本冲突，再创建知识卡。");
-      return;
-    }
-    try {
-      if (!csrfToken) await session();
-      const response = await fetch(`/api/ideas/${encodeURIComponent(itemId)}/knowledge/cards`, {
-        method: "POST",
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: { "X-CSRF-Token": csrfToken },
-        body: new FormData(form),
-      });
-      const payload = await response.json().catch(() => ({ detail: "创建失败" }));
-      if (!response.ok) throw new Error(payload.detail || "创建失败");
-      form.reset();
-      setMessage("#distill-message", `已创建知识卡「${payload.title}」，原始随想没有改变。`);
-    } catch (error) {
-      setMessage("#distill-message", error.message);
-    }
-  }
-
-  function offlineKnowledgePaths() {
-    const manifest = document.querySelector("#knowledge-offline-manifest");
-    if (!manifest) return [];
-    try {
-      const paths = JSON.parse(manifest.textContent || "[]");
-      return Array.isArray(paths) ? paths.filter(path => typeof path === "string") : [];
-    } catch (_) {
-      return [];
-    }
-  }
-
-  function renderKnowledgeCacheStatus({ count = 0, updatedAt = null } = {}) {
-    const target = document.querySelector("#knowledge-cache-status");
-    if (!target) return;
-    if (!count) {
-      target.textContent = "尚未保存离线知识";
-      return;
-    }
-    const suffix = updatedAt
-      ? ` · ${new Date(updatedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}`
-      : "";
-    target.textContent = `已缓存 ${count} 个知识页面${suffix}`;
-  }
-
-  async function refreshOfflineKnowledge() {
-    const paths = offlineKnowledgePaths();
-    if (paths.length && navigator.onLine) {
-      setMessage("#knowledge-cache-status", "正在更新离线知识……");
-      await sendToServiceWorker({ type: "CACHE_KNOWLEDGE_PATHS", paths });
-      return;
-    }
-    await sendToServiceWorker({ type: "GET_KNOWLEDGE_CACHE_STATUS" });
-  }
-
   async function revoke() {
     if (!confirm("解除后会清除本机快照和待同步内容，并需要新配对码。确定吗？")) return;
     if (!csrfToken) await session();
@@ -677,17 +554,11 @@
     document.querySelector("#idea-edit-form")?.addEventListener("submit", saveIdeaEdit);
     document.querySelector("#discard-mobile-edit")?.addEventListener("click", discardMobileEdit);
     document.querySelector("#save-merged-edit")?.addEventListener("click", saveMergedEdit);
-    document.querySelector("#mobile-distill-form")?.addEventListener("submit", createKnowledgeCard);
     document.querySelector("#clear-mobile-data")?.addEventListener("click", async () => {
-      if (confirm("清除离线随想、待同步修改、图片和知识副本？此操作无法撤销。")) {
+      if (confirm("清除离线随想、待同步修改和图片？此操作无法撤销。")) {
         await clearPrivateLocalData();
         await renderIdeaList();
         setMessage("#idea-list-message", "手机本地副本已清除。");
-      }
-    });
-    document.querySelector("#clear-knowledge-cache")?.addEventListener("click", async () => {
-      if (confirm("清除这台手机保存的离线知识副本？联网后可以重新生成。")) {
-        await clearOfflineKnowledge();
       }
     });
     document.querySelector('input[name="images"]')?.addEventListener("change", event => {
@@ -711,7 +582,6 @@
     }
     if (document.querySelector("#mobile-idea-list")) await refreshIdeasSnapshot();
     if (document.querySelector("#idea-editor")) await loadIdeaEditor();
-    if (document.querySelector("#knowledge-offline-manifest")) await refreshOfflineKnowledge();
   });
 
   window.addEventListener("online", async () => {
@@ -719,7 +589,6 @@
     await syncCaptureQueue();
     await syncIdeaEdits();
     if (document.querySelector("#mobile-idea-list")) await refreshIdeasSnapshot();
-    if (document.querySelector("#knowledge-offline-manifest")) await refreshOfflineKnowledge();
   });
   window.addEventListener("offline", updateNetwork);
   navigator.serviceWorker?.addEventListener("message", event => {
@@ -728,8 +597,6 @@
       renderIdeaList();
       loadRecent();
       setMessage("#sync-message", "后台同步已完成。");
-    } else if (event.data?.type === "KNOWLEDGE_CACHE_STATUS") {
-      renderKnowledgeCacheStatus(event.data);
     }
   });
 })();

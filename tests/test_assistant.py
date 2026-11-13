@@ -409,6 +409,7 @@ def test_assistant_navigation_and_home_entry_render(assistant_client: TestClient
     page = assistant_client.get("/assistant")
 
     assert home.status_code == page.status_code == 200
-    assert "问问助手" in home.text
+    assert "更多工具" in home.text
+    assert 'href="http://testserver/assistant"' in home.text
     assert "个人助手" in page.text
     assert 'href="http://testserver/assistant"' in page.text

@@ -9,6 +9,7 @@
     </div>
     <p class="learning-roadmap-count"><strong>{{ verified_stage_count }}</strong><span>/ 4 已验收</span></p>
   </header>
+  <section class="learning-phase-note"><div><strong>本阶段学习安排</strong><p>面试准备与英语练习在“阶段行动”中按交付和习惯分别管理。这里保留长期 Agent 工程路线与验收证据。</p></div><a href="{{ url_for('focus') }}">查看阶段行动 →</a></section>
 
   {% if request.query_params.get('saved') == 'status' %}
   <div class="message success">阶段状态已更新，已有提交和复盘记录保持不变。</div>

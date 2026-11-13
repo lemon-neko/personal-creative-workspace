@@ -1,1 +1,304 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>{{ resume.title }}</title><style>@page{size:A4;margin:12mm 14mm}*{box-sizing:border-box}body{margin:0;color:#1d2528;font:9.7pt/1.47 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Arial,sans-serif}a{color:inherit;text-decoration:none}.ats-sheet{width:100%}.ats-sheet header{position:relative;display:flex;align-items:flex-start;justify-content:center;min-height:74px;text-align:center;border-bottom:1.4px solid #263236;padding:0 0 9px;margin-bottom:10px}.ats-sheet.has-photo header{justify-content:flex-start;text-align:left;padding-right:82px}.ats-identity{flex:1}h1{font-size:21pt;letter-spacing:.05em;margin:0}.ats-role{margin:2px 0}.ats-contact{display:flex;flex-wrap:wrap;justify-content:center;gap:2px 10px;margin:5px 0 0;font-size:8.7pt}.has-photo .ats-contact{justify-content:flex-start}.ats-photo{position:absolute;right:0;top:0;width:64px;height:86px;object-fit:cover;border:1px solid #c9d0d0}section{break-inside:avoid;margin-top:9px}h2{font-size:11.2pt;letter-spacing:.08em;border-bottom:1px solid #7c898c;margin:0 0 4px;padding-bottom:2px}.ats-entry{break-inside:avoid;margin:0 0 5px}.ats-entry>div{display:flex;justify-content:space-between;gap:12px}.ats-entry p{margin:1px 0}.ats-subline{color:#4e5a5e}ul{margin:2px 0 0;padding-left:17px}li{margin:0 0 1px}p{margin:2px 0}</style></head><body>{% set photo_url = photo_data_url %}{% include '_resume_preview.html' %}</body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>{{ resume.title }}</title>
+  <style>
+    @page { size: A4; margin: 11mm 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #1d292d;
+      font: 9.4pt/1.45 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+    a { color: inherit; text-decoration: none; }
+    .ats-sheet { width: 100%; }
+    .ats-sheet header {
+      position: relative;
+      min-height: 70px;
+      padding: 0 0 8px;
+      border-bottom: 1.4px solid #243438;
+    }
+    .ats-sheet.has-photo header { padding-right: 78px; }
+    .ats-identity { min-width: 0; }
+    h1 {
+      margin: 0;
+      color: #172327;
+      font-size: 20.5pt;
+      letter-spacing: .02em;
+      line-height: 1.15;
+    }
+    .ats-role {
+      margin: 2px 0 0;
+      color: #2f747c;
+      font-size: 9.8pt;
+      font-weight: 650;
+    }
+    .ats-contact {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1px 0;
+      margin: 4px 0 0;
+      color: #536166;
+      font-size: 8.3pt;
+    }
+    .ats-contact > span + span::before {
+      content: "·";
+      margin: 0 7px;
+      color: #a3acad;
+    }
+    .ats-photo {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 60px;
+      height: 80px;
+      object-fit: cover;
+      border: 1px solid #c5cecd;
+    }
+    section { margin-top: 7px; break-inside: avoid; }
+    h2 {
+      margin: 0 0 3px;
+      padding: 0 0 2px 7px;
+      border-bottom: 1px solid #aeb8b8;
+      border-left: 2.5px solid #087784;
+      color: #172327;
+      font-size: 10.7pt;
+      letter-spacing: .035em;
+    }
+    p { margin: 1px 0; overflow-wrap: anywhere; }
+    .ats-entry { margin-bottom: 4px; break-inside: avoid; }
+    .ats-entry-heading {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) auto;
+      align-items: baseline;
+      gap: 12px;
+    }
+    .ats-entry-heading strong { min-width: 0; overflow-wrap: anywhere; }
+    .ats-entry-heading b { min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
+    .ats-entry-heading span {
+      flex: 0 0 auto;
+      color: #596669;
+      white-space: nowrap;
+    }
+    .ats-subline { color: #556367; font-size: 8.8pt; }
+    .resume-project-entry { margin-bottom: 5px; break-inside: auto; }
+    .resume-project-heading { break-after: avoid; }
+    .resume-project-block {
+      display: grid;
+      grid-template-columns: 44pt minmax(0, 1fr);
+      gap: 5pt;
+      align-items: start;
+      margin-top: 1.5pt;
+    }
+    .resume-project-block > strong {
+      color: #47565a;
+      font-size: 7.9pt;
+      font-weight: 700;
+      line-height: 1.45;
+      break-after: avoid;
+    }
+    .resume-project-block > p,
+    .resume-project-block > ul { margin: 0; }
+    .resume-project-summary > p { color: #556367; }
+    .resume-project-tech > p {
+      color: #2f666c;
+      font-size: 8pt;
+      font-weight: 620;
+      overflow-wrap: anywhere;
+    }
+    .resume-project-responsibilities > ul { padding-left: 13px; }
+    .resume-project-responsibilities li { break-inside: avoid; }
+    .resume-employer { margin-bottom: 5px; break-inside: auto; }
+    .resume-employer-heading {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr) auto;
+      align-items: baseline;
+      gap: 10px;
+      break-after: avoid;
+    }
+    .resume-employer-heading strong {
+      color: #172327;
+      font-size: 9.5pt;
+      font-weight: 760;
+      overflow-wrap: anywhere;
+    }
+    .resume-employer-location { color: #697478; font-size: 7.5pt; }
+    .resume-employer-years { color: #465358; white-space: nowrap; }
+    .resume-position-list {
+      margin: 2px 0 0 3px;
+      padding-left: 9px;
+      border-left: 1px solid #bdd0d0;
+    }
+    .resume-position {
+      position: relative;
+      padding: 0 0 3px 4px;
+      break-inside: avoid;
+    }
+    .resume-position:last-child { padding-bottom: 0; }
+    .resume-position::before {
+      position: absolute;
+      top: 4px;
+      left: -10px;
+      width: 2px;
+      height: 8px;
+      background: #087784;
+      content: "";
+    }
+    .resume-position-heading {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .resume-position-heading strong {
+      color: #253236;
+      font-size: 8.8pt;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .resume-position-heading span {
+      color: #697478;
+      font-size: 7.5pt;
+      white-space: nowrap;
+    }
+    .resume-position ul { margin: 1px 0 0; padding-left: 14px; }
+    .resume-position li { margin: 0; overflow-wrap: anywhere; }
+    .resume-responsibility-list { margin-top: 2px; }
+    .resume-responsibility + .resume-responsibility { margin-top: 3px; }
+    .resume-responsibility > strong {
+      display: list-item;
+      margin-left: 14px;
+      color: #253236;
+      font-size: 8.4pt;
+      font-weight: 720;
+      list-style-type: disc;
+    }
+    .resume-responsibility > ul {
+      margin: 1px 0 0 10px;
+      padding-left: 16px;
+    }
+    ul { margin: 1px 0 0; padding-left: 15px; }
+    li { margin: 0; overflow-wrap: anywhere; }
+    .ats-skill-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0 16px;
+      margin: 0;
+    }
+    .resume-template-china_single_photo header {
+      min-height: 78px;
+      padding: 1px 78px 8px 0;
+      border-bottom-color: #e0e5e6;
+      text-align: center;
+    }
+    .resume-template-china_single_photo header::after {
+      position: absolute;
+      bottom: -1.4px;
+      left: 0;
+      width: 22px;
+      height: 2px;
+      background: #087784;
+      content: "";
+    }
+    .resume-template-china_single_photo:not(.has-photo) header { padding-right: 0; }
+    .resume-template-china_single_photo h1 {
+      font-size: 22pt;
+      font-weight: 790;
+      letter-spacing: .04em;
+    }
+    .resume-template-china_single_photo .ats-contact {
+      align-items: center;
+      justify-content: center;
+      gap: 2px 0;
+      color: #303b40;
+    }
+    .resume-template-china_single_photo .ats-contact > span + span::before { content: none; }
+    .resume-template-china_single_photo .ats-contact-primary { margin-top: 6px; font-size: 8.3pt; }
+    .resume-template-china_single_photo .ats-contact-secondary { margin-top: 3px; font-size: 7.7pt; font-weight: 560; }
+    .resume-contact-item {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      min-width: 0;
+      color: inherit;
+      white-space: normal;
+    }
+    .resume-contact-item:not(:last-child)::after {
+      width: .7px;
+      height: 8.5pt;
+      margin: 0 7px;
+      flex: 0 0 auto;
+      background: #b7c0c1;
+      content: "";
+    }
+    .resume-contact-icon {
+      width: 9.2pt;
+      height: 9.2pt;
+      margin-right: 3px;
+      flex: 0 0 auto;
+      color: #435155;
+      stroke-width: 1.8;
+    }
+    .resume-contact-text { min-width: 0; overflow-wrap: anywhere; }
+    .resume-template-china_single_photo .ats-photo {
+      width: 58px;
+      height: 76px;
+      border: 0;
+      border-radius: 2px;
+    }
+    .resume-template-china_single_photo section { margin-top: 7px; }
+    .resume-template-china_single_photo h2 {
+      width: max-content;
+      margin: 0 0 3px;
+      padding: 3px 14px 3px 7px;
+      border: 0;
+      background: #087784;
+      color: #fff;
+      clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+      font-size: 10.7pt;
+      font-weight: 720;
+      line-height: 1.15;
+    }
+    .resume-template-china_single_photo .resume-section-summary {
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .resume-template-china_single_photo .ats-entry { margin-bottom: 4px; }
+    .resume-template-china_single_photo .ats-subline { color: #697478; font-size: 8pt; }
+    .resume-template-ats_single header { text-align: center; }
+    .resume-template-ats_single.has-photo header { text-align: left; }
+    .resume-template-ats_single .ats-contact { justify-content: center; }
+    .resume-template-ats_single.has-photo .ats-contact { justify-content: flex-start; }
+    .resume-template-ats_single h2 {
+      padding-left: 0;
+      border-left: 0;
+      border-bottom-color: #707d80;
+    }
+    .resume-template-ats_single .ats-skill-list {
+      display: block;
+      padding-left: 0;
+      list-style: none;
+    }
+    .resume-template-ats_single .ats-skill-list li { display: inline; }
+    .resume-template-ats_single .ats-skill-list li + li::before {
+      content: " / ";
+      color: #7a8587;
+    }
+    .resume-template-ats_single .resume-position-list {
+      margin-left: 0;
+      padding-left: 0;
+      border-left: 0;
+    }
+    .resume-template-ats_single .resume-position::before { display: none; }
+    .resume-template-ats_single .resume-project-block { grid-template-columns: 50pt minmax(0, 1fr); }
+    .resume-template-ats_single .resume-project-block > strong,
+    .resume-template-ats_single .resume-project-tech > p { color: #263438; }
+  </style>
+</head>
+<body>
+  {% set photo_url = photo_data_url %}
+  {% include '_resume_preview.html' %}
+</body>
+</html>

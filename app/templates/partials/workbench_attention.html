@@ -1,0 +1,11 @@
+<section class="home-card home-decision" aria-labelledby="home-decision-title">
+    <div class="home-card-heading"><h2 id="home-decision-title">待我确认</h2><a href="{{ url_for('runs') }}">运行记录</a></div>
+    <ul class="home-task-list">
+        {% if focus_next_decision %}
+        <li><a href="{{ url_for('focus') }}#next-decision">{{ focus_next_decision.title }}</a><span{% if focus_next_decision_overdue %} class="home-review-needed"{% endif %}>{{ '决策待复核' if focus_next_decision_overdue else '待决策' }}</span></li>
+        {% endif %}
+        {% for run in attention_runs %}
+        <li><a href="{{ url_for('run_detail', run_id=run.id) }}">{{ run.title }}</a><span{% if run.status == 'failed' %} class="home-review-needed"{% endif %}>{{ {'reviewing': '待验收', 'failed': '运行失败', 'planned': '待执行', 'decision': '待决策', 'resume': '待继续'}[run.status] }}</span></li>
+        {% endfor %}
+    </ul>
+</section>

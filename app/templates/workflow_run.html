@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}运行 #{{ run_id }} · AI 工作流{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/workflow-control.css') }}?v=3">{% endblock %}
+{% block content %}
+<div class="control control-inspector">
+    <nav class="control-inline" aria-label="执行导航"><a href="{{ url_for('tasks') }}">AI 工作流</a><a href="{{ url_for('workflow_history') }}">执行历史</a><a href="{{ url_for('workflow_matters') }}?run={{ run_id }}">所属事项</a></nav>
+    <header class="control-title"><div><h1>运行 #{{ run_id }}</h1><p>{{ details.rule or '规则未记录' }} · {{ details.agent or 'Agent 未上报' }} · {{ details.state or '状态未知' }}</p></div><a href="{{ url_for('workflow_session', run_id=run_id) }}">查看 Agent 执行</a></header>
+    <section class="control-panel control-inline" aria-label="关联轮次">
+        <button type="button" data-copy="{{ run_id }}">复制 Run ID</button>
+        {% if details.session %}<button type="button" data-copy="{{ details.session }}">复制 Session ID</button>{% endif %}
+        {% if details.item %}<a href="{{ url_for('workflow_item', item_id=details.item) }}">打开工作项</a>{% endif %}
+        {% if details.previous %}<a href="{{ url_for('workflow_run', run_id=details.previous) }}">上一轮 #{{ details.previous }}</a>{% endif %}
+        {% for next_id in (details.following + details.nativeFollowing)|unique %}<a href="{{ url_for('workflow_run', run_id=next_id) }}">续跑 #{{ next_id }}</a>{% endfor %}
+    </section>
+    {% if details.missing %}<p class="control-notice">未找到的事实：{{ details.missing|join('、') }}。仅展示该轮可取得的日志。</p>{% endif %}
+    {% if terminal and details.frames %}
+    <section id="run-replay" class="control-panel" aria-labelledby="replay-title">
+        <header><div><h2 id="replay-title">历史回放</h2><p class="control-sub">沿真实 Fact 序号检查状态。仅包含与本轮有关的记录。</p></div></header>
+        <div class="control-inline replay-tools">
+            <button type="button" data-replay="previous">上一步</button><button type="button" data-replay="play">播放</button><button type="button" data-replay="next">下一步</button>
+            <label>Fact 位置 <input type="range" min="0" max="{{ details.frames|length - 1 }}" value="0" id="replay-position"></label>
+        </div>
+        <p id="replay-current" role="status"></p>
+        <ol id="replay-steps" class="control-timeline"></ol>
+        <details><summary>查看当前 Fact 摘要（已脱敏）</summary><pre id="replay-json"></pre></details>
+        <template id="replay-data">{{ details.frames|tojson }}</template>
+    </section>
+    {% endif %}
+    <section class="control-panel" aria-labelledby="timeline-title">
+        <header><h2 id="timeline-title">执行时间线</h2><span class="control-sub">北京时间 · 按 Fact 序号</span></header>
+        <ol class="control-timeline">
+            {% for step in details.timeline %}
+            {% set group = '触发' if step.kind == 'event' else '调度' if step.kind in ['rule', 'matter', 'queue'] else '执行' if step.kind in ['claim', 'start', 'unknown', 'stop'] else '回执' if step.kind in ['receipt', 'emit', 'later'] else '人工' %}
+            <li data-tone="{{ 'red' if step.outcome == 'failed' else {'触发':'gray','调度':'blue','执行':'purple','回执':'green','人工':'orange'}[group] }}">
+                <strong>{{ fact_labels.get(step.kind, step.kind) }}</strong>
+                <small class="control-run-meta">{{ group }} · {{ time(step.at) }} · Fact #{{ step.seq }} · {{ step.factType }}</small>
+                <p class="control-card-text">{{ step.summary or step.error or step.title or step.type or step.rule or step.agent or step.answer or step.result or '' }}</p>
+                <div class="control-inline">
+                    {% if step.event %}<button type="button" data-copy="{{ step.event }}">复制 Event #{{ step.event }}</button>{% endif %}
+                    {% if step.run %}<a href="{{ url_for('workflow_run', run_id=step.run) }}">查看 Run #{{ step.run }}</a>{% endif %}
+                </div>
+                <details><summary>查看事实字段（已脱敏）</summary><pre>{{ step|tojson(indent=2) }}</pre></details>
+            </li>
+            {% else %}<li>没有可用的轮次事实。</li>{% endfor %}
+        </ol>
+    </section>
+    <p id="inspect-feedback" role="status"></p>
+</div>
+{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static', path='/workflow-inspect.js') }}" defer></script>{% endblock %}

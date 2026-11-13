@@ -1,161 +1,41 @@
 {% extends "base.html" %}
 
-{% block title %}羽白工作台{% endblock %}
+{% block title %}{{ '日常工作' if planner_view else ('待安排' if board_view == 'upcoming' else '今日') }} · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/planner.css') }}?v=month1"><link rel="stylesheet" href="{{ url_for('static', path='/styles/focus.css') }}?v=20261111-editorial">{% endblock %}
 
 {% block content %}
-<div class="workspace-dashboard">
-    <div class="workspace-main-column">
-        <header class="workspace-heading">
-            <div>
-                <p class="eyebrow">CREATIVE DESK</p>
-                <h1>今天想接住什么？</h1>
-            </div>
-            <p>一句话、一个问题，或者一团还没想明白的东西。先放进来，别让它跑了。</p>
-        </header>
+<div class="home-dashboard">
+    <p class="sr-only" data-desk-live aria-live="polite" aria-atomic="true"></p>
+    {% if planner_view %}{% include "partials/planner.html" %}{% else %}{% include "partials/daily_desk.html" %}{% endif %}
 
+    <details class="home-secondary" {{ 'open' if notice or error else '' }}>
+        <summary>记一条想法</summary>
         {% if notice %}<div class="message success" role="status">{{ notice }}</div>{% endif %}
         {% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
-
-        <section class="capture-card compact-capture">
-            <form action="{{ url_for('create_idea') }}" method="post">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-                <label class="sr-only" for="quick-body">记录内容</label>
-                <textarea
-                    id="quick-body"
-                    name="body"
-                    rows="5"
-                    maxlength="50000"
-                    placeholder="脑子里刚刚闪过了什么……"
-                    required
-                    autofocus
-                >{{ form_data.get('body', '') }}</textarea>
+        <form class="home-capture-form" action="{{ url_for('create_idea') }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <label class="sr-only" for="quick-body">记录内容</label>
+            <textarea id="quick-body" name="body" rows="2" maxlength="50000" placeholder="一句话记下刚刚想到的事……" required>{{ form_data.get('body', '') }}</textarea>
+            <div class="home-capture-actions">
                 <details class="optional-fields" {{ 'open' if form_data.get('title') or form_data.get('tags') or form_data.get('category') else '' }}>
                     <summary>补充标题、标签或分类 <span>可选</span></summary>
                     <div class="field-grid">
-                        <label class="field field-wide">
-                            <span>标题</span>
-                            <input name="title" maxlength="120" value="{{ form_data.get('title', '') }}" placeholder="留空时自动取正文第一句">
-                        </label>
-                        <label class="field">
-                            <span>标签</span>
-                            <input name="tags" value="{{ form_data.get('tags', '') }}" placeholder="生活，观察，突然想到">
-                        </label>
-                        <label class="field">
-                            <span>分类</span>
-                            <input name="category" maxlength="40" value="{{ form_data.get('category', '') }}" placeholder="例如：路上">
-                        </label>
+                        <label class="field field-wide"><span>标题</span><input name="title" maxlength="120" value="{{ form_data.get('title', '') }}" placeholder="留空时自动取正文第一句"></label>
+                        <label class="field"><span>标签</span><input name="tags" value="{{ form_data.get('tags', '') }}" placeholder="生活，观察，突然想到"></label>
+                        <label class="field"><span>分类</span><input name="category" maxlength="40" value="{{ form_data.get('category', '') }}" placeholder="例如：路上"></label>
                     </div>
                 </details>
-                <div class="capture-actions">
-                    <span>默认保存为草稿 · Markdown</span>
-                    <button class="primary-button" type="submit">接住这个念头</button>
-                </div>
-            </form>
-        </section>
-
-        {% include "partials/workspace_feed.html" %}
-
-        {% if diagnostics %}
-        <details class="diagnostics">
-            <summary>内容诊断 · {{ diagnostics|length }} 个文件暂时无法读取</summary>
-            {% for diagnostic in diagnostics %}<p><code>{{ diagnostic.source.name }}</code> · {{ diagnostic.message }}</p>{% endfor %}
-        </details>
-        {% endif %}
-    </div>
-
-    <aside class="workspace-rail" aria-label="工作台状态">
-        <section class="rail-card daily-card">
-            <div class="rail-heading"><div><p class="eyebrow">TODAY</p><h2>今日状态</h2></div><span class="light-spark" aria-hidden="true">✶</span></div>
-            <div class="rail-metrics">
-                <div><strong>{{ today_items|length }}</strong><span>今天记录</span></div>
-                <div><strong>{{ pending_count }}</strong><span>草稿</span></div>
-                <div><strong>{{ published_count }}</strong><span>已成稿</span></div>
+                <button class="primary-button" type="submit">接住这个念头</button>
             </div>
-            <p>数字不是 KPI，只是证明这些念头来过。</p>
-        </section>
+        </form>
+        <a class="home-card-link" href="{{ url_for('ideas') }}">打开想法库</a>
+    </details>
 
-        <section class="rail-card assistant-rail-card">
-            <div class="rail-heading"><div><p class="eyebrow">DECISION COMPANION</p><h2>问问助手</h2></div><span class="light-spark" aria-hidden="true">✦</span></div>
-            <p>让它先读一份脱敏后的当前状态，再帮你判断最应该推进的一件事。</p>
-            <form action="{{ url_for('assistant_preview') }}" method="post" class="assistant-quick-form">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-                <textarea name="question" rows="3" maxlength="2000" placeholder="基于我现在的情况，应该先做什么？" required></textarea>
-                <button class="secondary-button full-button">检查上下文</button>
-            </form>
-            <div class="rail-footer"><span>不会立即调用模型</span><a href="{{ url_for('assistant') }}">完整对话 →</a></div>
-        </section>
-
-        <section class="rail-card review-rail-card">
-            <div class="rail-heading">
-                <div><p class="eyebrow">THIS WEEK</p><h2>本周回顾</h2></div>
-                <span class="model-state {{ 'online' if llm_enabled else '' }}">{{ 'AI 可用' if llm_enabled else '规则模式' }}</span>
-            </div>
-            <div class="week-progress"><strong>{{ week_items|length }}</strong><span>条本周记录</span></div>
-            {% if latest_review %}
-            <p class="rail-note">最近回顾：<a href="{{ url_for('review_detail', item_id=latest_review.id) }}">{{ latest_review.title }}</a></p>
-            {% else %}
-            <p class="rail-note">还没有本周回顾。先让这一周发生点什么。</p>
-            {% endif %}
-            <form action="{{ url_for('generate_review') }}" method="post">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-                <input type="hidden" name="return_to" value="workspace">
-                <button class="secondary-button full-button" type="submit">生成本周草稿</button>
-            </form>
-            <div class="rail-footer">
-                <span>{{ '下次 ' ~ next_run.strftime('%m-%d %H:%M') if next_run else '自动回顾未启用' }}</span>
-                <a href="{{ url_for('reviews') }}">管理 →</a>
-            </div>
-        </section>
-
-        <section class="rail-card publish-rail-card">
-            <div class="rail-heading"><div><p class="eyebrow">PUBLISH NEXT</p><h2>文章草稿</h2></div><span>{{ article_drafts|length }}</span></div>
-            {% if article_drafts %}
-            <div class="publish-queue">
-                {% for item in article_drafts %}
-                <article>
-                    <div><time>{{ item.date_label }}</time><h3>{{ item.title }}</h3></div>
-                    <a href="{{ url_for('article_detail', item_id=item.id) }}" aria-label="打开文章 {{ item.title }}">↗</a>
-                </article>
-                {% endfor %}
-            </div>
-            {% else %}
-            <p class="rail-note">还没有文章草稿。碎片们正在角落里偷偷长大。</p>
-            {% endif %}
-            <a class="text-link rail-link" href="{{ url_for('articles') }}">打开文章创作 →</a>
-        </section>
-
-        <section class="rail-card video-rail-card">
-            <div class="rail-heading"><div><p class="eyebrow">VIDEO</p><h2>视频创作</h2></div><span>{{ video_projects|length }}</span></div>
-            {% if video_projects %}
-            <div class="publish-queue">
-                {% for project in video_projects %}
-                <article><div><time>{{ video_status_labels[project.status] }}</time><h3>{{ project.title }}</h3></div><a href="{{ url_for('video_studio') }}">→</a></article>
-                {% endfor %}
-            </div>
-            {% else %}
-            <p class="rail-note">还没有视频交接包。文章可以先长出一条时间线。</p>
-            {% endif %}
-            <a class="text-link rail-link" href="{{ url_for('video_studio') }}">打开视频创作区 →</a>
-        </section>
-
-        <section class="rail-card career-rail-card">
-            <div class="rail-heading"><div><p class="eyebrow">CAREER</p><h2>求职进度</h2></div><span>{{ career_active_count }}</span></div>
-            {% if career_jobs %}<div class="publish-queue">{% for job in career_jobs %}<article><div><time>{{ job.status }}</time><h3>{{ job.title }} · {{ job.company }}</h3></div><a href="{{ url_for('career_job_detail', job_id=job.id) }}">→</a></article>{% endfor %}</div>{% else %}<p class="rail-note">还没有职位，驾驶舱目前处于省油模式。</p>{% endif %}
-            <a class="text-link rail-link" href="{{ url_for('career') }}">打开求职驾驶舱 →</a>
-        </section>
-
-        <section class="rail-card learning-rail-card">
-            <div class="rail-heading"><div><p class="eyebrow">LEARNING</p><h2>学习任务</h2></div><span>{{ learning_tasks|length }}</span></div>
-            {% if learning_tasks %}<ul class="task-list">{% for task in learning_tasks %}<li><span>{{ task.priority }}</span><div><strong>{{ task.title }}</strong><small>{{ task.status }}</small></div></li>{% endfor %}</ul>{% else %}<p class="rail-note">技能差距还没有变成任务。</p>{% endif %}
-            <a class="text-link rail-link" href="{{ url_for('learning') }}">查看技能图谱 →</a>
-        </section>
-
-        {% if income_metrics is defined %}<section class="rail-card income-rail-card">
-            <div class="rail-heading"><div><p class="eyebrow">INCOME</p><h2>收入</h2></div><span>¥</span></div>
-            <div class="week-progress"><strong>¥{{ '%.2f'|format(income_metrics.earned_fen / 100) }}</strong><span>实际到账</span></div>
-            <p class="rail-note">{{ '第一笔 ¥1 已跑通。' if first_yuan_cleared else 'Money Engine 下一步：' ~ income_product.next_action }}</p>
-            <div class="rail-footer"><span>本月 ¥{{ '%.2f'|format(income_metrics.month_earned_fen / 100) }}</span><a href="{{ url_for('income_product', product_id=income_product.id) }}">打开 Money Engine →</a></div>
-        </section>{% endif %}
-    </aside>
+    {% if show_workspace_feed %}{% include "partials/workspace_feed.html" %}{% endif %}
+    {% if diagnostics %}<details class="diagnostics home-diagnostics"><summary>内容诊断 · {{ diagnostics|length }} 个文件暂时无法读取</summary>{% for diagnostic in diagnostics %}<p><code>{{ diagnostic.source.name }}</code> · {{ diagnostic.message }}</p>{% endfor %}</details>{% endif %}
 </div>
+{% endblock %}
+
+{% block extra_scripts %}<script defer src="{{ url_for('static', path='/planner.js') }}?v=1"></script>
+<script defer src="{{ url_for('static', path='/daily-desk.js') }}?v=timeline1"></script>
 {% endblock %}

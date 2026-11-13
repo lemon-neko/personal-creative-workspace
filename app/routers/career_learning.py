@@ -8,13 +8,16 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from app.career import (
     DOCUMENT_KINDS,
     JOB_STATUSES,
+    JOB_INLINE_FIELDS,
+    JOB_STATUS_LABELS,
     LEARNING_STATUSES,
     PROJECT_STATUSES,
+    RESUME_STATUSES,
     CareerRepository,
 )
 from app.model_gateway import ModelTaskKind
@@ -59,37 +62,71 @@ def _career_job_context(request: Request, job, *, skill_candidates: tuple[dict, 
         "skills": repository.skills(),
         "gap_map": gap_map,
         "primary_resume": repository.primary_resume(),
-        "job_statuses": JOB_STATUSES,
+        "job_statuses": JOB_STATUS_LABELS,
+        "job_status_labels": JOB_STATUS_LABELS,
         "llm_enabled": request.app.state.llm_client.enabled and callable(analyzer),
         "skill_candidates": skill_candidates,
         "error": error,
+        "form_values": {},
     }
+
+
+def _career_filters(request: Request, form=None) -> dict[str, str]:
+    return {
+        "q": str(form.get("filter_q", "")) if form is not None else request.query_params.get("q", ""),
+        "status": str(form.get("filter_status", "")) if form is not None else request.query_params.get("status", ""),
+    }
+
+
+def _career_return(request: Request, form=None, anchor: str = "applications"):
+    return str(request.url_for("career").include_query_params(**_career_filters(request, form))) + "#" + anchor
+
+
+def _career_response(request: Request, *, form=None, edit_id: str = "",
+                     error: str | None = None, status_code: int = 200) -> HTMLResponse:
+    repository: CareerRepository = request.app.state.career
+    edit_id = edit_id or request.query_params.get("edit", "")
+    jobs = repository.jobs()
+    resumes = repository.resumes()
+    filters = _career_filters(request, form)
+    q = filters["q"].strip().casefold()
+    status = filters["status"]
+    visible = tuple(job for job in jobs
+                    if (q in (job.company + " " + job.title).casefold())
+                    and (job.status == status if status in JOB_STATUSES else
+                         True if status == "all" else job.status != "archived"))
+    # Keep a failed row visible even if its old value no longer matches the filter.
+    if edit_id and edit_id not in {job.id for job in visible}:
+        visible += tuple(job for job in jobs if job.id == edit_id)
+    submissions = {}
+    for row in repository.job_submissions():
+        submissions.setdefault(row.job_id, row)
+    return TEMPLATES.TemplateResponse(
+        request=request, name="career.html", status_code=status_code,
+        context={
+            "active_page": "career", "primary": repository.primary_resume(),
+            "tailored": tuple(row for row in resumes if row.resume_kind == "tailored"),
+            "legacy": tuple(row for row in resumes if row.resume_kind == "legacy"),
+            "documents": repository.documents("resume"), "projects": repository.projects(),
+            "jobs": visible, "all_jobs": jobs, "job_map": {job.id: job for job in jobs},
+            "submissions": submissions,
+            "submission_choices": {job.id: tuple(row for row in resumes if row.is_structured and
+                (row.resume_kind == "master" or (row.resume_kind == "tailored" and row.job_id == job.id)))
+                for job in visible},
+            "job_status_labels": JOB_STATUS_LABELS, "resume_statuses": RESUME_STATUSES,
+            "filters": filters, "error": error, "edit_id": edit_id,
+            "form_values": dict(form) if form is not None else {},
+            "notice": request.query_params.get("saved"),
+            "new_submission_choices": tuple(row for row in resumes if row.is_structured and row.resume_kind == "master"),
+            "llm_enabled": request.app.state.model_gateway.enabled,
+        },
+    )
 
 
 @router.get("/career", response_class=HTMLResponse, name="career")
 async def career(request: Request) -> HTMLResponse:
-    repository: CareerRepository = request.app.state.career
-    jobs = repository.jobs()
-    tasks = repository.learning_tasks()
-    return TEMPLATES.TemplateResponse(
-        request=request,
-        name="career.html",
-        context={
-            "active_page": "career",
-            "profile": repository.profile(),
-            "jobs": jobs,
-            "projects": repository.projects(),
-            "resumes": repository.resumes(),
-            "active_jobs": tuple(
-                job
-                for job in jobs
-                if job.status not in {"rejected", "withdrawn", "archived"}
-            ),
-            "active_tasks": tuple(
-                task for task in tasks if task.status in {"backlog", "active"}
-            ),
-        },
-    )
+    return _career_response(request)
+
 
 @router.get(
     "/career/profile",
@@ -402,51 +439,121 @@ async def update_career_project(request: Request, project_id: str) -> HTMLRespon
     )
 
 @router.get("/career/jobs", response_class=HTMLResponse, name="career_jobs")
-async def career_jobs(request: Request) -> HTMLResponse:
-    return TEMPLATES.TemplateResponse(
-        request=request,
-        name="career_jobs.html",
-        context={
-            "active_page": "career",
-            "jobs": request.app.state.career.jobs(),
-            "job_statuses": JOB_STATUSES,
-        },
-    )
+async def career_jobs(request: Request) -> RedirectResponse:
+    return RedirectResponse(_career_return(request), status_code=302)
+
+
+def _job_values(form) -> dict[str, str]:
+    defaults = {"status": "saved", "tier": "B"}
+    return {key: str(form.get(key, defaults.get(key, ""))) for key in (
+        "company", "title", "jd_text", "location", "source_url", "notes", "status",
+        "tier", "applied_on", "next_action", "next_action_on",
+    )}
+
+
+def _json_requested(request: Request) -> bool:
+    return "application/json" in request.headers.get("accept", "") or "application/json" in request.headers.get("content-type", "")
+
+
+def _job_json(job) -> dict:
+    return {"id": job.id, **{key: getattr(job, key) for key in JOB_INLINE_FIELDS}}
+
 
 @router.post("/career/jobs", name="create_career_job")
-async def create_career_job(
-    request: Request,
-    company: str = Form(...),
-    title: str = Form(...),
-    jd_text: str = Form(...),
-    location: str = Form(default=""),
-    source_url: str = Form(default=""),
-    notes: str = Form(default=""),
-) -> HTMLResponse:
+async def create_career_job(request: Request):
+    wants_json = _json_requested(request)
+    form = {}
     try:
-        job = request.app.state.career.add_job(
-            company=company,
-            title=title,
-            jd_text=jd_text,
-            location=location,
-            source_url=source_url,
-            notes=notes,
-        )
+        form = await request.json() if "application/json" in request.headers.get("content-type", "") else await request.form()
+        if not isinstance(form, dict) and wants_json:
+            form = dict(form)
+        if wants_json:
+            if not isinstance(form, dict) or set(form) - {*JOB_INLINE_FIELDS, "creation_token"}:
+                raise ValueError("新增记录字段无效")
+            if any(not isinstance(value, str) for value in form.values()):
+                raise ValueError("字段内容必须是文本")
+            if not form.get("creation_token"):
+                raise ValueError("缺少新记录标识，请刷新页面后重试")
+        job = request.app.state.career.add_job(**_job_values(form),
+            creation_token=str(form.get("creation_token", "")) if wants_json else "")
+    except (ValueError, TypeError) as error:
+        if wants_json:
+            return JSONResponse({"error": str(error)}, status_code=422)
+        return _career_response(request, form=form, edit_id="new", error=str(error), status_code=422)
+    if wants_json:
+        return JSONResponse({"job": _job_json(job)}, status_code=201)
+    return RedirectResponse(_career_return(request, form), status_code=303)
+
+
+@router.patch("/career/jobs/{job_id}", name="patch_career_job")
+async def patch_career_job(request: Request, job_id: str):
+    try:
+        changes = await request.json()
+        if not isinstance(changes, dict):
+            raise ValueError("请提交要修改的投递字段")
+        job = request.app.state.career.patch_job(job_id, changes)
+    except KeyError:
+        return JSONResponse({"error": "投递记录不存在"}, status_code=404)
+    except (ValueError, TypeError) as error:
+        return JSONResponse({"error": str(error)}, status_code=422)
+    return JSONResponse({"job": _job_json(job)})
+
+
+@router.post("/career/jobs/{job_id}/update", name="update_career_job")
+async def update_career_job(request: Request, job_id: str) -> HTMLResponse:
+    form = await request.form()
+    try:
+        request.app.state.career.update_job(job_id, **_job_values(form), stage_note=str(form.get("stage_note", "")))
+    except KeyError:
+        return _not_found(request, "career")
     except ValueError as error:
+        if form.get("return_to") == "detail":
+            context = _career_job_context(request, request.app.state.career.job(job_id), error=str(error))
+            context["form_values"] = dict(form)
+            return TEMPLATES.TemplateResponse(request=request, name="career_job_detail.html", context=context, status_code=422)
+        return _career_response(request, form=form, edit_id=job_id, error=str(error), status_code=422)
+    if form.get("return_to") == "detail":
+        return RedirectResponse(request.url_for("career_job_detail", job_id=job_id).include_query_params(saved="details"), status_code=303)
+    return RedirectResponse(_career_return(request, form), status_code=303)
+
+
+@router.post("/career/jobs/{job_id}/submissions", name="record_job_submission")
+async def record_job_submission(request: Request, job_id: str) -> HTMLResponse:
+    form = await request.form()
+    try:
+        snapshot = request.app.state.career.record_job_submission(job_id, str(form.get("resume_id", "")))
+    except KeyError:
+        if _json_requested(request):
+            return JSONResponse({"error": "投递记录不存在"}, status_code=404)
+        return _not_found(request, "career")
+    except ValueError as error:
+        if _json_requested(request):
+            return JSONResponse({"error": str(error)}, status_code=422)
+        return _career_response(request, form=form, edit_id=job_id, error=str(error), status_code=422)
+    if _json_requested(request):
+        return JSONResponse({"snapshot": {"title": snapshot.title, "revision": snapshot.revision,
+            "url": str(request.url_for("job_submission_detail", job_id=job_id, submission_id=snapshot.id))}})
+    return RedirectResponse(_career_return(request, form), status_code=303)
+
+
+@router.post("/career/jobs/{job_id}/plan", name="update_career_job_plan")
+async def update_career_job_plan(
+    request: Request, job_id: str, tier: str = Form(), applied_on: str = Form(default=""),
+    next_action: str = Form(default=""), next_action_on: str = Form(default=""),
+) -> HTMLResponse:
+    repository = request.app.state.career
+    try:
+        repository.update_job_plan(job_id, tier=tier, applied_on=applied_on,
+                                   next_action=next_action, next_action_on=next_action_on)
+    except KeyError:
+        return _not_found(request, "career")
+    except ValueError as error:
+        job = repository.job(job_id)
         return TEMPLATES.TemplateResponse(
-            request=request,
-            name="career_jobs.html",
-            context={
-                "active_page": "career",
-                "jobs": request.app.state.career.jobs(),
-                "job_statuses": JOB_STATUSES,
-                "error": str(error),
-            },
-            status_code=422,
+            request=request, name="career_job_detail.html",
+            context=_career_job_context(request, job, error=str(error)), status_code=422,
         )
-    return RedirectResponse(
-        request.url_for("career_job_detail", job_id=job.id), status_code=303
-    )
+    return RedirectResponse(request.url_for("career_job_detail", job_id=job_id), status_code=303)
 
 @router.get(
     "/career/jobs/{job_id}", response_class=HTMLResponse, name="career_job_detail"
@@ -514,6 +621,12 @@ async def preview_job_skills(request: Request, job_id: str) -> HTMLResponse:
         or not callable(analyzer)
     ):
         return _not_found(request, "career")
+    if not job.jd_text.strip():
+        return TEMPLATES.TemplateResponse(
+            request=request, name="career_job_detail.html", status_code=422,
+            context=_career_job_context(request, job, error="请先补充 JD，再分析职位要求。"),
+        )
+
     return TEMPLATES.TemplateResponse(
         request=request,
         name="llm_disclosure.html",
@@ -571,6 +684,12 @@ async def analyze_job_skills(
     analyzer = getattr(client, "job_skill_candidate", None)
     if job is None or not client.enabled or not callable(analyzer):
         return _not_found(request, "career")
+    if not job.jd_text.strip():
+        return TEMPLATES.TemplateResponse(
+            request=request, name="career_job_detail.html", status_code=422,
+            context=_career_job_context(request, job, error="请先补充 JD，再分析职位要求。"),
+        )
+
     try:
         candidates = await asyncio.to_thread(analyzer, outbound_text)
     except (RuntimeError, ValueError, httpx.HTTPError) as error:
@@ -603,6 +722,12 @@ async def confirm_job_skills(request: Request, job_id: str) -> HTMLResponse:
     job = repository.job(job_id)
     if job is None:
         return _not_found(request, "career")
+    if not job.jd_text.strip():
+        return TEMPLATES.TemplateResponse(
+            request=request, name="career_job_detail.html", status_code=422,
+            context=_career_job_context(request, job, error="请先补充 JD，再分析职位要求。"),
+        )
+
     form = await request.form()
     selected = list(dict.fromkeys(str(value) for value in form.getlist("selected")))
     try:

@@ -1,0 +1,77 @@
+.planner-header, .planner-header-links, .planner-side header, .planner-day-heading, .planner-day-heading > div, .planner-timeline > header {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+}
+.planner-header { margin-bottom: 24px; }
+.planner-header h1 { margin: 0; font-size: 1.75rem; letter-spacing: -.025em; }
+.planner a:not(.board-action) { text-underline-offset: 3px; }
+.planner-header-links a, .planner-side header a { color: var(--cyan-dark); font-size: .82rem; white-space: nowrap; }
+.planner-grid { display: grid; grid-template-columns: minmax(255px, .6fr) minmax(0, 1.4fr); gap: 24px; align-items: start; }
+.planner-side, .planner-main { min-width: 0; }
+.planner-side { display: grid; gap: 16px; }
+.planner-calendar, .planner-backlog, .planner-scroll, .planner-all-day { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius-card); }
+.planner-calendar, .planner-backlog, .planner-all-day { padding: 14px; }
+.planner-side h2, .planner h3 { margin: 0; font-size: .94rem; }
+.planner-side header small, .planner-day-heading span, .planner-timeline p { color: var(--muted); font-size: .78rem; }
+.planner-month-nav { display: grid; grid-template-columns: 36px 1fr 36px; align-items: center; text-align: center; margin-block: 8px 4px; }
+.planner-month-nav a { display: grid; place-items: center; height: 36px; border-radius: 7px; color: var(--cyan-dark); text-decoration: none; font-size: 1.25rem; }
+.planner-month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.planner-month .planner-weekday { padding-block: 4px; color: var(--muted); text-align: center; font-size: .72rem; }
+.planner-month a, .planner-month > .planner-outside { display: grid; grid-template-rows: 1rem .65rem; justify-items: center; align-content: center; gap: 2px; min-height: 36px; border-radius: 7px; color: var(--ink); text-decoration: none; font-size: .82rem; font-variant-numeric: tabular-nums; }
+.planner-month .planner-outside { color: var(--muted); }
+.planner-month small { color: var(--cyan-dark); font-size: .66rem; line-height: 1; }
+.planner-month a[aria-current], .planner-month a:hover, .planner-month-nav a:hover { background: var(--cyan-soft); color: var(--cyan-dark); }
+.planner-month .planner-is-today strong { text-decoration: underline; text-underline-offset: 3px; }
+.planner-backlog-help { margin: 6px 0 0; color: var(--muted); font-size: .78rem; }
+.planner-jump { display: flex; gap: 7px; margin-top: 13px; }
+.planner-jump input { width: 0; flex: 1; min-width: 0; padding: 5px; border: 1px solid var(--line-dark); border-radius: var(--radius-control); color: var(--ink); background: var(--white); }
+.planner-jump button { padding-inline: 10px; }
+.planner-backlog .board-event-list, .planner-all-day .board-event-list { margin-top: 8px; border: 0; }
+.planner-backlog .board-event-list { max-height: 240px; overflow: auto; }
+.planner-backlog .home-empty, .planner-all-day .home-empty { margin: 10px 0 0; }
+.planner-day-heading h2 { font-size: 1.3rem; margin: 0; }
+.planner-day-heading { padding-bottom: 5px; }
+.planner-timeline, .planner-history { margin-top: 20px; }
+.planner-timeline p { margin: 0; }
+.planner-scroll { position: relative; max-height: 405px; overflow: auto; margin-top: 9px; }
+.planner-hour { display: grid; grid-template-columns: 62px minmax(0, 1fr); min-height: 32px; align-items: start; border-bottom: 1px solid var(--line); }
+.planner-hour:last-child { border-bottom: 0; }
+.planner-time { align-self: stretch; min-height: 32px; border: 0; border-right: 1px solid var(--line); background: var(--sidebar); color: var(--text); font: 550 .75rem var(--font); font-variant-numeric: tabular-nums; }
+.planner-time:hover { background: var(--cyan-soft); }
+.half-hour .planner-time { color: var(--muted); }
+.planner-hour .board-event-list { border: 0; border-radius: 0; }
+.planner-grip { flex: 0 0 auto; display: grid; place-items: center; width: 28px; height: 40px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: grab; touch-action: none; }
+.planner .drag-source { opacity: .5; }
+.planner-grip:hover { background: var(--cyan-soft); }
+.planner-grip svg { stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; }
+.planner .desk-row { min-height: 54px; padding-left: 1px; }
+.planner .desk-check { width: 34px; }
+.planner .desk-row-details summary { top: 5px; }
+.planner .desk-editor { margin-inline: 5px; }
+.planner-backlog .desk-row-agent { display: none; }
+.planner-backlog .desk-row { padding-right: 36px; }
+.planner-backlog .desk-row-details summary { right: 0; width: 34px; }
+.planner-countdown { color: var(--cyan-dark); }
+.planner-countdown.is-overdue { color: #8a453d; }
+.planner-move-form { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+.planner-dragging [data-drop-day] { box-shadow: inset 0 0 0 1px var(--line-dark); }
+.planner .drop-target { box-shadow: inset 0 0 0 2px var(--cyan-dark); background: var(--cyan-soft); }
+.planner-clear, .planner-finish { padding: 10px; border: 1px dashed var(--line-dark); border-radius: 8px; color: var(--cyan-dark); font-size: .8rem; text-align: center; margin-top: 8px; }
+.planner-finish { position: fixed; inset: auto 18px 18px auto; z-index: 45; background: var(--white); }
+.planner-history ol { margin: 8px 0 0; padding: 0; list-style: none; }
+.planner-history li { display: grid; grid-template-columns: 44px 60px minmax(0,1fr); align-items: baseline; gap: 8px; padding-block: 8px; border-top: 1px solid var(--line); font-size: .8rem; }
+.planner-history time, .planner-history span { color: var(--muted); }
+.planner-history strong { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .planner-grid { display: flex; flex-direction: column; gap: 16px; }
+  .planner-side { display: contents; }
+  .planner-calendar, .planner-backlog, .planner-main, .planner-side .home-decision { width: 100%; }
+  .planner-calendar { order: -2; }
+  .planner-backlog { order: -1; }
+  .planner-backlog .board-event-list { max-height: 128px; }
+  .planner-side .home-decision { order: 1; margin-bottom: 0; }
+  .planner-header h1 { font-size: 1.45rem; }
+  .planner-header-links { gap: 7px; }
+  .planner-hour { grid-template-columns: 47px minmax(0,1fr); }
+  .planner-timeline > header { align-items: start; }
+  .planner-timeline p { max-width: 65%; }
+}

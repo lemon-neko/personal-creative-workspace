@@ -4,7 +4,7 @@
 {% block content %}
 <div class="agent-shell agent-reading-shell">
   <nav class="agent-back"><a href="{{ url_for('tasks') }}">← 返回任务</a></nav>
-  <header class="agent-header"><div><p class="eyebrow">RUN LEDGER</p><h1>运行记录</h1><p>这里只保存任务状态、步骤、工具摘要和产物引用，不保存完整模型 Prompt。</p></div></header>
-  {% if rows %}<div class="agent-list">{% for run, task in rows %}<a class="agent-task-row" href="{{ url_for('run_detail', run_id=run.id) }}"><div><span class="agent-kicker">{{ run.role_key }} · {{ run.created_at }}</span><h3>{{ task.title if task else run.task_id }}</h3><p>{{ task.next_action if task else '' }}</p></div><div class="agent-row-state"><span>{{ run_status_labels[run.status] }}</span><small>步骤 {{ run.current_step }} / 3</small></div></a>{% endfor %}</div>{% else %}<div class="agent-empty"><h3>尚无运行记录</h3><p>先创建任务并生成执行计划。</p></div>{% endif %}
+  <header class="agent-header"><div><h1>运行记录</h1><p>查看待决策、待验收和历史运行。</p></div></header>
+  {% if rows %}<div class="agent-list">{% for run, task in rows %}<a class="agent-task-row" href="{{ url_for('run_detail', run_id=run.id) }}"><div><span class="agent-kicker">{{ run.role_key }} · {{ run.created_at }}</span><h3>{{ task.title if task else run.task_id }}</h3><p>{{ task.next_action if task else '' }}</p></div><div class="agent-row-state"><span>{{ run_status_labels[planned_decisions.get(run.id, run.status)] }}</span><small>步骤 {{ run.current_step }} / 3</small></div></a>{% endfor %}</div>{% else %}<div class="agent-empty"><h3>尚无运行记录</h3><p>先创建任务并生成执行计划。</p></div>{% endif %}
 </div>
 {% endblock %}

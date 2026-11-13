@@ -31,6 +31,32 @@
 | 2026-08-28 | refactor | [学习路线极简化](2026/2026-08-28-learning-roadmap-simplification.md) | 求职学习、前端、文档 |
 | 2026-08-31 | refactor | [赚钱验证闭环](2026/2026-08-31-money-skill-loop.md) | 收入、助手、迁移、文档 |
 | 2026-09-02 | feature | [Agent Runtime Phase 1](2026/2026-09-02-agent-runtime-phase-1.md) | 任务、运行、本地检索、产物 |
+| 2026-09-12 | refactor | [简历模板系统优化](2026/2026-09-12-resume-template-system.md) | 求职、简历、PDF、前端 |
+| 2026-09-12 | refactor | [国内技术简历参考排版校准](2026/2026-09-12-resume-reference-layout.md) | 求职、简历、PDF、前端 |
+| 2026-09-13 | refactor | [工作经历二层分区](2026/2026-09-13-resume-work-hierarchy.md) | 求职、简历、PDF、前端 |
+| 2026-09-13 | refactor | [简历页眉图标与分区线](2026/2026-09-13-resume-header-icons.md) | 求职、简历、PDF、前端 |
+| 2026-09-13 | refactor | [简历教育顺序与项目三层结构](2026/2026-09-13-resume-project-hierarchy.md) | 求职、简历、匹配、PDF、前端 |
+| 2026-10-12 | feature | [阶段行动与首页看板](2026/2026-10-12-focus-dashboard.md) | 阶段行动、首页、求职、助手 |
+| 2026-10-12 | refactor | [首页精简排版](2026/2026-10-12-home-layout-refinement.md) | 首页、阶段行动、前端 |
+| 2026-10-19 | feature | [求职模块精简与投递进度表](2026/2026-10-19-career-workspace-simplification.md) | 求职、简历、前端、迁移 |
+| 2026-10-20 | refactor | [投递表直接编辑与自动保存](2026/2026-10-20-career-table-autosave.md) | 求职、前端 |
+| 2026-11-11 | feature | [工作台行动闭环](2026/2026-11-11-workbench-action-loop.md) | 首页、阶段行动、本地任务、迁移 |
+| 2026-11-11 | feature | [今日看板与 AI 工作闭环](2026/2026-11-11-daily-board-ai-workflow.md) | 首页、阶段、AI、创作、知识、迁移 |
+| 2026-11-11 | feature | [今日待办与安排交互](2026/2026-11-11-daily-task-interactions.md) | 首页、阶段、前端 |
+| 2026-11-11 | refactor | [工作台视觉更新](2026/2026-11-11-workbench-editorial-ui.md) | 首页、导航、前端 |
+| 2026-11-11 | feature | [日常工作与 AI 工作流窗口](2026/2026-11-11-calendar-and-agent-windows.md) | 日历、排程、AI、迁移 |
+| 2026-11-11 | feature | [日常工作月历](2026/2026-11-11-planner-month-view.md) | 日历、前端 |
+| 2026-11-12 | feature | [桌面工作台插件](2026/2026-11-12-workbench-plugins.md) | 日常工作、AI、插件 |
+| 2026-11-12 | fix | [日常工作简体中文](2026/2026-11-12-daily-work-chinese.md) | 日常工作、中文 |
+| 2026-11-12 | feature | [日常工作语言切换](2026/2026-11-12-daily-work-language-toggle.md) | 日常工作、中英文 |
+| 2026-11-12 | refactor | [隐藏日常工作侧栏支持入口](2026/2026-11-12-daily-work-hide-support.md) | 日常工作、侧栏 |
+| 2026-11-12 | feature | [AI 工作流控制中心](2026/2026-11-12-workflow-control-center.md) | 实时状态、追溯、人工决策 |
+| 2026-11-12 | feature | [DeepSeek Harness 调度与归档](2026/2026-11-12-deepseek-workflow.md) | 工作流、模型执行 |
+| 2026-11-12 | docs | [当前架构与数据流盘点](2026/2026-11-12-architecture-review.md) | 架构、技术栈、存储 |
+| 2026-11-12 | refactor | [AI 工作流模块边界](2026/2026-11-12-workflow-boundaries.md) | 审批、派发、执行、恢复 |
+| 2026-11-12 | refactor | [移动端日常工作与随手记](2026/2026-11-12-mobile-daily-capture.md) | Android PWA、日常工作、离线记录 |
+| 2026-11-12 | refactor | [日常工作与 AI 插件故障隔离](2026/2026-11-12-plugin-startup-isolation.md) | 日常工作、AI 工作流、移动端 |
+| 2026-11-12 | feature | [AI 工作流可观测性 V3](2026/2026-11-12-workflow-observability-v3.md) | AI 工作流、Trace、Agent 遥测 |
 
 ## 完成功能批次时
 

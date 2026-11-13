@@ -164,8 +164,10 @@ def client(tmp_path: Path) -> TestClient:
 @pytest.mark.parametrize(
     ("path", "marker"),
     [
-        ("/", "今天想接住什么"),
-        ("/tasks", "任务运行时"),
+        ("/", "待办"),
+        ("/focus", "主线与分支"),
+        ("/focus/checkin", "本周复盘"),
+        ("/tasks", "AI 工作"),
         ("/runs", "运行记录"),
         ("/assistant", "个人助手"),
         ("/ideas", "想法库"),
@@ -174,12 +176,12 @@ def client(tmp_path: Path) -> TestClient:
         ("/articles", "文章创作"),
         ("/publish", "公众号发布台"),
         ("/video", "视频创作"),
-        ("/career", "求职驾驶舱"),
+        ("/career", "投递进度"),
         ("/career/profile", "候选人档案"),
         ("/career/documents", "私有文档"),
         ("/career/projects", "项目证据库"),
         ("/career/resumes", "简历工作室"),
-        ("/career/jobs", "职位跟踪"),
+        ("/career/jobs", "投递进度"),
         ("/learning", "Agent 应用开发路线"),
         ("/income", "收入面板"),
         ("/income/entries", "收支记录"),
@@ -277,6 +279,8 @@ def test_workspace_groups_search_and_partial(tmp_path: Path) -> None:
     client = TestClient(create_app(content_root=tmp_path, enable_scheduler=False))
 
     workspace = client.get("/", params={"view": "pending"})
+    compact_home = client.get("/")
+    searched_home = client.get("/", params={"q": "散步"})
     pending = client.get("/partials/workspace-feed", params={"view": "pending"})
     organized = client.get("/partials/workspace-feed", params={"view": "organized"})
     all_items = client.get("/partials/workspace-feed", params={"view": "all"})
@@ -291,8 +295,15 @@ def test_workspace_groups_search_and_partial(tmp_path: Path) -> None:
     )
 
     assert "创作流" in workspace.text
-    assert "本周回顾" in workspace.text
-    assert "文章草稿" in workspace.text
+    assert '<section id="workspace-feed"' in workspace.text
+    assert "今天还没有待办" in compact_home.text
+    assert "记一条想法" in compact_home.text
+    assert "周回顾" in compact_home.text
+    assert '<section id="workspace-feed"' not in compact_home.text
+    assert 'class="workspace-rail"' not in compact_home.text
+    assert '<section id="workspace-feed"' in searched_home.text
+    assert "散步灵感" in searched_home.text
+    assert 'href="http://testserver/articles"' in workspace.text
     assert "散步灵感" in pending.text
     assert "参数的碎碎念" not in pending.text
     assert "参数的碎碎念" not in organized.text
@@ -615,7 +626,7 @@ def test_review_can_be_generated_from_workspace(tmp_path: Path) -> None:
 
     assert response.url.query.decode() == "saved=fallback&view=pending"
     assert "规则回顾草稿" in response.text
-    assert "本周回顾" in response.text
+    assert "周回顾" in response.text
 
 
 def test_content_types_have_separate_pages_and_publish_boundary(tmp_path: Path) -> None:

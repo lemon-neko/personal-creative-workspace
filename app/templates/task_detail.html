@@ -3,7 +3,7 @@
 {% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/agent-core.css') }}?v=20260902-agent1">{% endblock %}
 {% block content %}
 <div class="agent-shell agent-reading-shell">
-  <nav class="agent-back"><a href="{{ url_for('tasks') }}">← 返回任务</a><a href="{{ url_for('runs') }}">全部运行</a></nav>
+  <nav class="agent-back"><a href="{{ url_for('tasks') }}">← 返回任务</a><a href="{{ url_for('runs') }}">全部运行</a>{% if source %}<a href="{{ url_for('focus_goal', goal_id=source[0]) }}#action-{{ source[1] }}">回到原行动</a>{% elif daily_source %}<a href="{{ url_for('legacy_workspace') if request.app.state.plugins_enabled else url_for('workspace') }}{{ '?day=' ~ daily_day if daily_day else '' }}#event-{{ daily_source }}">回到原待办</a>{% endif %}</nav>
   {% if error %}<div class="message error">{{ error }}</div>{% endif %}
   <header class="agent-detail-header">
     <div>
@@ -16,11 +16,12 @@
 
   <section class="agent-next-step">
     <span>下一步</span><strong>{{ task.next_action }}</strong>
-    {% if task.status in ['draft', 'planned'] %}
+    {% if task.status in ['draft', 'planned', 'failed', 'cancelled'] %}
     <form action="{{ url_for('plan_workspace_task', task_id=task.id) }}" method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-      <button class="primary-button" type="submit">{{ '查看执行计划' if task.status == 'planned' else '生成执行计划' }}</button>
+      <button class="primary-button" type="submit">{{ '查看执行计划' if task.status == 'planned' else ('重新规划' if task.status in ['failed', 'cancelled'] else '生成执行计划') }}</button>
     </form>
+    {% elif review_run %}<a class="primary-button" href="{{ url_for('run_detail', run_id=review_run.id) }}">查看并验收</a>
     {% endif %}
   </section>
 
@@ -32,7 +33,7 @@
     <div class="agent-section-heading"><div><h2>运行记录</h2><p>每次计划和执行都有独立轨迹。</p></div></div>
     {% if runs %}
     <div class="agent-list compact">
-      {% for run in runs %}<a class="agent-run-row" href="{{ url_for('run_detail', run_id=run.id) }}"><div><strong>{{ role[1] }}运行</strong><small>{{ run.created_at }}</small></div><span>{{ run_status_labels[run.status] }}</span></a>{% endfor %}
+      {% for run in runs %}<a class="agent-run-row" href="{{ url_for('run_detail', run_id=run.id) }}"><div><strong>{{ role[1] }}运行</strong><small>{{ run.created_at }}</small></div><span>{{ run_status_labels[planned_decisions.get(run.id, run.status)] }}</span></a>{% endfor %}
     </div>
     {% else %}<p class="agent-muted">尚未生成运行计划。</p>{% endif %}
   </section>

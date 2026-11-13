@@ -14,8 +14,9 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from app.agent_core import DEFAULT_PROJECT_ID
 from app.atomic import content_lock
-from app.career import CareerRepository
+from app.focus import FOCUS_STATUSES, daily_board, focus_snapshot, planner_slot
 from app.content import ContentCollection, ContentItem, render_markdown, semantic_revision
 from app.knowledge import (
     DEFAULT_SUBJECTS,
@@ -33,6 +34,7 @@ from app.knowledge_store import (
 )
 from app.model_gateway import POLICIES, ModelTaskKind
 from app.obsidian import obsidian_uri
+from app.planner import planner_context
 from app.web import TEMPLATES, WORKSPACE_VIEWS, collection, not_found
 from app.workspace import (
     SHANGHAI,
@@ -202,13 +204,8 @@ def _workspace_context(
     query: str | None = None,
     view: str | None = None,
 ) -> dict:
-    collection = _collection(request)
     today = datetime.now(SHANGHAI).date()
-    today_items = tuple(
-        item
-        for item in collection.items
-        if item.kind == "thought" and item.created_at.date() == today
-    )
+    show_workspace_feed = "view" in request.query_params or "q" in request.query_params
     notices = {
         "created": "想法已落进本地 Markdown。先记下来，整理可以晚一点。",
         "article": "候选稿已保存为新的文章草稿，原始想法没有被改动。",
@@ -217,65 +214,35 @@ def _workspace_context(
         "existing": "本周回顾已经存在，没有重复生成。",
         "fallback": "模型未使用，已生成稳定的规则回顾草稿。",
     }
-    settings = load_workspace_settings(request.app.state.content_root)
-    week_items = current_week_items(request.app.state.content_root)
-    review_items = tuple(
-        item for item in collection.items if item.kind == "weekly-review"
-    )
-    article_drafts = tuple(
-        item
-        for item in collection.items
-        if item.kind == "article" and item.status == "draft"
-    )
-    career: CareerRepository = request.app.state.career
-    video_projects = request.app.state.video.projects()
-    jobs = career.jobs()
-    learning_tasks = career.learning_tasks()
-    income_metrics = request.app.state.income.metrics()
-    income_sources = request.app.state.income.source_summaries()
-    income_product = request.app.state.income.active_product()
-    return {
+    context = {
         "active_page": "workspace",
-        "today_items": today_items,
-        "pending_count": len(
-            [
-                item
-                for item in collection.items
-                if item.kind == "thought" and item.status == "draft"
-            ],
-        ),
-        "published_count": sum(
-            item.kind == "thought" and item.status == "published"
-            for item in collection.items
-        ),
-        "week_items": week_items,
-        "latest_review": review_items[0] if review_items else None,
-        "settings": settings,
-        "next_run": next_summary_run(settings),
-        "llm_enabled": request.app.state.llm_client.enabled,
-        "article_drafts": article_drafts[:3],
-        "video_projects": tuple(
-            project for project in video_projects if project.status != "archived"
-        )[:3],
-        "career_jobs": jobs[:4],
-        "career_active_count": sum(
-            job.status not in {"rejected", "withdrawn", "archived"} for job in jobs
-        ),
-        "learning_tasks": tuple(
-            task for task in learning_tasks if task.status in {"backlog", "active"}
-        )[:4],
-        "income_metrics": income_metrics,
-        "primary_income_source": income_sources[0] if income_sources else None,
-        "income_product": income_product,
-        "first_yuan_cleared": request.app.state.income.first_yuan_cleared(
-            income_product.id
-        ),
-        "diagnostics": collection.diagnostics,
+        **focus_snapshot(request.app.state.focus, today),
+        "attention_runs": request.app.state.agent_core.attention_runs(),
+        "focus_status_labels": FOCUS_STATUSES,
+        "show_workspace_feed": show_workspace_feed,
         "notice": notices.get(saved or ""),
         "error": error,
         "form_data": form_data or {},
-        **_workspace_feed_context(collection, query=query, view=view),
+        "board_view": "upcoming" if request.query_params.get("board") == "upcoming" else "today",
+        "board_show_done": request.query_params.get("done") == "1",
+        "board_date_label": f"{today.month}月{today.day}日 · 周{'一二三四五六日'[today.weekday()]}",
     }
+    context.update(daily_board(request.app.state.focus, context, today))
+    context["planner_view"] = not show_workspace_feed and "board" not in request.query_params
+    if context["planner_view"]:
+        context.update(planner_context(request.app.state.focus, context, today, request.query_params.get("day", "")))
+    runtime = request.app.state.agent_core
+    task_ids = runtime.daily_task_ids()
+    displayed = context["board_upcoming"] if context["board_view"] == "upcoming" else context["board_events"]
+    goal_ids = {goal.id for goal in context["focus_goals"]} if context["planner_view"] else {goal.id for _, goal, _ in displayed if goal}
+    for goal_id in goal_ids:
+        task_ids.update(runtime.linked_tasks(goal_id))
+    context["board_task_ids"] = task_ids
+    if show_workspace_feed:
+        collection = _collection(request)
+        context["diagnostics"] = collection.diagnostics
+        context.update(_workspace_feed_context(collection, query=query, view=view))
+    return context
 
 def _workspace_feed_context(
     collection: ContentCollection,
@@ -430,7 +397,7 @@ def _redacted_items(
         raise ValueError("请至少保留一条要发送的内容")
     return tuple(redacted)
 
-@router.get("/", response_class=HTMLResponse, name="workspace")
+@router.get("/legacy/planner", response_class=HTMLResponse, name="legacy_workspace")
 async def workspace(
     request: Request,
     saved: Optional[str] = Query(default=None),
@@ -442,6 +409,127 @@ async def workspace(
         name="workspace.html",
         context=_workspace_context(request, saved=saved, query=q, view=view),
     )
+
+
+@router.post("/today/events", name="create_daily_event")
+async def create_daily_event(
+    request: Request, title: str = Form(), deliverable_id: str = Form(""), due_on: str = Form(""),
+    start_on: str = Form(""), start_time: str = Form(""),
+):
+    today = datetime.now(SHANGHAI).date()
+    try:
+        slot = planner_slot(start_on, start_time) if start_on else None
+        request.app.state.focus.create_daily_event(title, today, deliverable_id, due_on, slot=slot)
+    except ValueError as error:
+        return _board_response(
+            request, status=422, board_error=str(error), event_title=title,
+            event_delivery=deliverable_id, event_date=due_on, event_start_time=start_time,
+        )
+    message = "已添加到待安排" if not slot and due_on and due_on > today.isoformat() else "已添加待办"
+    return _board_response(request, board_message=message)
+
+
+@router.post("/today/events/{event_id}/status", name="update_daily_event")
+async def update_daily_event(
+    request: Request, event_id: str, status: str = Form(), expected_status: str = Form(""),
+    title: str | None = Form(None), due_on: str | None = Form(None), edit: bool = Form(False),
+):
+    try:
+        previous = request.app.state.focus.update_board_event(
+            event_id, status, datetime.now(SHANGHAI).date(), expected_status=expected_status,
+            title=(title or "") if edit else None, due_on=(due_on or "") if edit else None,
+        )
+    except KeyError:
+        return not_found(request, "workspace")
+    except ValueError as error:
+        return _board_response(
+            request, status=422, board_error=str(error), board_error_id=event_id,
+            board_edit={"title": title or "", "due_on": due_on or "", "status": status} if edit else None,
+            board_show_done=expected_status == "done",
+        )
+    completed = status == "done" and previous != status
+    return _board_response(
+        request, board_message="已完成待办" if completed else "已恢复待办" if previous == "done" and status != previous else "已更新待办",
+        board_undo=(event_id, previous) if completed else None, board_event_id=event_id,
+        board_show_done=status == "done" and not completed,
+        anchor=f"event-{event_id}" if request.query_params.get("board") != "upcoming" and not (edit and due_on) else "today",
+        done=status == "done",
+    )
+
+
+@router.post("/today/events/{event_id}/today", name="schedule_daily_event")
+async def schedule_daily_event(request: Request, event_id: str):
+    repository = request.app.state.focus
+    today = datetime.now(SHANGHAI).date()
+    projection = daily_board(repository, focus_snapshot(repository, today), today)
+    item = next((row for row in projection["board_upcoming"] if row[0].id == event_id), None)
+    if item is None:
+        return _board_response(request, status=422, board_error="这项待办已不在待安排列表，请检查当前状态")
+    event, goal, _ = item
+    try:
+        if event.status == "paused":
+            raise ValueError("请先恢复这项待办")
+        if goal:
+            repository.set_day_focus(event_id, selected=True, on=today)
+        else:
+            repository.update_board_event(
+                event_id, event.status, today, due_on=today.isoformat(), expected_status=event.status,
+            )
+    except ValueError as error:
+        return _board_response(request, status=422, board_error=str(error), board_error_id=event_id)
+    return _board_response(request, board_message="已安排到今天")
+
+
+@router.post("/today/events/{event_id}/slot", name="set_daily_event_slot")
+async def set_daily_event_slot(
+    request: Request, event_id: str, expected_slot: str = Form(""),
+    start_on: str = Form(""), start_time: str = Form(""), clear: bool = Form(False),
+):
+    try:
+        slot = None if clear else planner_slot(start_on, start_time)
+        request.app.state.focus.set_planner_slot(event_id, datetime.now(SHANGHAI).date(), slot, expected_slot)
+    except ValueError as error:
+        return _board_response(request, status=422, board_error=str(error))
+    return _board_response(request, board_message="已取消安排" if clear else "已安排待办")
+
+
+def _board_response(request: Request, *, status: int = 200, anchor: str = "today", done: bool = False, **feedback):
+    fragment = request.headers.get("X-Workspace-Board") == "1"
+    if not fragment and status == 200:
+        params = {key: request.query_params[key] for key in ("board", "day") if key in request.query_params}
+        if done:
+            params["done"] = "1"
+        query = f"?{urlencode(params)}" if params else ""
+        return RedirectResponse(f"{request.url_for('legacy_workspace') if request.app.state.plugins_enabled else request.url_for('workspace')}{query}#{anchor}", status_code=303)
+    context = _workspace_context(request)
+    context.update(feedback)
+    if context.get("board_error_id") and not context["planner_view"]:
+        rows = context["board_upcoming"] if context["board_view"] == "upcoming" else context["board_events"]
+        if not any(event.id == context["board_error_id"] for event, _, _ in rows):
+            context["board_error_id"] = ""
+    partial = "partials/planner.html" if context["planner_view"] else "partials/daily_desk.html"
+    return TEMPLATES.TemplateResponse(
+        request=request, name=partial if fragment else "workspace.html",
+        context=context, status_code=status,
+    )
+
+
+@router.post("/today/events/{event_id}/agent", name="prepare_daily_task")
+async def prepare_daily_task(request: Request, event_id: str):
+    event = request.app.state.focus.daily_event(event_id)
+    if event is None or event.status in {"done", "paused"}:
+        return not_found(request, "workspace")
+    runtime = request.app.state.agent_core
+    task = runtime.create_task(
+        title=event.title, objective=event.title, task_type="research",
+        project_id=DEFAULT_PROJECT_ID, source_event_id=event.id,
+    )
+    try:
+        run = runtime.plan_task(task.id)
+    except ValueError:
+        return RedirectResponse(request.url_for("task_detail", task_id=task.id), status_code=303)
+    return RedirectResponse(request.url_for("run_detail", run_id=run.id), status_code=303)
+
 
 @router.get(
     "/partials/workspace-feed",

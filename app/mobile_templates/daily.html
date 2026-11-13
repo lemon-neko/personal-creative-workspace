@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}日常工作 · 羽白工作台{% endblock %}
+{% block content %}
+<section class="paper-card">
+  <div class="section-heading"><h1>日常工作</h1><a class="back-link" href="/">刷新</a></div>
+  <p>{{ today.month }} 月 {{ today.day }} 日</p>
+  {% if snapshot %}
+  <p class="quiet-note">桌面同步于 {{ snapshot.synced_at.strftime('%H:%M') }} · 手机只读</p>
+  {% else %}
+  <p class="quiet-note">还没有今天的快照。请在 Mac 浏览器打开「日常工作」，然后刷新此页。</p>
+  {% endif %}
+</section>
+{% if snapshot %}
+  {% for name, label, empty in [
+    ('today', '今日安排', '今天没有已排期的待办。'),
+    ('overdue', '逾期待办', '没有逾期的排期。'),
+    ('unplanned', '待安排', '没有待安排的事项。'),
+    ('done', '今日完成', '今天还没有完成记录。')
+  ] %}
+  <section class="paper-card daily-group">
+    <h2>{{ label }}</h2>
+    {% if snapshot[name] %}
+    <ul class="daily-list">
+      {% for task in snapshot[name] %}
+      <li><span>{{ task.title }}</span>{% if task.when %}<small>{{ task.when }}</small>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="quiet-note">{{ empty }}</p>
+    {% endif %}
+  </section>
+  {% endfor %}
+{% endif %}
+{% endblock %}

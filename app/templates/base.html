@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="{{ url_for('static', path='/styles/knowledge-system.css') }}?v=20260826-ui1">
     <link rel="stylesheet" href="{{ url_for('static', path='/styles/assistant.css') }}?v=20260820-assistant1">
     {% block page_styles %}{% endblock %}
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles/design-system.css') }}?v=20260826-ui1">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles/design-system.css') }}?v=20261111-editorial">
     <script>
         window.MathJax = {
             tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']] },
@@ -23,7 +23,7 @@
     </script>
     <script defer src="{{ url_for('static', path='/vendor/mathjax/tex-svg.js') }}"></script>
     <script defer src="{{ url_for('static', path='/vendor/htmx.min.js') }}"></script>
-    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260817-stable1"></script>
+    <script defer src="{{ url_for('static', path='/app.js') }}?v=20261111-search"></script>
     {% block extra_head %}{% endblock %}
 </head>
 <body class="page-{{ active_page|default('workspace') }}">
@@ -32,32 +32,31 @@
         <aside class="site-sidebar">
             <a class="brand" href="{{ url_for('workspace') }}">
                 <img class="brand-mark" src="{{ url_for('static', path='/brand/yubai-mark.svg') }}" alt="">
-                <span><strong>羽白工作台</strong><small>CREATIVE WORKSPACE</small></span>
+                <span><strong>羽白工作台</strong></span>
             </a>
+            {% set primary_nav = request.app.state.primary_nav %}
+            {% set tools = request.app.state.plugin_nav %}
+            {% set available_routes = request.app.router.routes | map(attribute='name') | list %}
             <div class="sidebar-links">
-                <nav class="sidebar-nav" aria-label="主要功能">
-                    <small class="nav-group-label">工作</small>
-                    <a class="{{ 'active' if active_page == 'workspace' else '' }}" href="{{ url_for('workspace') }}"><span aria-hidden="true">◌</span>工作台</a>
-                    <a class="{{ 'active' if active_page == 'tasks' else '' }}" href="{{ url_for('tasks') }}"><span aria-hidden="true">□</span>任务</a>
-                    <a class="{{ 'active' if active_page == 'assistant' else '' }}" href="{{ url_for('assistant') }}"><span aria-hidden="true">✦</span>助手</a>
-                    <a class="{{ 'active' if active_page == 'ideas' else '' }}" href="{{ url_for('ideas') }}"><span aria-hidden="true">≡</span>想法库</a>
-                    <a class="{{ 'active' if active_page == 'knowledge' else '' }}" href="{{ url_for('knowledge') }}"><span aria-hidden="true">✣</span>知识库</a>
-                    <a class="{{ 'active' if active_page == 'reviews' else '' }}" href="{{ url_for('reviews') }}"><span aria-hidden="true">↻</span>周回顾</a>
-                    <a class="{{ 'active' if active_page in ['articles','publish','video'] else '' }}" href="{{ url_for('articles') }}"><span aria-hidden="true">↗</span>创作</a>
+                <nav class="sidebar-nav sidebar-primary" aria-label="工作台主导航">
+                    <span class="nav-group-label" aria-hidden="true">工作</span>
+                    {% for route, label in primary_nav %}
+                    <a {% if active_page == route %}class="active" aria-current="page"{% endif %} href="{{ url_for(route) }}">
+                        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+                            {% if route == 'workspace' %}<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4m8-4v4M4 10h16m-12 5 2 2 4-4"/>
+                            {% else %}<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z"/>
+                            {% endif %}
+                        </svg>
+                        {{ label }}
+                    </a>
+                    {% endfor %}
                 </nav>
-                <nav class="sidebar-nav" aria-label="求职与学习">
-                    <a class="{{ 'active' if active_page == 'career' else '' }}" href="{{ url_for('career') }}"><span aria-hidden="true">◇</span>求职</a>
-                    <a class="{{ 'active' if active_page == 'learning' else '' }}" href="{{ url_for('learning') }}"><span aria-hidden="true">△</span>学习</a>
-                    {% set available_routes = request.app.router.routes | map(attribute='name') | list %}
-                    {% if 'income' in available_routes %}<a class="{{ 'active' if active_page == 'income' else '' }}" href="{{ url_for('income') }}"><span aria-hidden="true">¥</span>收入</a>{% endif %}
-                </nav>
-                <nav class="sidebar-nav sidebar-secondary" aria-label="工作台设置">
-                    <small class="nav-group-label">系统</small>
-                    <a class="{{ 'active' if active_page == 'models' else '' }}" href="{{ url_for('models') }}"><span aria-hidden="true">◎</span>模型与成本</a>
-                    <a class="{{ 'active' if active_page == 'search' else '' }}" href="{{ url_for('search') }}"><span aria-hidden="true">⌕</span>全局检索 <kbd>⌘K</kbd></a>
-                    <a class="{{ 'active' if active_page == 'settings' else '' }}" href="{{ url_for('settings') }}"><span aria-hidden="true">·</span>设置</a>
-                    <a class="{{ 'active' if active_page == 'trash' else '' }}" href="{{ url_for('trash') }}"><span aria-hidden="true">×</span>回收站</a>
-                </nav>
+                <details class="sidebar-more" {{ 'open' if (active_page in tools|map(attribute=0)|list or active_page in ['publish', 'video']) else '' }}>
+                    <summary>{{ "插件" if request.app.state.plugins_enabled else "更多工具" }}</summary>
+                    <nav class="sidebar-nav" aria-label="插件">
+                        {% for route, label in tools if route in available_routes %}<a {% if active_page == route or (route == 'articles' and active_page in ['publish', 'video']) %}class="active" aria-current="page"{% endif %} href="{{ url_for(route) }}">{{ label }}{% if route == 'search' %}<kbd>⌘K</kbd>{% endif %}</a>{% endfor %}
+                    </nav>
+                </details>
             </div>
             <p class="local-note"><i></i>本地工作台</p>
         </aside>
@@ -68,8 +67,7 @@
             </main>
             <footer class="site-footer">
                 <div class="footer-shell">
-                    <span>把念头接住。至于它要长成什么，之后再说。</span>
-                    <span>lemon-neko · local first</span>
+                    <span>羽白工作台 · 本地存储</span>
                 </div>
             </footer>
         </div>

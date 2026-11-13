@@ -1,0 +1,26 @@
+.page-workspace:has(.daily-frame) .page-shell { max-width: none; padding: 0; }
+.daily-frame { display: block; width: 100%; height: 100dvh; min-height: 34rem; border: 0; background: var(--surface, #fff); }
+.page-workspace:has(.daily-frame) .site-footer { display: none; }
+.workflow-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 1.5rem; }
+.workflow-heading h1 { margin: .25rem 0 0; font-size: clamp(1.5rem, 3vw, 2.3rem); overflow-wrap: anywhere; }
+.workflow-heading a + a { margin-left: .8rem; }
+.workflow-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.workflow-surface { border: 1px solid var(--border, #dddcd6); background: var(--surface, #fff); border-radius: .65rem; padding: 1rem 1.2rem; min-width: 0; }
+.workflow-surface + .workflow-surface { margin-top: .9rem; }
+.workflow-grid > .workflow-surface { margin-top: 0; }
+.workflow-surface h2 { font-size: 1.05rem; margin: 0 0 .75rem; }
+.workflow-inline, .workflow-list li { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; }
+.workflow-list { list-style: none; margin: .7rem 0; padding: 0; }
+.workflow-list li { justify-content: space-between; overflow-wrap: anywhere; padding: .6rem 0; border-bottom: 1px solid var(--border, #dddcd6); }
+.workflow-list li:last-child { border-bottom: none; }
+.workflow-list small { display: block; color: var(--muted, #595954); }
+.workflow-form { display: grid; gap: .45rem; margin-top: .7rem; }
+.workflow-form textarea { width: 100%; resize: vertical; }
+.workflow-preview { border-top: 1px solid var(--border, #dddcd6); margin-top: 1rem; padding-top: 1rem; }
+.workflow-material { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg, #f6f5f2); padding: .8rem; border-radius: .35rem; }
+.workflow-message { padding: .55rem .8rem; border: 1px solid var(--border, #dddcd6); }
+.page-workspace:has(.daily-frame) .workflow-message { position: fixed; z-index: 3; bottom: 1rem; right: 1rem; background: #fff; }
+@media (max-width: 760px) {
+    .workflow-grid { grid-template-columns: 1fr; }
+    .daily-frame { height: calc(100dvh - 6.25rem); min-height: 0; }
+}

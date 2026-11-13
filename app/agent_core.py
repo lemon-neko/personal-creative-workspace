@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 from uuid import uuid4
 
 from app.atomic import atomic_write_text, content_lock
 from app.database import WORKSPACE_REGISTRY, apply_migrations, connect_database
+from app.focus import record_planner_activity
 from app.search import SearchResult
 from app.workspace import SHANGHAI
 
@@ -34,6 +37,7 @@ ARTIFACT_STATUSES = {"review", "accepted", "rejected"}
 MAX_TITLE = 160
 MAX_OBJECTIVE = 8_000
 MAX_DESCRIPTION = 2_000
+DEFAULT_PROJECT_ID = "project-personal-agent-team"
 
 
 ROLE_DEFINITIONS = {
@@ -67,6 +71,8 @@ RUN_STATUS_LABELS = {
     "completed": "已完成",
     "failed": "失败",
     "cancelled": "已取消",
+    "decision": "待决策",
+    "resume": "待继续",
 }
 
 
@@ -255,6 +261,20 @@ class AgentCoreRepository:
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_task ON agent_runs(task_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_agent_steps_run ON agent_steps(run_id, position);
                 CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id, created_at);""",
+                2: """CREATE TABLE focus_action_tasks (
+                    action_id TEXT PRIMARY KEY REFERENCES focus_actions(id) ON DELETE RESTRICT,
+                    task_id TEXT NOT NULL UNIQUE REFERENCES workspace_tasks(id) ON DELETE CASCADE
+                );""",
+                3: """CREATE TABLE daily_event_tasks (
+                    event_id TEXT PRIMARY KEY REFERENCES daily_events(id) ON DELETE RESTRICT,
+                    task_id TEXT NOT NULL UNIQUE REFERENCES workspace_tasks(id) ON DELETE CASCADE
+                );
+                CREATE TABLE agent_run_decisions (
+                    run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+                    question TEXT NOT NULL,
+                    options_json TEXT NOT NULL,
+                    answer TEXT NOT NULL DEFAULT ''
+                );""",
             },
         )
         self._ensure_default_project()
@@ -268,9 +288,9 @@ class AgentCoreRepository:
             connection.execute(
                 """INSERT OR IGNORE INTO workspace_projects
                 (id,title,description,status,created_at,updated_at)
-                VALUES('project-personal-agent-team','Personal Agent Team',
+                VALUES(?,'Personal Agent Team',
                 '个人工作台统一任务运行时的默认项目。','active',?,?)""",
-                (stamp, stamp),
+                (DEFAULT_PROJECT_ID, stamp, stamp),
             )
 
     def projects(self, *, include_archived: bool = False) -> tuple[WorkspaceProject, ...]:
@@ -321,6 +341,109 @@ class AgentCoreRepository:
             ).fetchone()
         return WorkspaceTask(**dict(row)) if row else None
 
+    def linked_tasks(self, goal_id: str) -> dict[str, str]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """SELECT l.action_id,l.task_id FROM focus_action_tasks l
+                JOIN focus_actions a ON a.id=l.action_id
+                JOIN focus_deliverables d ON d.id=a.deliverable_id WHERE d.goal_id=?""",
+                (goal_id,),
+            )
+            return {row["action_id"]: row["task_id"] for row in rows}
+
+    def task_source(self, task_id: str) -> tuple[str, str] | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """SELECT d.goal_id,l.action_id FROM focus_action_tasks l
+                JOIN focus_actions a ON a.id=l.action_id
+                JOIN focus_deliverables d ON d.id=a.deliverable_id WHERE l.task_id=?""",
+                (task_id,),
+            ).fetchone()
+            return (row["goal_id"], row["action_id"]) if row else None
+
+    def private_task_ids(self) -> set[str]:
+        with closing(self.connect()) as connection:
+            return {row[0] for row in connection.execute(
+                """SELECT l.task_id FROM focus_action_tasks l
+                JOIN focus_actions a ON a.id=l.action_id
+                JOIN focus_deliverables d ON d.id=a.deliverable_id
+                JOIN focus_goals g ON g.id=d.goal_id WHERE g.visibility='detail_only'"""
+            )}
+
+    def daily_task_ids(self) -> dict[str, str]:
+        with closing(self.connect()) as connection:
+            return dict(connection.execute("SELECT event_id,task_id FROM daily_event_tasks").fetchall())
+
+    def daily_task_source(self, task_id: str) -> str:
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT event_id FROM daily_event_tasks WHERE task_id=?", (task_id,)).fetchone()
+        return row[0] if row else ""
+
+    def decision(self, run_id: str) -> dict | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT * FROM agent_run_decisions WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        return {"question": row["question"], "options": json.loads(row["options_json"]), "answer": row["answer"]}
+
+    def planned_decisions(self) -> dict[str, str]:
+        with closing(self.connect()) as connection:
+            return dict(connection.execute(
+                """SELECT d.run_id,CASE WHEN d.answer='' THEN 'decision' ELSE 'resume' END
+                FROM agent_run_decisions d JOIN agent_runs r ON r.id=d.run_id WHERE r.status='planned'"""
+            ).fetchall())
+
+    def update_run_objective(self, run_id: str, objective: str) -> None:
+        objective = objective.strip()
+        if not objective or len(objective) > MAX_OBJECTIVE:
+            raise ValueError(f"任务材料不能为空，最多 {MAX_OBJECTIVE} 字符")
+        with closing(self.connect()) as connection, connection:
+            changed = connection.execute(
+                """UPDATE workspace_tasks SET objective=?,revision=revision+1,updated_at=? WHERE id=(
+                    SELECT task_id FROM agent_runs WHERE id=? AND status='planned'
+                    AND NOT EXISTS (SELECT 1 FROM agent_run_decisions WHERE run_id=?))""",
+                (objective, _now(), run_id, run_id),
+            )
+            if not changed.rowcount:
+                raise ValueError("本轮任务材料已锁定，请刷新页面")
+
+    def answer_decision(self, run_id: str, answer: str) -> None:
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT d.*,r.status,r.task_id FROM agent_run_decisions d
+                JOIN agent_runs r ON r.id=d.run_id WHERE d.run_id=?""", (run_id,),
+            ).fetchone()
+            if not row or row["status"] != "planned" or row["answer"]:
+                raise ValueError("本次运行没有待回答的问题")
+            if answer not in json.loads(row["options_json"]):
+                raise ValueError("请选择给出的一个选项")
+            connection.execute("UPDATE agent_run_decisions SET answer=? WHERE run_id=?", (answer, run_id))
+            connection.execute(
+                "UPDATE workspace_tasks SET next_action='预览并继续 AI 工作',revision=revision+1,updated_at=? WHERE id=?",
+                (_now(), row["task_id"]),
+            )
+
+    def attention_runs(self) -> list[dict]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """SELECT r.id,CASE WHEN r.status='planned' AND d1.answer='' THEN 'decision'
+                    WHEN r.status='planned' AND d1.answer<>'' THEN 'resume' ELSE r.status END AS status,t.title
+                FROM workspace_tasks t
+                JOIN agent_runs r ON r.rowid=(SELECT MAX(rowid) FROM agent_runs WHERE task_id=t.id)
+                LEFT JOIN agent_run_decisions d1 ON d1.run_id=r.id
+                LEFT JOIN focus_action_tasks l ON l.task_id=t.id
+                LEFT JOIN focus_actions a ON a.id=l.action_id
+                LEFT JOIN focus_deliverables d ON d.id=a.deliverable_id
+                LEFT JOIN focus_goals g ON g.id=d.goal_id
+                WHERE r.status IN ('reviewing','failed','planned')
+                AND t.status=r.status AND (l.task_id IS NULL OR g.visibility='overview')
+                ORDER BY CASE WHEN r.status='reviewing' THEN 0 WHEN d1.answer='' AND r.status='planned' THEN 1
+                         WHEN r.status='failed' THEN 2 ELSE 3 END,
+                         t.updated_at DESC,r.rowid DESC LIMIT 3"""
+            )
+            return [dict(row) for row in rows]
+
     def create_task(
         self,
         *,
@@ -329,6 +452,8 @@ class AgentCoreRepository:
         task_type: str,
         project_id: str,
         priority: int = 3,
+        source_action_id: str = "",
+        source_event_id: str = "",
     ) -> WorkspaceTask:
         title = _clean(title, MAX_TITLE)
         objective = str(objective or "").strip()[:MAX_OBJECTIVE]
@@ -356,20 +481,41 @@ class AgentCoreRepository:
             stamp,
             stamp,
         )
-        with self.connect() as connection:
+        if source_action_id and source_event_id:
+            raise ValueError("一个任务只能关联一项行动")
+        with closing(self.connect()) as connection, connection:
+            if source_action_id or source_event_id:
+                table, key, source_id = (
+                    ("focus_action_tasks", "action_id", source_action_id) if source_action_id
+                    else ("daily_event_tasks", "event_id", source_event_id)
+                )
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    f"SELECT t.* FROM {table} l JOIN workspace_tasks t ON t.id=l.task_id WHERE l.{key}=?",
+                    (source_id,),
+                ).fetchone()
+                if existing:
+                    return WorkspaceTask(**dict(existing))
             connection.execute(
                 "INSERT INTO workspace_tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 tuple(task.__dict__.values()),
             )
+            if source_action_id or source_event_id:
+                connection.execute(
+                    f"INSERT INTO {table} VALUES(?,?)", (source_id, task.id)
+                )
+                record_planner_activity(connection, source_id, "交给 AI")
         return task
 
     def plan_task(self, task_id: str) -> AgentRun:
-        task = self.task(task_id)
-        if task is None:
-            raise KeyError(task_id)
-        if task.status not in {"draft", "planned"}:
-            raise ValueError("当前任务状态不能重新规划")
-        with self.connect() as connection:
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM workspace_tasks WHERE id=?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            task = WorkspaceTask(**dict(row))
+            if task.status not in {"draft", "planned", "failed", "cancelled"}:
+                raise ValueError("当前任务状态不能重新规划")
             existing = connection.execute(
                 """SELECT * FROM agent_runs WHERE task_id=? AND status='planned'
                 ORDER BY created_at DESC LIMIT 1""",
@@ -386,7 +532,7 @@ class AgentCoreRepository:
                 tuple(run.__dict__.values()),
             )
             for position, step_key, title in (
-                (1, "load-context", "读取本地上下文"),
+                (1, "load-context", "准备任务上下文"),
                 (2, "compose-artifact", "组织任务工作纸"),
                 (3, "review-artifact", "执行确定性审查"),
             ):
@@ -409,7 +555,7 @@ class AgentCoreRepository:
         values = (task_id,) if task_id else ()
         with self.connect() as connection:
             rows = connection.execute(
-                f"SELECT * FROM agent_runs {where} ORDER BY created_at DESC", values
+                f"SELECT * FROM agent_runs {where} ORDER BY created_at DESC, rowid DESC", values
             ).fetchall()
         return tuple(AgentRun(**dict(row)) for row in rows)
 
@@ -539,7 +685,11 @@ class AgentCoreRepository:
             "- 产物仅保存在私有工作目录，等待作者确认。\n"
         )
 
-    def execute_run(self, run_id: str, search_results: Iterable[SearchResult]) -> Artifact:
+    def execute_run(
+        self, run_id: str, search_results: Iterable[SearchResult], *,
+        model: Callable[[], dict] | None = None, expected_answer: str = "", expected_revision: int | None = None,
+        dispatch: Callable[[Callable[[], Artifact | None]], None] | None = None,
+    ) -> Artifact | None:
         run = self.run(run_id)
         if run is None:
             raise KeyError(run_id)
@@ -558,28 +708,66 @@ class AgentCoreRepository:
         sources = tuple(search_results)[:8]
         stamp = _now()
         with self.connect() as connection:
-            connection.execute(
-                "UPDATE agent_runs SET status='running',started_at=?,current_step=1 WHERE id=?",
+            connection.execute("BEGIN IMMEDIATE")
+            decision = connection.execute(
+                "SELECT answer FROM agent_run_decisions WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if decision is not None and (model is None or not decision["answer"] or decision["answer"] != expected_answer):
+                raise ValueError("请先回答决策问题，再预览并继续 AI 工作")
+            if expected_revision is not None:
+                revision = connection.execute("SELECT revision FROM workspace_tasks WHERE id=?", (task.id,)).fetchone()[0]
+                if revision != expected_revision:
+                    raise ValueError("任务材料已变化，请重新确认预览")
+            claim = connection.execute(
+                "UPDATE agent_runs SET status='running',started_at=?,current_step=1 WHERE id=? AND status='planned'",
                 (stamp, run_id),
             )
+            if not claim.rowcount:
+                raise ValueError("本次运行已开始或已结束，请刷新页面")
             connection.execute(
-                """UPDATE workspace_tasks SET status='running',next_action='等待本地执行完成',
+                """UPDATE workspace_tasks SET status='running',next_action='等待运行完成',
                 revision=revision+1,updated_at=? WHERE id=?""",
                 (stamp, task.id),
             )
+        if dispatch is not None:
+            dispatch(lambda: self._finish_run(run_id, task, steps, sources, model))
+            return None
+        return self._finish_run(run_id, task, steps, sources, model)
+
+    def _finish_run(
+        self, run_id: str, task: WorkspaceTask, steps: tuple[AgentStep, ...],
+        sources: tuple[SearchResult, ...], model: Callable[[], dict] | None,
+    ) -> Artifact | None:
         try:
+            candidate = model() if model is not None else None
+            if candidate and "question" in candidate:
+                with self.connect() as connection:
+                    connection.execute(
+                        "INSERT INTO agent_run_decisions VALUES(?,?,?,'')",
+                        (run_id, candidate["question"], json.dumps(candidate["options"], ensure_ascii=False)),
+                    )
+                    connection.execute("UPDATE agent_runs SET status='planned',current_step=0 WHERE id=?", (run_id,))
+                    connection.execute(
+                        """UPDATE workspace_tasks SET status='planned',next_action='回答 AI 提出的决策',
+                        revision=revision+1,updated_at=? WHERE id=?""", (_now(), task.id),
+                    )
+                return None
             self._set_step(steps[0].id, status="running")
-            term_count = len(re.findall(r"[\w\u3400-\u9fff]+", task.objective))
-            self._record_tool_call(
-                run_id=run_id,
-                step_id=steps[0].id,
-                result_count=len(sources),
-                term_count=min(term_count, 8),
-            )
+            if candidate is None:
+                term_count = len(re.findall(r"[\w\u3400-\u9fff]+", task.objective))
+                self._record_tool_call(
+                    run_id=run_id,
+                    step_id=steps[0].id,
+                    result_count=len(sources),
+                    term_count=min(term_count, 8),
+                )
             self._set_step(steps[0].id, status="completed")
 
             self._set_step(steps[1].id, status="running")
-            body = self._artifact_markdown(task, sources)
+            body = (
+                f"# {task.title}\n\n> AI 候选产物，未核实；由作者验收。\n\n{candidate['draft']}\n"
+                if candidate is not None else self._artifact_markdown(task, sources)
+            )
             artifact_id = _identifier("artifact")
             storage_key = f"{artifact_id}.md"
             path = self.artifact_root / storage_key
@@ -594,7 +782,7 @@ class AgentCoreRepository:
                 "review",
                 storage_key,
                 hashlib.sha256(body.encode("utf-8")).hexdigest(),
-                f"本地来源 {len(sources)} 条；等待作者确认。",
+                "AI 候选；等待作者确认。" if candidate is not None else f"本地来源 {len(sources)} 条；等待作者确认。",
                 _now(),
                 "",
             )
@@ -610,7 +798,7 @@ class AgentCoreRepository:
             self._set_step(steps[1].id, status="completed", artifact_id=artifact.id)
 
             self._set_step(steps[2].id, status="running")
-            if "正式知识结论" not in body or "未调用模型" not in body:
+            if candidate is None and ("正式知识结论" not in body or "未调用模型" not in body):
                 raise RuntimeError("Reviewer 未通过任务产物边界检查")
             self._set_step(steps[2].id, status="completed", artifact_id=artifact.id)
             stamp = _now()
@@ -629,9 +817,16 @@ class AgentCoreRepository:
             stamp = _now()
             with self.connect() as connection:
                 connection.execute(
-                    """UPDATE agent_runs SET status='failed',error_code='local-runtime-error',
+                    """UPDATE agent_runs SET status='failed',error_code=?,
                     completed_at=? WHERE id=?""",
+                    ("model-runtime-error" if model is not None else "local-runtime-error", stamp, run_id),
+                )
+                connection.execute(
+                    "UPDATE agent_steps SET status='failed',completed_at=? WHERE run_id=? AND status='running'",
                     (stamp, run_id),
+                )
+                connection.execute(
+                    "UPDATE artifacts SET status='rejected' WHERE run_id=? AND status='review'", (run_id,),
                 )
                 connection.execute(
                     """UPDATE workspace_tasks SET status='failed',next_action='检查本地运行记录',
@@ -639,6 +834,29 @@ class AgentCoreRepository:
                     (stamp, task.id),
                 )
             raise
+
+    def recover_interrupted_runs(self) -> None:
+        stamp = _now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """UPDATE workspace_tasks SET status='failed',next_action='上次运行中断，请重新规划',
+                   revision=revision+1,updated_at=? WHERE id IN (SELECT task_id FROM agent_runs WHERE status='running')""",
+                (stamp,),
+            )
+            connection.execute(
+                """UPDATE agent_steps SET status='failed',completed_at=?
+                   WHERE status='running' AND run_id IN (SELECT id FROM agent_runs WHERE status='running')""",
+                (stamp,),
+            )
+            connection.execute(
+                """UPDATE artifacts SET status='rejected' WHERE status='review'
+                   AND run_id IN (SELECT id FROM agent_runs WHERE status='running')"""
+            )
+            connection.execute(
+                """UPDATE agent_runs SET status='failed',error_code='interrupted',completed_at=? WHERE status='running'""",
+                (stamp,),
+            )
 
     def approve_run(self, run_id: str) -> None:
         run = self.run(run_id)
@@ -653,12 +871,14 @@ class AgentCoreRepository:
             raise ValueError("运行没有可确认的产物")
         stamp = _now()
         with self.connect() as connection:
-            connection.execute(
-                "UPDATE artifacts SET status='accepted',accepted_at=? WHERE run_id=?",
+            claimed = connection.execute(
+                "UPDATE agent_runs SET status='completed',completed_at=? WHERE id=? AND status='reviewing'",
                 (stamp, run_id),
             )
+            if not claimed.rowcount:
+                raise ValueError("运行状态已变化，请刷新")
             connection.execute(
-                "UPDATE agent_runs SET status='completed',completed_at=? WHERE id=?",
+                "UPDATE artifacts SET status='accepted',accepted_at=? WHERE run_id=?",
                 (stamp, run_id),
             )
             connection.execute(
@@ -671,14 +891,16 @@ class AgentCoreRepository:
         run = self.run(run_id)
         if run is None:
             raise KeyError(run_id)
-        if run.status in {"completed", "cancelled"}:
+        if run.status in {"completed", "cancelled", "failed"}:
             return
         stamp = _now()
         with self.connect() as connection:
-            connection.execute(
-                "UPDATE agent_runs SET status='cancelled',completed_at=? WHERE id=?",
+            claimed = connection.execute(
+                "UPDATE agent_runs SET status='cancelled',completed_at=? WHERE id=? AND status IN ('planned','reviewing')",
                 (stamp, run_id),
             )
+            if not claimed.rowcount:
+                raise ValueError("本次正在执行或状态已变化，请稍后刷新")
             connection.execute(
                 """UPDATE agent_steps SET status='cancelled',completed_at=?
                 WHERE run_id=? AND status IN ('pending','running')""",

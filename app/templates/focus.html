@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}阶段行动 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/focus.css') }}?v=20261111-board">{% endblock %}
+{% block content %}
+<div class="focus-shell">
+  <header class="focus-header">
+    <div><h1>主线与分支</h1><p>按阶段维护目标、交付和行动。把关键目标设为 P0 主线。</p></div>
+    {% if focus_cycle %}<div class="focus-period"><span>当前周期</span><strong>{{ focus_cycle.starts_on }} — {{ focus_cycle.ends_on }}</strong></div>{% endif %}
+  </header>
+  {% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
+  {% if focus_cycle %}
+  {% if focus_cycle_expired %}<div class="message warning">本阶段日期已结束。完成复盘后可以创建下一阶段；历史记录仍保留。</div>{% endif %}
+  {% for primary, heading in [(true,'主线'),(false,'分支')] %}
+  <section class="focus-lines quiet-list">
+    <div class="panel-heading"><h2>{{ heading }}</h2></div>
+    <ul class="quiet-rows">
+      {% for goal, completed, total, delivery in board_lines if (goal.priority == 'P0') == primary %}
+      <li><a href="{{ url_for('focus_goal', goal_id=goal.id) }}">{{ goal.title }}</a><span>{{ status_labels[goal.status] }}{% if total %} · {{ completed }}/{{ total }} 行动完成{% endif %}</span><span>{{ delivery.title if delivery else '' }}</span></li>
+      {% else %}<li class="focus-empty">本阶段还没有{{ heading }}。</li>{% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+  {% if all_goals|selectattr('visibility','equalto','detail_only')|list %}
+  <details class="quiet-details"><summary>仅在详情显示的目标</summary><ul class="quiet-rows">
+    {% for goal in all_goals if goal.visibility == 'detail_only' %}<li><a href="{{ url_for('focus_goal', goal_id=goal.id) }}">私人安排 {{ loop.index }}</a><span>{{ status_labels[goal.status] }}</span></li>{% endfor %}
+  </ul></details>
+  {% endif %}
+  <details class="quiet-details"><summary>本周重点与复盘</summary>
+  <div class="focus-plan-grid">
+    <section class="focus-panel" aria-labelledby="week-title">
+      <div class="focus-panel-heading"><div><span>本周 · {{ focus_week_start }}</span><h2 id="week-title">最多三项交付物</h2></div><small>{{ focus_week|length }} / 3</small></div>
+      {% if focus_week %}<ol class="focus-selected-list">{% for row in focus_week %}{% set goal = goal_lookup[row.goal_id] %}<li><a href="{{ url_for('focus_goal', goal_id=goal.id) }}"><strong>{{ row.title }}</strong><span>{{ goal.title }}{% if row.due_on %} · {{ row.due_on }}{% endif %}</span></a>{% if is_overdue(row.due_on,row.status,today) %}<em>需复核</em>{% else %}<small>{{ status_labels[row.status] }}</small>{% endif %}</li>{% endfor %}</ol>
+      {% else %}<p class="focus-empty">还没有选本周交付物。进入目标详情，从现有里程碑里选最多三项。</p>{% endif %}
+    </section>
+    <section class="focus-panel" aria-labelledby="today-title">
+      <div class="focus-panel-heading"><div><span>今天 · {{ focus_today_date }}</span><h2 id="today-title">只做三件重点事</h2></div><small>{{ focus_today|length }} / 3</small></div>
+      {% if focus_today %}<ol class="focus-selected-list">{% for row in focus_today %}{% set delivery = deliverable_lookup[row.deliverable_id] %}{% set goal = goal_lookup[delivery.goal_id] %}<li><a href="{{ url_for('focus_goal', goal_id=goal.id) }}"><strong>{{ row.title }}</strong><span>{{ goal.title }}</span></a><small>{{ status_labels[row.status] }}</small></li>{% endfor %}</ol>
+      {% else %}<p class="focus-empty">今天尚未选重点行动。已有行动会留在各目标中，不会自动挤进今天。</p>{% endif %}
+    </section>
+  </div>
+  <a class="focus-external-link" href="{{ url_for('focus_checkin') }}">本周复盘</a>
+  </details>
+  {% if focus_next_decision %}<section class="focus-decision" id="next-decision"><span>{{ '已到期 · 需复核' if focus_next_decision_overdue else '下一个决策节点' }} · {{ focus_next_decision.due_on }}</span><strong>{{ focus_next_decision.title }}</strong><p>{{ focus_next_decision.question }}</p><form class="focus-decision-form" action="{{ url_for('update_focus_decision', decision_id=focus_next_decision.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label>确认状态 <select name="status">{% for value,label in status_labels.items() %}<option value="{{ value }}" {{ 'selected' if value == focus_next_decision.status else '' }}>{{ label }}</option>{% endfor %}</select></label><button class="secondary-button">保存节点状态</button></form></section>{% endif %}
+  <section class="focus-management"><details><summary>添加阶段目标</summary><form action="{{ url_for('create_focus_goal') }}" method="post" class="focus-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="cycle_id" value="{{ focus_cycle.id }}"><label>目标名称<input name="title" maxlength="180" required></label><label>说明<textarea name="summary" maxlength="500" rows="2"></textarea></label><div class="focus-form-row"><label>领域<select name="area">{% for area,label in [('venture','创业'),('career','求职'),('life','生活'),('creation','创作'),('learning','学习'),('admin','事务')] %}<option value="{{ area }}">{{ label }}</option>{% endfor %}</select></label><label>优先级<select name="priority"><option>P0</option><option>P1</option><option>P2</option></select></label><label>目标日期<input type="date" name="target_on"></label></div><div class="focus-form-row"><label>首页可见性<select name="visibility"><option value="overview">显示概况</option><option value="detail_only">只在详情显示</option></select></label><label>对应模块<select name="module_key"><option value="">阶段行动</option><option value="career">求职</option><option value="learning">学习</option><option value="articles">文章</option><option value="income">收入</option><option value="reviews">周回顾</option></select></label></div><button class="primary-button">添加目标</button></form></details></section>
+  <section class="focus-management"><details><summary>创建下一阶段</summary><form action="{{ url_for('create_focus_cycle') }}" method="post" class="focus-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label>阶段名称<input name="title" maxlength="180" required></label><div class="focus-form-row"><label>开始日期<input type="date" name="starts_on" required></label><label>结束日期<input type="date" name="ends_on" required></label></div><button class="secondary-button">创建阶段</button></form></details></section>
+  <a class="focus-external-link" href="{{ url_for('focus_history') }}">查看阶段历史 →</a>
+  {% else %}<section class="focus-empty-state"><h2>从一个阶段开始</h2><p>设定起止日期，然后只放入当下真正需要推进的目标。</p><form action="{{ url_for('create_focus_cycle') }}" method="post" class="focus-form"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><label>阶段名称<input name="title" maxlength="180" required placeholder="例如：两个月的交付期"></label><div class="focus-form-row"><label>开始日期<input type="date" name="starts_on" required></label><label>结束日期<input type="date" name="ends_on" required></label></div><button class="primary-button">创建阶段</button></form></section>{% endif %}
+</div>
+{% endblock %}

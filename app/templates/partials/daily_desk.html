@@ -1,0 +1,109 @@
+{% set is_upcoming = board_view == 'upcoming' %}
+{% set board_suffix = '?board=upcoming' if is_upcoming else '?board=list' %}
+{% set overdue = [] %}
+{% set pending = [] %}
+{% set completed = [] %}
+{% for event, goal, delivery in board_events %}
+    {% if event.status == 'done' %}{% set _ = completed.append((event, goal, delivery)) %}
+    {% elif event.due_on and event.due_on < focus_today_date and event.status != 'paused' %}{% set _ = overdue.append((event, goal, delivery)) %}
+    {% else %}{% set _ = pending.append((event, goal, delivery)) %}{% endif %}
+{% endfor %}
+<div id="daily-desk" data-message="{{ board_error or board_message or '' }}">
+    <header class="home-header">
+        <h1>{{ '待安排' if is_upcoming else '今日' }}</h1>
+        {% if focus_cycle %}<a class="home-period" href="{{ url_for('focus') }}">{{ focus_cycle.title }}{% if focus_cycle_expired %} · 待复盘{% endif %}</a>{% endif %}
+    </header>
+    <div class="desk-toolbar">
+        <nav aria-label="待办视图">
+            <a id="desk-today" href="{{ url_for('legacy_workspace') if request.app.state.plugins_enabled else url_for('workspace') }}?board=list" {{ 'aria-current=page' if not is_upcoming else '' }}>今日</a>
+            <a id="desk-upcoming" href="{{ url_for('legacy_workspace') if request.app.state.plugins_enabled else url_for('workspace') }}?board=upcoming" {{ 'aria-current=page' if is_upcoming else '' }}>待安排 <small>{{ board_upcoming|length }}</small></a>
+        </nav>
+        <a class="desk-search" href="{{ url_for('search') }}" data-open-search aria-keyshortcuts="Meta+K Control+K">
+            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5"/><path d="m12 12 4 4"/></svg>
+            <span>搜索工作台</span><kbd aria-hidden="true">⌘K</kbd>
+        </a>
+    </div>
+
+    {% if focus_next_decision or attention_runs %}{% include "partials/workbench_attention.html" %}{% endif %}
+
+    <div class="home-priority-grid">
+        <section class="home-today" id="today" aria-labelledby="home-today-title">
+            <div class="desk-list-heading">
+                <h2 id="home-today-title">{% if is_upcoming %}待办{% else %}<time datetime="{{ focus_today_date }}">{{ board_date_label }}</time>{% endif %}</h2>
+                <span class="desk-count">{{ (board_upcoming|length ~ ' 项') if is_upcoming else (completed|length ~ ' / ' ~ board_events|length ~ ' 已完成') }}</span>
+            </div>
+            {% if not is_upcoming %}
+            <form class="board-add" method="post" action="{{ url_for('create_daily_event') }}?board=list" data-desk-action="add">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <div class="desk-add-main">
+                    <label class="sr-only" for="new-event">新增待办</label>
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    <input id="new-event" name="title" maxlength="180" placeholder="添加一项待办…" required value="{{ event_title|default('') }}" aria-keyshortcuts="Alt+N">
+                    <button class="primary-button">添加</button>
+                </div>
+                <div class="desk-add-footer">
+                    <details class="desk-add-options" {{ 'open' if event_date or event_delivery else '' }}>
+                        <summary>归属与日期</summary>
+                        <div class="desk-fields">
+                            {% if board_deliveries %}<label>归属交付物<select name="deliverable_id"><option value="">独立待办</option>{% for delivery, goal in board_deliveries %}<option value="{{ delivery.id }}" {{ 'selected' if event_delivery == delivery.id else '' }}>{{ goal.title }} / {{ delivery.title }}</option>{% endfor %}</select></label>{% endif %}
+                            <label>日期<input type="date" name="due_on" value="{{ event_date|default('') }}"></label>
+                        </div>
+                    </details>
+                    <kbd title="聚焦新增待办">Alt + N</kbd>
+                </div>
+            </form>
+            {% endif %}
+            <div class="desk-feedback" id="desk-feedback">
+                {% if board_error and not board_error_id %}<p class="message error" role="alert">{{ board_error }}</p>{% endif %}
+                {% if board_message %}
+                <div class="desk-notice"><span>{{ board_message }}</span>
+                    {% if board_undo %}
+                    <form method="post" action="{{ url_for('update_daily_event', event_id=board_undo[0]) }}{{ board_suffix }}" data-desk-action="undo" data-event-id="{{ board_undo[0] }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                        <input type="hidden" name="expected_status" value="done">
+                        <input type="hidden" name="status" value="{{ board_undo[1] }}">
+                        <button class="board-action" id="desk-undo">撤销</button>
+                    </form>
+                    {% elif not is_upcoming and board_message == '已添加到待安排' %}<a class="board-action" href="{{ url_for('legacy_workspace') if request.app.state.plugins_enabled else url_for('workspace') }}?board=upcoming">查看</a>{% endif %}
+                </div>
+                {% endif %}
+            </div>
+            {% if is_upcoming %}
+                <p class="desk-section-description">未来到期或尚未排进今天的事项。</p>
+                {% if board_upcoming %}<ol class="board-event-list">{% for event, goal, delivery in board_upcoming %}{% include "partials/daily_desk_row.html" %}{% endfor %}</ol>
+                {% else %}<p class="home-empty">没有待安排的事项。添加待办时可以选择未来日期。</p>{% endif %}
+            {% else %}
+                {% if overdue %}
+                <section class="desk-group" aria-labelledby="desk-overdue"><h3 id="desk-overdue">逾期 <small>{{ overdue|length }}</small></h3>
+                    <ol class="board-event-list">{% for event, goal, delivery in overdue %}{% include "partials/daily_desk_row.html" %}{% endfor %}</ol>
+                </section>
+                {% endif %}
+                {% if pending %}
+                <section class="desk-group" aria-labelledby="desk-open"><h3 id="desk-open">未完成 <small>{{ pending|length }}</small></h3>
+                    <ol class="board-event-list">{% for event, goal, delivery in pending %}{% include "partials/daily_desk_row.html" %}{% endfor %}</ol>
+                </section>
+                {% elif not overdue and not completed %}<p class="home-empty">今天还没有待办。输入标题，按 Enter 即可添加。</p>
+                {% elif not overdue %}<p class="home-empty">今天的待办已全部完成。</p>{% endif %}
+                {% if completed %}
+                <details class="desk-done" {{ 'open' if board_show_done else '' }}>
+                    <summary>已完成 <small>{{ completed|length }}</small></summary>
+                    <ol class="board-event-list">{% for event, goal, delivery in completed %}{% include "partials/daily_desk_row.html" %}{% endfor %}</ol>
+                </details>
+                {% endif %}
+            {% endif %}
+        </section>
+        <aside class="home-rail" aria-label="主线进展">
+            <section class="home-card home-tracks" aria-labelledby="home-tracks-title">
+                <div class="home-card-heading"><h2 id="home-tracks-title">主线与分支</h2><a href="{{ url_for('focus') }}">管理</a></div>
+                {% for goal, completed_count, total, next_delivery in board_lines %}
+                <a class="home-track-row" href="{{ url_for('focus_goal', goal_id=goal.id) }}">
+                    <span class="home-track-type">{{ '主线' if goal.priority == 'P0' else '分支' }} <span>{{ focus_status_labels[goal.status] }}</span></span>
+                    <strong>{{ goal.title }}</strong>
+                    {% if total %}<span class="home-track-progress"><progress max="{{ total }}" value="{{ completed_count }}" aria-label="{{ goal.title }}行动完成数"></progress><small>{{ completed_count }} / {{ total }}</small></span>{% endif %}
+                    {% if next_delivery %}<span class="home-track-next">下一交付：{{ next_delivery.title }}</span>{% endif %}
+                </a>
+                {% else %}<p class="home-empty">还没有可见的主线或分支。</p><a class="home-card-link" href="{{ url_for('focus') }}">设置阶段目标</a>{% endfor %}
+            </section>
+        </aside>
+    </div>
+</div>

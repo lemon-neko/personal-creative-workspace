@@ -1,50 +1,42 @@
 {% extends "base.html" %}
-{% block title %}任务运行时 · 羽白工作台{% endblock %}
-{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/agent-core.css') }}?v=20260902-agent1">{% endblock %}
+{% block title %}AI 工作流 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/agent-core.css') }}?v=workflow1">{% endblock %}
 {% block content %}
 <div class="agent-shell">
   <header class="agent-header">
     <div>
-      <p class="eyebrow">LOCAL TASK RUNTIME</p>
-      <h1>任务运行时</h1>
-      <p>先定义目标，再查看计划、运行记录和产物。当前版本只读取本地资料，不调用模型或外部服务。</p>
+      <h1>AI 工作流</h1>
+      <p>从今日待办交接任务，或单独创建。运行前预览输入，完成后由你验收。</p>
     </div>
     <a class="secondary-button" href="{{ url_for('runs') }}">查看全部运行</a>
   </header>
 
-  <section class="agent-overview" aria-label="运行时概览">
-    <div><span>项目</span><strong>{{ projects|length }}</strong></div>
-    <div><span>任务</span><strong>{{ tasks|length }}</strong></div>
-    <div><span>运行</span><strong>{{ runs|length }}</strong></div>
-    <div><span>待确认</span><strong>{{ runs|selectattr('status', 'equalto', 'reviewing')|list|length }}</strong></div>
-  </section>
-
   <div class="agent-grid">
-    <section class="agent-main">
-      <div class="agent-section-heading">
-        <div><h2>任务</h2><p>任务只保存目标和状态；执行内容进入独立运行记录。</p></div>
-      </div>
-      {% if tasks %}
-      <div class="agent-list">
-        {% for task in tasks %}
-        <a class="agent-task-row" href="{{ url_for('task_detail', task_id=task.id) }}">
-          <div>
-            <span class="agent-kicker">{{ task_type_labels[task.task_type] }} · P{{ task.priority }}</span>
-            <h3>{{ task.title }}</h3>
-            <p>{{ task.objective|truncate(150) }}</p>
-          </div>
-          <div class="agent-row-state"><span>{{ task_status_labels[task.status] }}</span><small>{{ task.next_action }}</small></div>
-        </a>
-        {% endfor %}
-      </div>
-      {% else %}
-      <div class="agent-empty"><h3>还没有任务</h3><p>从右侧创建一个目标，先跑通第一条本地任务链。</p></div>
+    <section class="agent-main" id="workflow-queue"{% if workflow_groups.running %} hx-get="{{ url_for('tasks') }}" hx-trigger="every 3s" hx-select="#workflow-queue" hx-target="this" hx-swap="outerHTML"{% endif %} aria-label="工作流队列">
+      {% set groups = [('decision','待你决定'),('reviewing','待验收'),('running','运行中'),('ready','待执行'),('failed','需处理'),('completed','已结束')] %}
+      {% for key, label in groups %}
+      {% set rows = workflow_groups[key] %}
+      {% if rows or key in ['decision','reviewing','ready'] %}
+      <section class="workflow-stage" aria-labelledby="workflow-{{ key }}">
+        <h2 id="workflow-{{ key }}">{{ label }} <small>{{ rows|length }}</small></h2>
+        {% if rows %}
+        <div class="agent-list">
+          {% for task, run, state in rows %}
+          <a class="agent-task-row" href="{{ url_for('run_detail', run_id=run.id) if run and state != 'draft' else url_for('task_detail', task_id=task.id) }}">
+            <div><h3>{{ task.title }}</h3><p>{{ task.next_action }}</p></div>
+            <span class="agent-status status-{{ state }}">{{ run_status_labels.get(state, task_status_labels.get(state)) }}</span>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}<p class="workflow-empty">暂无{{ label }}任务</p>{% endif %}
+      </section>
       {% endif %}
+      {% endfor %}
     </section>
 
     <aside class="agent-compose">
-      <section>
-        <h2>新建任务</h2>
+      <details class="quiet-details" {{ 'open' if not tasks else '' }}>
+        <summary>新建任务</summary>
         <form action="{{ url_for('create_workspace_task') }}" method="post" class="agent-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
           <label><span>任务名称</span><input name="title" maxlength="160" required placeholder="例如：整理 Agent Harness 学习脉络"></label>
@@ -56,7 +48,7 @@
           <label><span>项目</span><select name="project_id">{% for project in projects %}<option value="{{ project.id }}">{{ project.title }}</option>{% endfor %}</select></label>
           <button class="primary-button" type="submit">创建任务</button>
         </form>
-      </section>
+      </details>
       <details class="agent-project-create">
         <summary>创建新项目</summary>
         <form action="{{ url_for('create_workspace_project') }}" method="post" class="agent-form">

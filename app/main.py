@@ -12,6 +12,7 @@ from app.agent_core import AgentCoreRepository
 from app.assistant import AssistantRepository
 from app.income import IncomeRepository
 from app.career import CareerRepository
+from app.focus import FocusRepository
 from app.content import (
     load_items,
 )
@@ -27,16 +28,9 @@ from app.model_gateway import (
 )
 from app.mobile import MobileStore
 from app.obsidian import ObsidianBridge
-from app.routers.system import router as system_router
-from app.routers.creation import router as creation_router
-from app.routers.career_learning import router as career_learning_router
-from app.routers.knowledge_models import router as knowledge_models_router
-from app.routers.workspace_content import router as workspace_content_router
-from app.routers.assistant import router as assistant_router
-from app.routers.income import router as income_router
-from app.routers.wechat import router as wechat_router
-from app.routers.resumes import router as resumes_router
-from app.routers.agent_core import router as agent_core_router
+from app.plugin_runtime import start_plugins
+from app.plugins import plugin_root, register_plugins
+from app.workflow import Workflow, WorkflowConfigurationError
 from app.privacy import (
     LocalOnlyMiddleware,
     default_data_root,
@@ -91,6 +85,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
+        application.state.agent_core.recover_interrupted_runs()
         tasks = []
         try:
             await asyncio.to_thread(_sync_search_index, application)
@@ -103,12 +98,18 @@ def create_app(
                     summarizer=None,
                 ),
             ))
-        yield
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with suppress(asyncio.CancelledError):
-                await task
+        try:
+            root = plugin_directory if application.state.plugins_enabled else None
+            async with start_plugins(root, application.state.workflow) as daily_verified:
+                application.state.daily_verified = daily_verified
+                yield
+        finally:
+            application.state.daily_verified = False
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with suppress(asyncio.CancelledError):
+                    await task
 
     workspace_app = FastAPI(
         title="羽白工作台",
@@ -152,6 +153,7 @@ def create_app(
         workspace_app.state.model_gateway.usage,
     )
     workspace_app.state.career = CareerRepository(resolved_data_root)
+    workspace_app.state.focus = FocusRepository(resolved_data_root)
     workspace_app.state.video = VideoProjectRepository(
         resolved_data_root,
         workspace_app.state.content_root,
@@ -171,6 +173,15 @@ def create_app(
         workspace_app.state.content_root,
     )
     workspace_app.state.career.seed_career_radar()
+    plugin_directory = plugin_root(resolved_data_root)
+    workspace_app.state.plugins_enabled = (plugin_directory / "enabled").is_file()
+    workspace_app.state.daily_verified = False
+    workspace_app.state.workflow = None
+    if workspace_app.state.plugins_enabled:
+        try:
+            workspace_app.state.workflow = Workflow(resolved_data_root, workspace_app.state.model_gateway)
+        except WorkflowConfigurationError:
+            pass
     workspace_app.add_middleware(
         LocalOnlyMiddleware,
         enforce=workspace_app.state.enforce_security,
@@ -183,6 +194,7 @@ def create_app(
             request.method in {"POST", "PUT", "PATCH", "DELETE"}
             and response.status_code < 400
             and request.url.path != "/settings/search/rebuild"
+            and not request.url.path.startswith("/workflow/")
         ):
             try:
                 await asyncio.to_thread(_sync_search_index, request.app)
@@ -206,17 +218,9 @@ def create_app(
             return _not_found(request)  # type: ignore[return-value]
         return FileResponse(path)
 
-    workspace_app.include_router(workspace_content_router)
-    workspace_app.include_router(agent_core_router)
-    workspace_app.include_router(assistant_router)
-    workspace_app.include_router(income_router)
-    workspace_app.include_router(knowledge_models_router)
 
-    workspace_app.include_router(creation_router)
-    workspace_app.include_router(wechat_router)
-    workspace_app.include_router(resumes_router)
-    workspace_app.include_router(career_learning_router)
-    workspace_app.include_router(system_router)
+
+    register_plugins(workspace_app)
 
     @workspace_app.exception_handler(404)
     async def not_found(request: Request, _error: Exception) -> HTMLResponse:

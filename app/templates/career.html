@@ -1,21 +1,39 @@
 {% extends "base.html" %}
-{% block title %}求职驾驶舱 · 羽白工作台{% endblock %}
+{% block title %}求职 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/resume-studio.css') }}?v=20260913-3"><link rel="stylesheet" href="{{ url_for('static', path='/styles/career-workspace.css') }}?v=20261020-1">{% endblock %}
 {% block content %}
-<header class="page-header split-header"><div><p class="eyebrow">CAREER COCKPIT</p><h1>求职驾驶舱</h1><p>把岗位、简历、项目证据和学习任务放进同一条可追溯的链路。</p></div><a class="primary-button" href="{{ url_for('career_jobs') }}">添加职位</a></header>
-<div class="career-metrics">
-  <article><strong>{{ active_jobs|length }}</strong><span>进行中职位</span></article>
-  <article><strong>{{ projects|length }}</strong><span>项目证据</span></article>
-  <article><strong>{{ resumes|length }}</strong><span>简历工作室版本</span></article>
-  <article><strong>{{ active_tasks|length }}</strong><span>学习任务</span></article>
-</div>
-<div class="career-grid">
-  <section class="paper-panel"><div class="panel-heading"><div><p class="eyebrow">PROFILE</p><h2>候选人档案</h2></div><a href="{{ url_for('career_profile') }}">维护 →</a></div>
-    {% if profile.updated_at %}<p>{{ profile.target_roles or '尚未设置目标岗位' }}</p><div class="tag-row">{{ profile.skills[:180] }}</div>{% else %}<div class="empty-note">从现有简历提取，或手动建立一份事实主档案。</div>{% endif %}
+<div class="career-workspace">
+  <header class="career-heading"><div><h1>求职</h1><p>维护简历，记录每一次投递与跟进。</p></div><nav aria-label="求职页内导航"><a href="#resumes">简历工作室</a><a href="#tailored">定制简历</a><a href="#applications">投递进度</a></nav></header>
+  {% if notice %}<div class="message success" role="status">简历记录已更新。</div>{% endif %}
+  <section id="resumes" class="career-section career-primary" aria-labelledby="primary-heading">
+    <div class="panel-heading"><h2 id="primary-heading">简历工作室</h2><span>当前主简历</span></div>
+    {% if primary %}
+    <div class="career-primary-body"><div><h3>{{ primary.title }}</h3><p>{{ primary.target_role or '通用版本' }} · Revision {{ primary.revision }}</p></div><div class="inline-actions"><a class="primary-button inline-button" href="{{ url_for('resume_detail', resume_id=primary.id) }}">进入工作室</a><a class="secondary-button inline-button" href="{{ url_for('resume_pdf', resume_id=primary.id) }}?variant=china">国内版 PDF</a><a class="secondary-button inline-button" href="{{ url_for('resume_pdf', resume_id=primary.id) }}?variant=ats">ATS PDF</a></div></div>
+    {% else %}<p>尚未建立主简历。上传并确认一份简历后，即可编辑、导出和创建岗位定制版。</p><a href="{{ url_for('career_documents') }}">上传简历 →</a>{% include '_career_resume_import.html' %}{% endif %}
   </section>
-  <section class="paper-panel"><div class="panel-heading"><div><p class="eyebrow">PIPELINE</p><h2>近期职位</h2></div><a href="{{ url_for('career_jobs') }}">全部 →</a></div>
-    {% if jobs %}<div class="compact-list">{% for job in jobs[:5] %}<a href="{{ url_for('career_job_detail', job_id=job.id) }}"><strong>{{ job.title }}</strong><span>{{ job.company }} · {{ job.status }}</span></a>{% endfor %}</div>{% else %}<div class="empty-note">还没有职位。先手动贴一份 JD 进来。</div>{% endif %}
+  <section id="tailored" class="career-section" aria-labelledby="tailored-heading">
+    <div class="panel-heading"><div><h2 id="tailored-heading">定制简历</h2><span>{{ tailored|length }} 份独立版本</span></div>{% if primary %}<a href="#create-tailored">新建定制版 ↓</a>{% endif %}</div>
+    {% if tailored %}<div class="career-tailored-list">{% for row in tailored %}{% set target = job_map.get(row.job_id) %}<article><div><strong>{{ target.company ~ ' / ' ~ target.title if target else row.target_role }}</strong><a href="{{ url_for('resume_detail', resume_id=row.id) }}">{{ row.title }}</a><small>r{{ row.revision }} · {{ row.updated_at[:10] }} · {{ '已归档' if row.status == 'archived' else ('使用中' if row.status == 'active' else '草稿') }}</small></div><div class="inline-actions"><a href="{{ url_for('resume_detail', resume_id=row.id) }}">编辑</a><a href="{{ url_for('resume_pdf', resume_id=row.id) }}?variant=china">国内版 PDF</a><a href="{{ url_for('resume_pdf', resume_id=row.id) }}?variant=ats">ATS PDF</a></div></article>{% endfor %}</div>{% else %}<p class="career-empty">还没有定制简历。选择目标岗位，基于主简历创建独立版本。</p>{% endif %}
+    <details id="create-tailored" class="career-extra-fields"><summary>新建定制版</summary>{% if primary %}{% set eligible = all_jobs|rejectattr('status', 'equalto', 'archived')|list %}{% if eligible %}<form action="{{ url_for('resume_tailor_start', resume_id=primary.id) }}" method="get" class="career-tailor-form"><label class="field"><span>目标公司与岗位</span><select name="job_id" aria-label="目标公司与岗位" required>{% for job in eligible %}<option value="{{ job.id }}">{{ job.company }} / {{ job.title }}{{ ' · 待补 JD' if not job.jd_text else '' }}</option>{% endfor %}</select></label><button class="secondary-button" type="submit">开始定制</button></form><p class="career-hint">无 JD 可先手工定制；分析和模型定制需补充 JD。</p>{% else %}<p>先在下方添加公司和岗位。</p>{% endif %}<a href="#new-application">添加投递记录 ↓</a>{% else %}<p>请先建立主简历。</p>{% endif %}</details>
   </section>
-  <section class="paper-panel"><div class="panel-heading"><div><p class="eyebrow">EVIDENCE</p><h2>项目与简历</h2></div></div><div class="quick-links"><a href="{{ url_for('career_projects') }}">项目证据库 <span>{{ projects|length }}</span></a><a href="{{ url_for('career_resumes') }}">简历工作室 <span>{{ resumes|length }}</span></a><a href="{{ url_for('career_documents') }}">私有文档 <span>本地</span></a></div></section>
-  <section class="paper-panel"><div class="panel-heading"><div><p class="eyebrow">UPSKILL</p><h2>下一步学习</h2></div><a href="{{ url_for('learning') }}">技能图谱 →</a></div>{% if active_tasks %}<ul class="task-list">{% for task in active_tasks[:5] %}<li><span>{{ task.priority }}</span><div><strong>{{ task.title }}</strong><small>{{ task.status }}</small></div></li>{% endfor %}</ul>{% else %}<div class="empty-note">职位差距会在这里长成具体学习任务。</div>{% endif %}</section>
+  <section id="applications" class="career-section" aria-labelledby="applications-heading">
+    <div class="panel-heading"><h2 id="applications-heading">投递进度</h2><a href="#new-application">添加记录 ↓</a></div>
+    <form method="get" action="{{ url_for('career') }}#applications" class="career-filters"><label class="field"><span>搜索公司或岗位</span><input name="q" value="{{ filters.q }}" placeholder="公司 / 岗位"></label><label class="field"><span>进度筛选</span><select name="status" aria-label="进度筛选"><option value="">全部未归档</option><option value="all" {{ 'selected' if filters.status == 'all' else '' }}>全部记录</option>{% for key, label in job_status_labels.items() %}<option value="{{ key }}" {{ 'selected' if filters.status == key else '' }}>{{ label }}</option>{% endfor %}</select></label><button class="secondary-button" type="submit">筛选</button><a href="{{ url_for('career') }}#applications">重置</a></form>
+    <p class="career-hint career-autosave-hint">直接修改表格，离开输入框后自动保存。填写末行的公司与岗位即可新增。</p>
+    <noscript><p class="message warning">自动保存需要启用 JavaScript；也可以通过每行“详情”维护记录。</p></noscript>
+    <div class="career-table-scroll" role="region" aria-label="投递进度表，可横向滚动" tabindex="0">
+      <table class="career-applications" data-career-table data-jobs-url="{{ url_for('create_career_job') }}" data-match-template="{{ url_for('resume_match', resume_id=primary.id, job_id='__job__') if primary else '' }}">
+        <caption class="sr-only">可直接编辑并自动保存的投递进度表</caption>
+        <colgroup><col class="career-col-company"><col class="career-col-stage"><col class="career-col-date"><col class="career-col-resume"><col class="career-col-next"><col class="career-col-notes"><col class="career-col-actions"></colgroup>
+        <thead><tr><th scope="col">公司 / 岗位</th><th scope="col">当前进度</th><th scope="col">投递日期</th><th scope="col">实际投递简历</th><th scope="col">下一步 / 日期</th><th scope="col">备注</th><th scope="col">操作</th></tr></thead>
+        {% for job in jobs %}{% include '_career_application_row.html' %}{% endfor %}
+        {% set job = none %}{% include '_career_application_row.html' %}
+      </table>
+    </div>
+    {% if not jobs %}<p class="career-hint">{{ '没有符合筛选条件的记录，可以重置筛选或直接在上方新增。' if all_jobs else '还没有投递记录，JD 可以稍后到详情中补充。' }}</p>{% endif %}
+    <template id="career-new-row-template">{% set job = none %}{% set edit_id = '' %}{% include '_career_application_row.html' %}</template>
+  </section>
+  <details id="supporting-materials" class="career-section career-support"><summary>辅助资料</summary><nav class="career-support-links" aria-label="求职辅助资料"><a href="{{ url_for('career_profile') }}">候选人档案 →</a><a href="{{ url_for('career_projects') }}">项目证据 →</a><a href="{{ url_for('career_documents') }}">私有文档 →</a></nav><h3>历史简历</h3>{% for row in legacy %}<p><a href="{{ url_for('resume_detail', resume_id=row.id) }}">{{ row.title }}</a> <small>{{ row.updated_at[:10] }}</small></p>{% else %}<p class="career-hint">没有旧版登记记录。</p>{% endfor %}{% include '_career_legacy_form.html' %}</details>
 </div>
 {% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static', path='/career-workspace.js') }}?v=20261020-1" defer></script>{% endblock %}

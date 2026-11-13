@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}投递快照 · {{ snapshot.title }}{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/resume-studio.css') }}?v=20260913-3"><link rel="stylesheet" href="{{ url_for('static', path='/styles/career-workspace.css') }}?v=20261019-1">{% endblock %}
+{% block content %}
+<div class="career-workspace">
+  <header class="career-heading"><div><a href="{{ url_for('career') }}#job-{{ job.id }}">← 返回投递进度</a><h1>投递简历快照</h1><p>{{ job.company }} / {{ job.title }} · {{ snapshot.title }} · r{{ snapshot.revision }}</p><p>记录于 {{ snapshot.recorded_at }}。此页只读，源简历的后续修改不会影响此快照。</p></div></header>
+  <details class="career-section"><summary>历史投递版本（{{ history|length }}）</summary><ul>{% for row in history %}<li><a href="{{ url_for('job_submission_detail', job_id=job.id, submission_id=row.id) }}" {{ 'aria-current=page' if row.id == snapshot.id else '' }}>{{ row.title }} · r{{ row.revision }} · {{ row.recorded_at }}</a></li>{% endfor %}</ul></details>
+  <div class="resume-studio-page career-snapshot" role="region" aria-label="只读简历快照，可横向滚动" tabindex="0">{% include '_resume_icon_library.html' %}{% include '_resume_preview.html' %}</div>
+</div>
+{% endblock %}

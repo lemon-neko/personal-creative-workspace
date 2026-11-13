@@ -612,7 +612,7 @@ def manifest_payload() -> str:
         {
             "name": "羽白工作台",
             "short_name": "羽白工作台",
-            "description": "随时接住想法，并在 Tailnet 中阅读 Mac 上的分层知识库。",
+            "description": "查看日常安排，随手记录想法。",
             "start_url": "/",
             "scope": "/",
             "display": "standalone",

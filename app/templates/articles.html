@@ -3,29 +3,19 @@
 {% block title %}文章创作 · 羽白工作台{% endblock %}
 
 {% block content %}
-<header class="page-header split-header">
-    <div>
-        <p class="eyebrow">WRITING DESK</p>
-        <h1>文章创作</h1>
-        <p>文章是独立创作产物。可以参考随想和知识，但不要求建立强关联。</p>
-    </div>
-    <div class="detail-actions">
-        <a class="secondary-button" href="{{ url_for('publish_index') }}">公众号发布台</a>
-        <a class="secondary-button" href="{{ url_for('video_studio') }}">视频工作台</a>
-    </div>
+<header class="page-header split-header quiet-header">
+    <div><h1>文章创作</h1><p>从草稿继续写，定稿后再进入发布。</p></div>
+    <nav class="quiet-links" aria-label="创作工具"><a href="{{ url_for('publish_index') }}">公众号发布</a><a href="{{ url_for('video_studio') }}">视频</a><a href="{{ url_for('focus') }}">创作计划</a></nav>
 </header>
 
 {% if notice %}<div class="message success">{{ notice }}</div>{% endif %}
 {% if error %}<div class="message error">{{ error }}</div>{% endif %}
 
-<section class="paper-panel">
-    <div class="panel-heading">
-        <div><p class="eyebrow">NEW ARTICLE</p><h2>新建文章草稿</h2></div>
-        <span class="status-badge status-draft">草稿</span>
-    </div>
+<details class="quiet-details" {{ 'open' if not articles or error else '' }}>
+    <summary>新建文章草稿</summary>
     <form class="edit-form" action="{{ url_for('create_article') }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <label class="field"><span>正文或写作提纲</span><textarea name="body" rows="9" maxlength="50000" required placeholder="先写一个提纲也可以。">{{ form_data.body if form_data else '' }}</textarea></label>
+        <label class="field"><span>正文或写作提纲</span><textarea name="body" rows="4" maxlength="50000" required placeholder="先写一个提纲也可以。">{{ form_data.body if form_data else '' }}</textarea></label>
         <details>
             <summary>标题、标签与分类</summary>
             <div class="field-grid">
@@ -36,25 +26,16 @@
         </details>
         <button class="primary-button" type="submit">创建文章草稿</button>
     </form>
-</section>
+</details>
 
-<section class="section-block">
-    <div class="panel-heading"><div><p class="eyebrow">ARTICLES</p><h2>文章草稿与成稿</h2></div><span>{{ articles|length }} 篇</span></div>
+<section class="section-block quiet-list">
+    <div class="panel-heading"><h2>文章</h2><span>{{ articles|length }} 篇</span></div>
     {% if articles %}
-    <div class="archive-list">
+    <ul class="quiet-rows">
         {% for item in articles %}
-        <article class="archive-item">
-            <div class="archive-date"><strong>{{ item.created_at.strftime('%m.%d') }}</strong><span>{{ item.created_at.year }}</span></div>
-            <div>
-                <div class="meta-line"><span class="kind-badge">文章</span><span class="status-badge status-{{ item.status }}">{{ content_status_labels('article')[item.status] }}</span></div>
-                <h2><a href="{{ url_for('article_detail', item_id=item.id) }}">{{ item.title }}</a></h2>
-                <p>{{ item.summary }}</p>
-                {% if item.tags %}<div class="tag-row">{% for tag in item.tags %}<span># {{ tag }}</span>{% endfor %}</div>{% endif %}
-            </div>
-            <div class="archive-actions"><a href="{{ url_for('publish_item', item_id=item.id) }}">公众号排版</a><a href="{{ url_for('article_detail', item_id=item.id) }}">编辑 →</a></div>
-        </article>
+        <li><a href="{{ url_for('article_detail', item_id=item.id) }}">{{ item.title }}</a><span>{{ content_status_labels('article')[item.status] }}</span><time datetime="{{ item.created_at.date() }}">{{ item.created_at.strftime('%Y-%m-%d') }}</time></li>
         {% endfor %}
-    </div>
+    </ul>
     {% else %}<div class="empty-state compact"><h3>还没有文章</h3><p>随想可以保持碎片，文章等真正想写时再创建。</p></div>{% endif %}
 </section>
 

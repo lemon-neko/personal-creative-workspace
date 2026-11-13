@@ -4,6 +4,8 @@
 
 | 目标 | 指南 |
 |---|---|
+| 排期待办、交接 AI 与验收 | [从待办到 AI 产物](workbench-plugins.md) |
+| 推进阶段目标与复盘 | [阶段行动](focus-workflow.md) |
 | 从随手记录沉淀为正式知识 | [知识沉淀](knowledge-workflow.md) |
 | 独立写文章并制作公众号或视频 | [创作发布](creation-workflow.md) |
 | 从岗位要求推进技能和项目证据 | [求职学习](career-workflow.md) |
@@ -13,7 +15,10 @@
 
 | 想做的事 | 入口 |
 |---|---|
-| 快速记录和查看待整理 | `/` |
+| 处理今日待办并查看进展 | `/` |
+| 交接、决策与验收 AI 任务 | `/tasks` |
+| 查看旧待办与执行记录 | `/legacy/planner`、`/runs` |
+| 维护阶段目标和周复盘 | `/focus`、`/focus/checkin` |
 | 管理随想 | `/ideas` |
 | 阅读和维护正式知识 | `/knowledge`、`/settings/obsidian` |
 | 管理材料 | `/library` |

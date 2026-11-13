@@ -15,9 +15,17 @@
     <div class="resume-section-body"><label class="field"><textarea name="summary" rows="6">{{ structured.summary }}</textarea></label></div>
   </details>
 
+  <details class="resume-form-section" open>
+    <summary><span>专业技能</span><small>优先写岗位匹配能力，每行一项</small></summary>
+    <div class="resume-section-body">
+      <label class="field"><textarea name="skills" rows="7">{{ structured.skills|join('\n') }}</textarea></label>
+    </div>
+  </details>
+
   <details class="resume-form-section">
     <summary><span>工作经历</span><small>{{ work_rows|length }} 段经历</small></summary>
     <div class="resume-section-body">
+      <p class="section-note">同一公司有多个岗位时，为每个岗位新增一条经历并填写相同公司名。成果中的“方向 - 项目（技术）”短行会显示为职责小标题；预览和 PDF 不会改写原文。</p>
       <div id="resume-work-rows">
         {% for row in work_rows %}
         <article class="resume-row">
@@ -31,7 +39,7 @@
         </article>
         {% endfor %}
       </div>
-      <button class="text-button" type="button" data-resume-add="work">＋ 添加工作经历</button>
+      <button class="text-button" type="button" data-resume-add="work">＋ 添加公司或岗位</button>
     </div>
   </details>
 
@@ -55,9 +63,15 @@
   </details>
 
   <details class="resume-form-section">
-    <summary><span>项目证据</span><small>{{ projects|length }} 个候选项目</small></summary>
+    <summary><span>项目经历</span><small>{{ projects|length }} 个证据项目</small></summary>
     <div class="resume-section-body">
       <p class="section-note">项目来自工作台项目证据库。这里的表达调整不会反向改写证据库。</p>
+      {% if resume and legacy_project_count %}
+      <div class="resume-project-migration-note">
+        <span>有 {{ legacy_project_count }} 个项目仍使用旧版扁平描述。</span>
+        <a href="{{ url_for('resume_project_structure_preview', resume_id=resume.id) }}">预览三层映射</a>
+      </div>
+      {% endif %}
       <div class="resume-project-picker">
         {% for project in projects %}
         {% set selected = selected_projects.get(project.id) %}
@@ -65,11 +79,16 @@
           <label class="checkbox-row"><input type="checkbox" name="project_ids" value="{{ project.id }}" {{ 'checked' if selected else '' }}><strong>{{ project.name }}</strong><small>{{ project.status }}</small></label>
           <div class="field-grid">
             <label class="field"><span>简历项目名</span><input name="project_name_{{ project.id }}" value="{{ selected.name if selected else project.name }}"></label>
-            <label class="field"><span>职责</span><input name="project_role_{{ project.id }}" value="{{ selected.role if selected else project.role }}"></label>
+            <label class="field"><span>项目角色</span><input name="project_role_{{ project.id }}" value="{{ selected.role if selected else project.role }}"></label>
             <label class="field"><span>时间</span><input name="project_years_{{ project.id }}" value="{{ selected.years if selected else project.timeframe }}"></label>
             <label class="field"><span>GitHub</span><input name="project_github_{{ project.id }}" value="{{ selected.github if selected else '' }}"></label>
           </div>
-          <label class="field"><span>项目描述（每行一条）</span><textarea name="project_description_{{ project.id }}" rows="5">{% if selected %}{{ selected.description|join('\n') }}{% else %}{{ [project.summary, project.actions, project.outcome]|select|join('\n') }}{% endif %}</textarea></label>
+          <div class="resume-project-structure-fields">
+            <label class="field"><span>项目简介</span><textarea name="project_summary_{{ project.id }}" rows="3">{{ selected.summary if selected else project.summary }}</textarea><small>说明项目背景、目标和解决的问题。</small></label>
+            <label class="field"><span>技术栈</span><textarea name="project_tech_stack_{{ project.id }}" rows="2">{% if selected %}{{ selected.tech_stack|join('\n') }}{% else %}{{ project.technologies }}{% endif %}</textarea><small>使用逗号或换行分隔，保存时自动去重。</small></label>
+            <label class="field"><span>个人职责</span><textarea name="project_responsibilities_{{ project.id }}" rows="5">{% if selected %}{{ selected.responsibilities|join('\n') }}{% else %}{{ [project.actions, project.outcome]|select|join('\n') }}{% endif %}</textarea><small>每行一条，描述你的行动、交付与可验证结果。</small></label>
+          </div>
+          <textarea hidden name="project_description_{{ project.id }}">{% if selected %}{{ selected.description|join('\n') }}{% endif %}</textarea>
         </article>
         {% else %}<div class="empty-note">项目证据库为空，先在求职驾驶舱补充真实项目。</div>{% endfor %}
       </div>
@@ -82,9 +101,9 @@
   </details>
 
   <details class="resume-form-section">
-    <summary><span>技能与版式</span><small>技能、区块名称与显示顺序</small></summary>
+    <summary><span>区块设置</span><small>名称、显示状态与 ATS 版顺序</small></summary>
     <div class="resume-section-body">
-      <label class="field"><span>技能（每行一个）</span><textarea name="skills" rows="7">{{ structured.skills|join('\n') }}</textarea></label>
+      <p class="section-note">技术社招版使用固定招聘阅读顺序；ATS 基础版按这里的顺序导出。</p>
       <div class="resume-section-settings">
         {% for section in structured.sections %}
         <article>

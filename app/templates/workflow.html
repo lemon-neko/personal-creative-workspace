@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}AI 工作流 · 羽白工作台{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/workflow-control.css') }}?v=3">{% endblock %}
+{% block content %}
+{% if configuration_unavailable %}
+<section class="control-panel">
+    <h1>AI 工作流</h1>
+    <p role="alert">执行后端配置无效，请检查本机插件配置。</p>
+    <a href="{{ url_for('legacy_tasks') }}">打开旧任务</a>
+</section>
+{% else %}
+<div id="workflow-control" class="control" data-view="{{ view }}">
+    <header class="control-title">
+        <div><h1>{{ {'history':'执行历史','rules':'规则管理','matter':'事项详情'}.get(view, 'AI 工作流') }}</h1><p>观察触发、执行和人工决策。</p></div>
+        <nav class="control-inline" aria-label="工作流导航">
+            {% if view != 'overview' %}<a href="{{ url_for('tasks') }}">工作流总览</a>{% endif %}
+            {% if view != 'history' %}<a href="{{ url_for('workflow_history') }}">执行历史</a>{% endif %}
+            {% if view != 'rules' %}<a href="{{ url_for('workflow_rules') }}">规则管理</a>{% endif %}
+            <a href="{{ url_for('runs') }}">旧执行记录</a>
+        </nav>
+    </header>
+    <section class="control-health control-panel" aria-label="系统运行状态">
+        <div id="control-health" class="control-health-data"><span class="control-dot" data-tone="blue">{{ runtime_error or "正在连接 Autoloop" }}</span></div>
+        <button id="control-refresh" type="button">刷新</button>
+    </section>
+    <p id="control-sync" class="control-sync" role="status"></p>
+    <p class="control-sync">执行后端 {{ execution_backend.name }}{% if execution_backend.model %} · {{ execution_backend.model }}{% endif %}{% if not execution_backend.enabled %} · 尚未就绪{% endif %}</p>
+    <p id="control-feedback" class="control-feedback" role="status" hidden></p>
+    <div id="control-overview" class="control-overview" aria-label="全局运行概况" data-surface="overview"></div>
+    <section id="control-matter-page" class="control-panel" data-surface="matter"><p>正在读取事项…</p></section>
+
+    <section class="control-panel control-flow" data-surface="overview" aria-labelledby="control-flow-title">
+        <header><div><h2 id="control-flow-title">实时工作流</h2><p class="control-sub">全局队列与近期可追溯事实</p></div><span class="control-sub">选择环节查看证据</span></header>
+        <div id="control-flow"></div>
+        <div class="control-branches"><h3>回执后的动作</h3><div id="control-branches" class="control-branch-list"></div></div>
+    </section>
+
+    <div class="control-work" data-surface="overview">
+        <section id="control-matters" class="control-panel" aria-labelledby="control-matters-title">
+            <header><div><h2 id="control-matters-title">事项与运行</h2></div><button id="control-clear" type="button" hidden>清除过滤</button></header>
+            <p id="control-matter-filter" class="control-sub" hidden></p>
+            <div id="control-matters-list" class="control-list control-scroll" tabindex="0" role="region" aria-label="事项列表">
+                {% for item in items %}
+                <p><a href="{{ url_for('workflow_item', item_id=item.id) }}">{{ item.title }}</a> · {{ state_labels.get(item.state, '待填写目标') }}</p>
+                {% else %}<p class="control-empty">从日常工作的任务菜单选择「交给 AI」，或在这里新建。</p>{% endfor %}
+            </div>
+            <details class="control-create">
+                <summary>＋ 新建工作项</summary>
+                <form method="post" action="{{ url_for('new_item') }}" class="control-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                    <label>标题 <input name="title" maxlength="200" required></label>
+                    <button>新建</button>
+                </form>
+            </details>
+        </section>
+        <section id="control-inbox" class="control-panel" aria-labelledby="control-inbox-title">
+            <header><div><h2 id="control-inbox-title">待决策收件箱</h2></div>
+                <label><span class="control-sr">卡片筛选</span><select id="control-inbox-filter"><option value="open">待处理</option><option value="recent">近期已处理</option><option value="ask">待答复 Ask</option></select></label>
+            </header>
+            <div id="control-cards" class="control-list control-scroll" tabindex="0" role="region" aria-label="决策卡片列表"><p class="control-empty">正在读取卡片…</p></div>
+        </section>
+    </div>
+
+    <section class="control-panel" data-surface="overview" aria-labelledby="control-activity-title">
+        <header><h2 id="control-activity-title">最近活动</h2><span class="control-sub">按 Fact 序号</span></header>
+        <div id="control-activity" class="control-list"></div>
+    </section>
+
+    <section id="control-rules" class="control-panel" data-surface="overview rules" aria-labelledby="control-rules-title">
+        <header><div><h2 id="control-rules-title">规则管理</h2></div>{% if view == 'overview' %}<a href="{{ url_for('workflow_rules') }}">查看全部规则</a>{% else %}<span class="control-sub">原生规则 · 只读配置</span>{% endif %}</header>
+        <div id="control-rules-list" class="control-list"><p class="control-empty">正在读取规则…</p></div>
+    </section>
+
+    <section id="control-history" class="control-panel" data-surface="history" aria-labelledby="control-history-title">
+        <header><div><h2 id="control-history-title">执行历史</h2></div><span id="control-history-scope" class="control-sub">按已加载历史筛选</span></header>
+        <form id="control-history-filter" class="control-inline control-filters">
+            <label>搜索事项<input name="search" type="search" placeholder="事项名称或 Run ID"></label>
+            <label>规则<select name="rule"><option value="">全部</option></select></label>
+            <label>Agent<select name="agent"><option value="">全部</option></select></label>
+            <label>状态<select name="status"><option value="">全部</option></select></label>
+            <label>起始日期<input name="from" type="date"></label>
+            <label>结束日期<input name="to" type="date"></label>
+        </form>
+        <div class="control-table-wrap" tabindex="0" aria-label="执行历史表">
+            <table><thead><tr><th>轮次 / 事项</th><th>规则 / Agent</th><th>状态</th><th>开始 / 结束</th><th>耗时</th><th>失败次数</th><th>用量</th></tr></thead><tbody id="control-history-list"></tbody></table>
+        </div>
+        <p id="control-history-empty" class="control-empty">正在读取运行记录…</p>
+        <button id="control-more" type="button" hidden>加载更早的轮次</button>
+    </section>
+    <dialog id="control-drawer" class="control-drawer" aria-labelledby="control-drawer-title">
+        <header><h2 id="control-drawer-title" tabindex="-1">执行时间线</h2><form method="dialog"><button aria-label="关闭详情">关闭</button></form></header>
+        <div id="control-drawer-body"></div>
+    </dialog>
+    <noscript><p>实时状态与控制需要 JavaScript。上方工作项仍可打开。</p></noscript>
+</div>
+{% endif %}
+{% endblock %}
+{% block extra_scripts %}{% if not configuration_unavailable %}<script src="{{ url_for('static', path='/workflow-control.js') }}?v=3" defer></script>{% endif %}{% endblock %}

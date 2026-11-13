@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}整理项目层级 · {{ resume.title }}{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', path='/styles/resume-studio.css') }}?v=20260913-3">{% endblock %}
+{% block content %}
+<div class="resume-studio-page resume-project-structure-page">
+  <header class="resume-structure-header">
+    <a class="back-link" href="{{ url_for('resume_detail', resume_id=resume.id) }}">← 返回简历</a>
+    <h1>整理项目层级</h1>
+    <p>把旧版项目描述整理为项目简介、技术栈和个人职责。当前页面只生成候选，确认前不会修改简历。</p>
+  </header>
+
+  {% if error %}<div class="message error">{{ error }}</div>{% endif %}
+
+  {% if pending_count %}
+  <form class="resume-structure-form" action="{{ url_for('resume_project_structure_confirm', resume_id=resume.id) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="revision" value="{{ resume.revision }}">
+    {% for candidate in candidates if candidate.needs_confirmation %}
+    <section class="resume-structure-project">
+      <header>
+        <div>
+          <h2>{{ candidate.name }}</h2>
+          <p>{{ candidate.role }}{% if candidate.years %} · {{ candidate.years }}{% endif %}</p>
+        </div>
+        <span>待确认</span>
+      </header>
+      <div class="resume-structure-compare">
+        <details>
+          <summary>查看原有扁平描述</summary>
+          <ul>{% for line in candidate.legacy_description %}<li>{{ line }}</li>{% else %}<li>原项目没有描述。</li>{% endfor %}</ul>
+        </details>
+        <div class="resume-project-structure-fields">
+          <label class="field"><span>项目简介</span><textarea name="project_summary_{{ candidate.project_id }}" rows="3">{{ candidate.summary }}</textarea><small>候选优先来自已关联的项目证据摘要。</small></label>
+          <label class="field"><span>技术栈</span><textarea name="project_tech_stack_{{ candidate.project_id }}" rows="2">{{ candidate.tech_stack|join('\n') }}</textarea><small>仅采用项目证据或带明确技术标签的原文。</small></label>
+          <label class="field"><span>个人职责</span><textarea name="project_responsibilities_{{ candidate.project_id }}" rows="6">{{ candidate.responsibilities|join('\n') }}</textarea><small>请检查每一条是否确实属于你的行动与结果。</small></label>
+        </div>
+      </div>
+    </section>
+    {% endfor %}
+    <footer class="resume-structure-actions">
+      <p>确认后旧描述仍保留为兼容快照，预览与导出改用新的三层结构。</p>
+      <button class="primary-button" type="submit">确认项目分层</button>
+    </footer>
+  </form>
+  {% else %}
+  <div class="resume-structure-empty">
+    <h2>项目已经完成分层</h2>
+    <p>当前项目均包含明确的项目简介、技术栈或个人职责，无需再次迁移。</p>
+    <a class="primary-button" href="{{ url_for('resume_detail', resume_id=resume.id) }}">返回简历编辑</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

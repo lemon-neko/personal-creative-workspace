@@ -1,0 +1,96 @@
+{% set board_suffix = '?day=' ~ planner_day %}
+{% set is_upcoming = false %}
+{% macro event_row(entry) %}
+    {% set event = entry.event %}
+    {% set goal = entry.goal %}
+    {% set delivery = none %}
+    {% set planner_entry = entry %}
+    {% include "partials/daily_desk_row.html" %}
+{% endmacro %}
+<div id="daily-desk" class="planner" data-message="{{ board_error or board_message or '' }}" data-planner-day="{{ planner_day }}">
+    <header class="planner-header">
+        <h1>日常工作</h1>
+        <div class="planner-header-links"><a href="{{ url_for('legacy_workspace') if request.app.state.plugins_enabled else url_for('workspace') }}?board=list">待办列表</a><a href="{{ url_for('search') }}" data-open-search>搜索工作台</a></div>
+    </header>
+
+    <div class="planner-grid">
+        <aside class="planner-side" aria-label="工作日历">
+            <section class="planner-calendar">
+                <header><h2>日历</h2><a href="{{ url_for('legacy_workspace') if request.app.state.plugins_enabled else url_for('workspace') }}">回到今天</a></header>
+                <div class="planner-month-nav">
+                    {% if planner_previous %}<a href="?day={{ planner_previous }}" aria-label="上个月">‹</a>{% else %}<span></span>{% endif %}
+                    <strong>{{ planner_month_title }}</strong>
+                    {% if planner_next %}<a href="?day={{ planner_next }}" aria-label="下个月">›</a>{% else %}<span></span>{% endif %}
+                </div>
+                <nav class="planner-month" aria-label="选择日期">
+                    {% for weekday in '一二三四五六日' %}<span class="planner-weekday" aria-hidden="true">{{ weekday }}</span>{% endfor %}
+                    {% for value, number, in_month, count in planner_month_days %}
+                    {% if value[:4]|int in [1, 9999] %}<span class="planner-outside" aria-hidden="true">{{ number }}</span>
+                    {% else %}
+                    <a href="?day={{ value }}" data-drop-day="{{ value }}" class="{{ 'planner-outside' if not in_month else '' }} {{ 'planner-is-today' if value == planner_today else '' }}" {% if value == planner_day %}aria-current="date"{% endif %} aria-label="{{ value }}{{ '，今天' if value == planner_today else '' }}，{{ count }} 项待办"><strong>{{ number }}</strong>{% if count %}<small aria-hidden="true">{{ count }}</small>{% endif %}</a>
+                    {% endif %}
+                    {% endfor %}
+                </nav>
+                <form class="planner-jump" action="{{ url_for('legacy_workspace') if request.app.state.plugins_enabled else url_for('workspace') }}" method="get">
+                    <label class="sr-only" for="planner-jump">跳到日期</label><input type="date" id="planner-jump" name="day" value="{{ planner_day }}" required><button class="secondary-button">前往</button>
+                </form>
+            </section>
+            <section class="planner-backlog">
+                <header><h2>待安排</h2><small>{{ planner_backlog|length }} 项</small></header>
+                {% if planner_backlog %}<p class="planner-backlog-help">这些待办还未单独排程，也未列入所选日期。拖到日期或时间格即可安排。</p><ul class="board-event-list">{% for entry in planner_backlog %}{{ event_row(entry) }}{% endfor %}</ul>
+                {% else %}<p class="home-empty">暂无需要排程的待办。</p>{% endif %}
+                <div class="planner-clear" data-drop-clear hidden>拖到这里取消安排</div>
+            </section>
+            {% if focus_next_decision or attention_runs %}{% include "partials/workbench_attention.html" %}{% endif %}
+        </aside>
+
+        <section class="planner-main" id="today" aria-labelledby="planner-title">
+            <header class="planner-day-heading"><div><h2 id="planner-title">{{ planner_day_title }}</h2><span>{{ planner_weekday }}{% if planner_day == planner_today %} · 今天{% endif %}</span></div><span>北京时间</span></header>
+            <form class="board-add" method="post" action="{{ url_for('create_daily_event') }}{{ board_suffix }}" data-desk-action="add">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <input type="hidden" name="start_on" value="{{ planner_day }}">
+                <div class="desk-add-main">
+                    <label class="sr-only" for="new-event">新增待办</label>
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><input id="new-event" name="title" maxlength="180" placeholder="添加待办到这一天…" required value="{{ event_title|default('') }}" aria-keyshortcuts="Alt+N">
+                    <button class="primary-button">添加</button>
+                </div>
+                <details class="desk-add-options" {{ 'open' if event_start_time or event_date or event_delivery else '' }}>
+                    <summary>时间、截止日期与归属</summary>
+                    <div class="desk-fields">
+                        <label>开始时间<select name="start_time"><option value="">全天</option>{% for slot, _ in planner_hours %}<option value="{{ slot }}" {{ 'selected' if event_start_time == slot else '' }}>{{ slot }}</option>{% endfor %}</select></label>
+                        <label>截止日期<input type="date" name="due_on" value="{{ event_date|default('') }}"></label>
+                        {% if board_deliveries %}<label>归属交付物<select name="deliverable_id"><option value="">独立待办</option>{% for delivery, goal in board_deliveries %}<option value="{{ delivery.id }}" {{ 'selected' if event_delivery == delivery.id else '' }}>{{ goal.title }} / {{ delivery.title }}</option>{% endfor %}</select></label>{% endif %}
+                    </div>
+                </details>
+            </form>
+            <div id="desk-feedback" class="desk-feedback">
+                {% if board_error and not board_error_id %}<p class="message error" role="alert">{{ board_error }}</p>{% endif %}
+                {% if board_message %}<div class="desk-notice"><span>{{ board_message }}</span>
+                    {% if board_undo %}<form method="post" action="{{ url_for('update_daily_event', event_id=board_undo[0]) }}{{ board_suffix }}" data-desk-action="undo" data-event-id="{{ board_undo[0] }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="expected_status" value="done"><input type="hidden" name="status" value="{{ board_undo[1] }}"><button class="board-action" id="desk-undo">撤销</button>
+                    </form>{% endif %}
+                </div>{% endif %}
+            </div>
+            <section class="planner-all-day" data-drop-day="{{ planner_day }}" data-drop-time="" aria-labelledby="planner-all-day">
+                <h3 id="planner-all-day">全天 / 未定时间</h3>
+                {% if planner_all_day %}<ul class="board-event-list">{% for entry in planner_all_day %}{{ event_row(entry) }}{% endfor %}</ul>
+                {% else %}<p class="home-empty">{{ '今天' if planner_day == planner_today else '这一天' }}还没有待办放在这个区域。</p>{% endif %}
+            </section>
+            <section class="planner-timeline" aria-labelledby="planner-timeline">
+                <header><h3 id="planner-timeline">时间轴</h3><p>拖动待办到日期或半小时格。点击时刻可添加。</p></header>
+                <div class="planner-scroll" tabindex="0" aria-label="全天时间安排">
+                    {% for slot, entries in planner_hours %}
+                    <div class="planner-hour {{ 'half-hour' if slot.endswith(':30') else '' }}" data-drop-day="{{ planner_day }}" data-drop-time="{{ slot }}" {{ 'data-first-event' if entries else '' }}>
+                        <button type="button" class="planner-time" data-pick-time="{{ slot }}" aria-label="{{ slot }} 添加待办">{{ slot }}</button>
+                        {% if entries %}<ul class="board-event-list">{% for entry in entries %}{{ event_row(entry) }}{% endfor %}</ul>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="planner-finish" data-drop-complete hidden>拖到这里标为完成</div>
+            </section>
+            {% if planner_activity %}<section class="planner-history" aria-labelledby="planner-history"><h3 id="planner-history">活动记录</h3><ol>
+                {% for stamp, action, title in planner_activity %}<li><time datetime="{{ stamp }}">{{ stamp[11:16] }}</time><span>{{ action }}</span><strong>{{ title }}</strong></li>{% endfor %}
+            </ol></section>{% endif %}
+        </section>
+    </div>
+</div>

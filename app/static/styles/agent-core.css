@@ -228,3 +228,22 @@
   .agent-ledger > div { grid-template-columns: 1fr; gap: 6px; }
   .agent-ledger strong { text-align: left; }
 }
+
+.agent-ai-preview, .agent-decision-form { flex: 1 1 100%; min-width: 0; }
+.agent-ai-preview { padding: 12px 0; border-block: 1px solid var(--line); }
+.agent-ai-preview summary { cursor: pointer; color: var(--cyan-dark); font-weight: 650; }
+.agent-ai-preview pre { max-height: 18rem; overflow: auto; padding: 12px; border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-decision-form fieldset { display: grid; gap: 8px; padding: 0 0 12px; border: 0; }
+.agent-decision-form label { display: flex; align-items: start; gap: 8px; overflow-wrap: anywhere; }
+.agent-decision-form input[type=radio] { margin-top: .3em; }
+.agent-run-actions { flex-wrap: wrap; }
+
+.workflow-stage + .workflow-stage { margin-top: 22px; }
+.workflow-stage h2 { margin: 0 0 8px; font-size: 1rem; }
+.workflow-stage h2 small { color: var(--muted); font-size: .76rem; font-weight: 500; }
+.workflow-stage .agent-list { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--white); }
+.workflow-stage .agent-task-row { padding: 10px 13px; }
+.workflow-stage .agent-task-row:last-child { border-bottom: 0; }
+.workflow-stage .agent-task-row h3 { margin: 0; overflow-wrap: anywhere; }
+.workflow-stage .agent-status { white-space: nowrap; }
+.workflow-empty { margin: 0; color: var(--muted); font-size: .82rem; }

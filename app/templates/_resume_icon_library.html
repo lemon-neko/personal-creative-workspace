@@ -1,0 +1,6 @@
+{% from '_resume_icons.html' import resume_icon %}
+<div hidden aria-hidden="true" data-resume-icon-library>
+  {% for icon_name in ['phone','mail','world','brand-github','briefcase','target','school','map-pin','calendar-user'] %}
+  <template data-resume-icon-template="{{ icon_name }}">{{ resume_icon(icon_name) }}</template>
+  {% endfor %}
+</div>

@@ -1,0 +1,82 @@
+{% set row_error = board_error_id == event.id %}
+{% set values = board_edit if row_error and board_edit else event %}
+{% set update_url = url_for('update_daily_event', event_id=event.id) ~ board_suffix %}
+<li class="board-event" id="event-{{ event.id }}" data-status="{{ event.status }}">
+    <div class="desk-row">
+        {% if planner_entry and event.status not in ['done', 'paused'] %}
+        <button class="planner-grip" type="button" data-planner-grip aria-label="移动 {{ event.title }}" title="拖动安排，或按 Enter 展开安排表单"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M6 3h.01M10 3h.01M6 8h.01M10 8h.01M6 13h.01M10 13h.01"/></svg></button>
+        {% endif %}
+        <form action="{{ update_url }}" method="post" data-desk-action="toggle" data-event-id="{{ event.id }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <input type="hidden" name="expected_status" value="{{ event.status }}">
+            <input type="hidden" name="status" value="{{ 'planned' if event.status == 'done' else 'done' }}">
+            <button class="desk-check" type="submit" role="checkbox" aria-checked="{{ 'true' if event.status == 'done' else 'false' }}" aria-label="{{ event.title }}：{{ '恢复待办' if event.status == 'done' else '标为完成' }}">
+                <svg viewBox="0 0 20 20" width="19" height="19" aria-hidden="true"><circle cx="10" cy="10" r="8"/><path d="m6.5 10 2.3 2.3 4.8-4.8"/></svg>
+            </button>
+        </form>
+        <div class="desk-row-main">
+            <strong class="board-event-name">{{ event.title }}</strong>
+            <div class="desk-row-meta">
+                {% if goal %}<a href="{{ url_for('focus_goal', goal_id=goal.id) }}#action-{{ event.id }}" title="{{ delivery.title }}">{{ goal.title }}</a>{% endif %}
+                {% if event.day_focus_on == focus_today_date %}<span class="desk-focus">今日重点</span>{% endif %}
+                {% if event.status not in ['planned', 'done'] %}<span class="desk-status">{{ focus_status_labels[event.status] }}</span>{% endif %}
+                {% if planner_entry %}
+                    {% if planner_entry.due and event.status not in ['done', 'paused'] %}<time class="planner-countdown" datetime="{{ planner_entry.due }}" data-countdown="deadline">截止 · {{ planner_entry.countdown }}</time>{% endif %}
+                    {% if planner_entry.start_at and event.status not in ['done', 'paused'] %}<time class="planner-countdown" datetime="{{ planner_entry.start_at }}" data-countdown="start">开始 · {{ planner_entry.starts_in }}</time>{% endif %}
+                {% elif event.due_on %}<time datetime="{{ event.due_on }}" class="{{ 'desk-overdue' if event.due_on < focus_today_date and event.status not in ['done','paused'] else '' }}">{{ event.due_on[5:] }}</time>
+                {% elif is_upcoming %}<span>未设日期</span>{% endif %}
+            </div>
+        </div>
+        {% if is_upcoming and event.status != 'paused' %}
+        <form class="desk-row-plan" action="{{ url_for('schedule_daily_event', event_id=event.id) }}{{ board_suffix }}" method="post" data-desk-action="schedule" data-event-id="{{ event.id }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <button class="board-action">放到今日</button>
+        </form>
+        {% endif %}
+        <div class="desk-row-agent">
+                {% if event.id in board_task_ids %}
+                <a class="board-action" href="{{ url_for('task_detail', task_id=board_task_ids[event.id]) }}">查看 AI 任务</a>
+                {% elif event.status not in ['done', 'paused'] and not is_upcoming %}
+                <form method="post" action="{{ url_for('prepare_focus_action_task', action_id=event.id) if goal else url_for('prepare_daily_task', event_id=event.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                    <button class="board-action">交给 AI</button>
+                </form>
+                {% endif %}
+        </div>
+    </div>
+    <details class="desk-row-details" name="desk-row-editor" {{ 'open' if row_error else '' }}>
+        <summary aria-label="编辑 {{ event.title }}"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></summary>
+        <div class="desk-editor">
+            {% if row_error %}<p class="message error" role="alert">{{ board_error }}</p>{% endif %}
+            <form action="{{ update_url }}" method="post" data-desk-action="edit" data-event-id="{{ event.id }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <input type="hidden" name="edit" value="true">
+                <input type="hidden" name="expected_status" value="{{ event.status }}">
+                <div class="desk-fields">
+                    <label class="desk-edit-title">标题<input name="title" maxlength="180" value="{{ values.title }}" required></label>
+                    <label>{{ '截止日期' if goal else '计划日期' }}<input type="date" name="due_on" value="{{ values.due_on }}" {{ 'required' if not goal else '' }}></label>
+                    <label>状态<select name="status">{% for value, label in focus_status_labels.items() %}<option value="{{ value }}" {{ 'selected' if value == values.status else '' }}>{{ '待处理' if value == 'planned' else label }}</option>{% endfor %}</select></label>
+                    <button class="secondary-button">保存</button>
+                </div>
+            </form>
+            {% if planner_entry and event.status not in ['done', 'paused'] %}
+            <form class="planner-move-form" action="{{ url_for('set_daily_event_slot', event_id=event.id) }}{{ board_suffix }}" method="post" data-desk-action="move" data-event-id="{{ event.id }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <input type="hidden" name="expected_slot" value="{{ planner_entry.key }}">
+                <div class="desk-fields">
+                    <label>安排到<input name="start_on" type="date" value="{{ planner_entry.slot[0] if planner_entry.slot else planner_day }}" required></label>
+                    <label>开始时间<select name="start_time"><option value="">全天</option>{% for slot, _ in planner_hours %}<option value="{{ slot }}" {{ 'selected' if planner_entry.time == slot else '' }}>{{ slot }}</option>{% endfor %}</select></label>
+                    <button class="secondary-button">保存安排</button>
+                </div>
+            </form>
+            {% if planner_entry.slot %}
+            <form action="{{ url_for('set_daily_event_slot', event_id=event.id) }}{{ board_suffix }}" method="post" data-desk-action="move" data-event-id="{{ event.id }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="expected_slot" value="{{ planner_entry.key }}"><input type="hidden" name="clear" value="true"><button class="board-action">取消安排</button>
+            </form>{% endif %}
+            {% endif %}
+            <div class="desk-editor-links">
+                {% if goal %}<a class="board-action" href="{{ url_for('focus_goal', goal_id=goal.id) }}#action-{{ event.id }}">查看原行动</a>{% endif %}
+            </div>
+        </div>
+    </details>
+</li>

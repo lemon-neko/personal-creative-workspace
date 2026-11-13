@@ -1,0 +1,31 @@
+{% set value = form_values if edit_id == (job.id if job else 'new') else {} %}
+{% set choices = submission_choices.get(job.id, ()) if job else new_submission_choices %}
+{% set submission = submissions.get(job.id) if job else none %}
+<tbody id="{{ 'job-' ~ job.id if job else 'new-application' }}" data-career-row data-job-id="{{ job.id if job else '' }}" data-patch-url="{{ url_for('patch_career_job', job_id=job.id) if job else '' }}">
+  <tr>
+    <th scope="row">
+      <input class="career-table-control career-company" name="company" data-saved-value="{{ job.company if job else '' }}" aria-label="公司" data-autosave-field value="{{ value.get('company', job.company if job else '') }}" placeholder="公司" maxlength="160" required>
+      <input class="career-table-control" name="title" data-saved-value="{{ job.title if job else '' }}" aria-label="岗位" data-autosave-field value="{{ value.get('title', job.title if job else '') }}" placeholder="岗位" maxlength="160" required>
+    </th>
+    <td><select class="career-table-control" name="status" data-saved-value="{{ job.status if job else 'saved' }}" aria-label="当前进度" data-autosave-field>{% for key, label in job_status_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == value.get('status', job.status if job else 'saved') else '' }}>{{ label }}</option>{% endfor %}</select></td>
+    <td><input class="career-table-control" type="date" name="applied_on" data-saved-value="{{ job.applied_on if job else '' }}" aria-label="投递日期" data-autosave-field value="{{ value.get('applied_on', job.applied_on if job else '') }}"></td>
+    <td>
+      <div data-snapshot-link>{% if submission %}<a href="{{ url_for('job_submission_detail', job_id=job.id, submission_id=submission.id) }}">{{ submission.title }}</a><small>r{{ submission.revision }} · 只读快照</small>{% else %}<small>未记录</small>{% endif %}</div>
+      {% if choices %}
+      <form data-record-form method="post" action="{{ url_for('record_job_submission', job_id=job.id) if job else '' }}" class="career-inline-record">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="filter_q" value="{{ filters.q }}"><input type="hidden" name="filter_status" value="{{ filters.status }}">
+        <select class="career-table-control" name="resume_id" aria-label="选择投递简历" {{ 'disabled' if not job else '' }} required><option value="">选择简历</option>{% for resume in choices %}<option value="{{ resume.id }}" {{ 'selected' if value.get('resume_id') == resume.id else '' }}>{{ resume.title }} · r{{ resume.revision }}</option>{% endfor %}</select>
+        <button type="submit" class="career-record-button" {{ 'disabled' if not job else '' }}>记录</button>
+      </form>
+      {% else %}<small>建立主简历后可记录版本</small>{% endif %}
+    </td>
+    <td><input class="career-table-control" name="next_action" data-saved-value="{{ job.next_action if job else '' }}" aria-label="下一步" data-autosave-field maxlength="300" placeholder="下一步" value="{{ value.get('next_action', job.next_action if job else '') }}"><input class="career-table-control" type="date" name="next_action_on" data-saved-value="{{ job.next_action_on if job else '' }}" aria-label="下一步日期" data-autosave-field value="{{ value.get('next_action_on', job.next_action_on if job else '') }}"></td>
+    <td><textarea class="career-table-control" name="notes" data-saved-value="{{ job.notes if job else '' }}" aria-label="备注" data-autosave-field rows="2" maxlength="20000" placeholder="备注">{{ value.get('notes', job.notes if job else '') }}</textarea></td>
+    <td class="career-row-actions">
+      <span data-save-state role="status" aria-live="polite">{{ '保存失败：' ~ error if error and edit_id == (job.id if job else 'new') else '' }}</span><button type="button" class="career-retry-button" data-retry hidden>重试</button>
+      <a data-detail-link href="{{ url_for('career_job_detail', job_id=job.id) if job else '#' }}" {{ 'hidden' if not job else '' }}>详情</a>
+      {% if primary %}<a data-tailor-link href="{{ url_for('resume_match', resume_id=primary.id, job_id=job.id) if job else '#' }}" {{ 'hidden' if not job else '' }}>定制</a>{% endif %}
+    </td>
+  </tr>
+</tbody>

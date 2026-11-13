@@ -18,11 +18,18 @@ from app.resume_assets import validate_resume_image
 from app.resume_docx import DocxResumeCandidate, parse_resume_docx
 from app.resume_import import import_primary_resume
 from app.resume_studio import (
+    RESUME_TEMPLATE_KEYS,
+    RESUME_TEMPLATE_LABELS,
     StructuredResume,
     apply_tailoring_suggestions,
     build_import_candidate,
+    display_sections,
+    deserialize_structured_resume,
+    group_work_experience,
     match_resume,
     normalize_structured_resume,
+    project_has_structured_content,
+    project_structure_candidates,
     validate_tailoring_suggestions,
 )
 from app.web import TEMPLATES, not_found
@@ -91,6 +98,13 @@ def _resume_from_form(form: Any, repository: CareerRepository) -> StructuredResu
                 ),
                 "github": str(form.get(f"project_github_{project.id}", "")),
                 "website": str(form.get(f"project_website_{project.id}", "")),
+                "summary": str(form.get(f"project_summary_{project.id}", "")),
+                "tech_stack": str(
+                    form.get(f"project_tech_stack_{project.id}", "")
+                ),
+                "responsibilities": _lines(
+                    form.get(f"project_responsibilities_{project.id}", "")
+                ),
                 "description": _lines(
                     form.get(
                         f"project_description_{project.id}",
@@ -165,15 +179,31 @@ def _resume_context(
     photo_url: str = "",
     import_diagnostics: tuple[str, ...] = (),
     error: str | None = None,
+    template_key: str = "",
 ) -> dict[str, Any]:
     repository: CareerRepository = request.app.state.career
-    selected = {str(row.get("project_id", "")): row for row in structured.projects}
+    structure_candidates = project_structure_candidates(
+        structured, repository.projects()
+    )
+    project_editor_rows = structure_candidates if resume is None else structured.projects
+    selected = {
+        str(row.get("project_id", "")): row for row in project_editor_rows
+    }
     work_rows = list(structured.work_experience) + [
         {"title": "", "company": "", "location": "", "years": "", "description": []}
     ]
     education_rows = list(structured.education) + [
         {"institution": "", "degree": "", "years": "", "description": ""}
     ]
+    active_template_key = template_key or (
+        resume.template_key
+        if resume
+        else "china_single_photo"
+        if photo_url
+        else "ats_single"
+    )
+    if active_template_key not in RESUME_TEMPLATE_KEYS:
+        active_template_key = "ats_single"
     return {
         "active_page": "career",
         "resume": resume,
@@ -185,6 +215,10 @@ def _resume_context(
         "import_diagnostics": import_diagnostics,
         "projects": repository.projects(),
         "selected_projects": selected,
+        "project_structure_candidates": structure_candidates,
+        "legacy_project_count": sum(
+            not project_has_structured_content(row) for row in structured.projects
+        ),
         "work_rows": work_rows,
         "education_rows": education_rows,
         "source_current": repository.resume_source_is_current(resume)
@@ -192,6 +226,10 @@ def _resume_context(
         else True,
         "jobs": repository.jobs(),
         "resume_statuses": RESUME_STATUSES,
+        "resume_template_labels": RESUME_TEMPLATE_LABELS,
+        "active_template_key": active_template_key,
+        "display_sections": display_sections(structured, active_template_key),
+        "work_groups": group_work_experience(structured.work_experience),
         "llm_enabled": request.app.state.model_gateway.enabled,
         "error": error,
     }
@@ -263,9 +301,7 @@ def _parse_material(repository: CareerRepository, document) -> str:
             "document_text": document.extracted_text,
             "profile": repository.profile().__dict__,
             "projects": [project.__dict__ for project in repository.projects()],
-            "allowed_project_ids": [
-                project.id for project in repository.projects()
-            ],
+            "allowed_project_ids": [project.id for project in repository.projects()],
         },
         ensure_ascii=False,
     )
@@ -273,24 +309,55 @@ def _parse_material(repository: CareerRepository, document) -> str:
 
 @router.get("/career/resumes", response_class=HTMLResponse, name="career_resumes")
 async def career_resumes(request: Request) -> HTMLResponse:
-    repository: CareerRepository = request.app.state.career
-    resumes = repository.resumes()
+    return RedirectResponse(str(request.url_for("career").include_query_params(
+        saved=request.query_params.get("saved", ""))) + "#resumes", status_code=302)
+
+
+@router.get("/career/resumes/{resume_id}/tailor", name="resume_tailor_start")
+async def resume_tailor_start(request: Request, resume_id: str, job_id: str) -> HTMLResponse:
+    repository = request.app.state.career
+    resume = repository.resume(resume_id)
+    if resume is None or resume.resume_kind != "master" or repository.job(job_id) is None:
+        return _not_found(request)
+    return RedirectResponse(request.url_for("resume_match", resume_id=resume_id, job_id=job_id), status_code=302)
+
+
+@router.get("/career/jobs/{job_id}/submissions/{submission_id}", name="job_submission_detail")
+async def job_submission_detail(request: Request, job_id: str, submission_id: int) -> HTMLResponse:
+    repository = request.app.state.career
+    snapshot = repository.job_submission(submission_id)
+    job = repository.job(job_id)
+    if snapshot is None or snapshot.job_id != job_id or job is None:
+        return _not_found(request)
+    structured = deserialize_structured_resume(snapshot.structured_data)
     return TEMPLATES.TemplateResponse(
-        request=request,
-        name="career_resumes.html",
+        request=request, name="career_submission.html",
         context={
-            "active_page": "career",
-            "primary": repository.primary_resume(),
-            "tailored": tuple(row for row in resumes if row.resume_kind == "tailored"),
-            "legacy": tuple(row for row in resumes if row.resume_kind == "legacy"),
-            "documents": repository.documents("resume"),
-            "projects": repository.projects(),
-            "jobs": repository.jobs(),
-            "resume_statuses": RESUME_STATUSES,
-            "llm_enabled": request.app.state.model_gateway.enabled,
-            "notice": request.query_params.get("saved"),
+            **_resume_context(request, structured, title=snapshot.title, target_role=snapshot.target_role,
+                              template_key=snapshot.template_key),
+            "snapshot": snapshot, "job": job,
+            "history": repository.job_submissions(job_id),
+            "photo_url": str(request.url_for("job_submission_photo", job_id=job_id, submission_id=snapshot.id))
+                         if snapshot.photo_asset_id else "",
+            "show_photo": True,
         },
     )
+
+
+@router.get("/career/jobs/{job_id}/submissions/{submission_id}/photo", name="job_submission_photo")
+async def job_submission_photo(request: Request, job_id: str, submission_id: int) -> Response:
+    repository = request.app.state.career
+    snapshot = repository.job_submission(submission_id)
+    if snapshot is None or snapshot.job_id != job_id or not snapshot.photo_asset_id:
+        return _not_found(request)
+    asset = repository.resume_asset(snapshot.photo_asset_id)
+    if asset is None:
+        return _not_found(request)
+    try:
+        validated = validate_resume_image(repository.resume_asset_path(asset).read_bytes())
+    except (FileNotFoundError, ValueError):
+        return _not_found(request)
+    return Response(validated.content, media_type=validated.media_type)
 
 
 @router.post("/career/resumes", name="create_resume_version")
@@ -320,9 +387,7 @@ async def create_resume_version(
     )
 
 
-@router.post(
-    "/career/resumes/{resume_id}/status", name="change_resume_status"
-)
+@router.post("/career/resumes/{resume_id}/status", name="change_resume_status")
 async def change_resume_status(
     request: Request, resume_id: str, status: str = Form(...)
 ) -> HTMLResponse:
@@ -379,7 +444,11 @@ async def resume_import_preview(
 async def resume_document_portrait(request: Request, document_id: str) -> Response:
     repository: CareerRepository = request.app.state.career
     document = repository.document(document_id)
-    if document is None or document.kind != "resume" or not document.stored_name.endswith(".docx"):
+    if (
+        document is None
+        or document.kind != "resume"
+        or not document.stored_name.endswith(".docx")
+    ):
         return _not_found(request)
     try:
         candidate = _document_import_candidate(repository, document)
@@ -387,7 +456,9 @@ async def resume_document_portrait(request: Request, document_id: str) -> Respon
         return _not_found(request)
     if candidate.portrait is None:
         return _not_found(request)
-    return Response(candidate.portrait.content, media_type=candidate.portrait.media_type)
+    return Response(
+        candidate.portrait.content, media_type=candidate.portrait.media_type
+    )
 
 
 @router.post(
@@ -588,6 +659,125 @@ async def resume_detail(request: Request, resume_id: str) -> HTMLResponse:
     )
 
 
+def _project_structure_context(
+    request: Request,
+    resume,
+    structured: StructuredResume,
+    *,
+    error: str | None = None,
+) -> dict[str, Any]:
+    repository: CareerRepository = request.app.state.career
+    candidates = project_structure_candidates(structured, repository.projects())
+    return {
+        "active_page": "career",
+        "resume": resume,
+        "structured": structured,
+        "candidates": candidates,
+        "pending_count": sum(row["needs_confirmation"] for row in candidates),
+        "error": error,
+    }
+
+
+@router.get(
+    "/career/resumes/{resume_id}/projects/structure",
+    response_class=HTMLResponse,
+    name="resume_project_structure_preview",
+)
+async def resume_project_structure_preview(
+    request: Request, resume_id: str
+) -> HTMLResponse:
+    repository: CareerRepository = request.app.state.career
+    resume = repository.resume(resume_id)
+    if resume is None or not resume.is_structured:
+        return _not_found(request)
+    structured = repository.structured_resume(resume)
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="resume_project_structure.html",
+        context=_project_structure_context(request, resume, structured),
+    )
+
+
+@router.post(
+    "/career/resumes/{resume_id}/projects/structure",
+    response_class=HTMLResponse,
+    name="resume_project_structure_confirm",
+)
+async def resume_project_structure_confirm(
+    request: Request, resume_id: str
+) -> HTMLResponse:
+    repository: CareerRepository = request.app.state.career
+    resume = repository.resume(resume_id)
+    if resume is None or not resume.is_structured:
+        return _not_found(request)
+    form = await request.form()
+    current = repository.structured_resume(resume)
+    payload = current.to_payload()
+    try:
+        for row in payload["projects"]:
+            project_id = str(row.get("project_id", ""))
+            summary = str(
+                form.get(f"project_summary_{project_id}", row.get("summary", ""))
+            )
+            tech_stack = str(
+                form.get(
+                    f"project_tech_stack_{project_id}",
+                    "\n".join(row.get("tech_stack", [])),
+                )
+            )
+            responsibilities = _lines(
+                form.get(
+                    f"project_responsibilities_{project_id}",
+                    "\n".join(row.get("responsibilities", [])),
+                )
+            )
+            if not summary.strip() and not tech_stack.strip() and not responsibilities:
+                raise ValueError(f"项目“{row.get('name', '')}”至少保留一层有效内容")
+            row["summary"] = summary
+            row["tech_stack"] = tech_stack
+            row["responsibilities"] = responsibilities
+        structured = normalize_structured_resume(payload)
+        saved = repository.update_structured_resume(
+            resume.id,
+            structured=structured,
+            expected_revision=int(str(form.get("revision", "-1"))),
+            title=resume.title,
+            target_role=resume.target_role,
+            notes=resume.notes,
+            template_key=resume.template_key,
+        )
+    except RuntimeError as error:
+        latest = repository.resume(resume.id)
+        latest_structured = (
+            repository.structured_resume(latest)
+            if latest is not None and latest.is_structured
+            else current
+        )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="resume_project_structure.html",
+            context=_project_structure_context(
+                request, latest or resume, latest_structured, error=str(error)
+            ),
+            status_code=409,
+        )
+    except (TypeError, ValueError) as error:
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="resume_project_structure.html",
+            context=_project_structure_context(
+                request, resume, current, error=str(error)
+            ),
+            status_code=422,
+        )
+    return RedirectResponse(
+        request.url_for("resume_detail", resume_id=saved.id).include_query_params(
+            saved="project-structure"
+        ),
+        status_code=303,
+    )
+
+
 @router.get("/career/resumes/{resume_id}/photo", name="resume_photo")
 async def resume_photo(request: Request, resume_id: str) -> Response:
     repository: CareerRepository = request.app.state.career
@@ -680,6 +870,7 @@ async def save_resume_detail(request: Request, resume_id: str) -> HTMLResponse:
             title=str(form.get("title", "")),
             target_role=str(form.get("target_role", "")),
             notes=str(form.get("notes", "")),
+            template_key=str(form.get("template_key", resume.template_key)),
         )
     except RuntimeError as error:
         latest = repository.resume(resume_id)
@@ -707,6 +898,7 @@ async def save_resume_detail(request: Request, resume_id: str) -> HTMLResponse:
                 fallback,
                 resume=resume,
                 error=str(error),
+                template_key=str(form.get("template_key", resume.template_key)),
             ),
             status_code=422,
         )
@@ -730,10 +922,9 @@ async def resume_match(request: Request, resume_id: str, job_id: str) -> HTMLRes
     if resume is None or not resume.is_structured or job is None:
         return _not_found(request)
     report = match_resume(
-        repository.structured_resume(resume),
-        job.jd_text,
+        repository.structured_resume(resume), job.jd_text,
         repository.confirmed_skill_names(job.id),
-    )
+    ) if job.jd_text.strip() else None
     return TEMPLATES.TemplateResponse(
         request=request,
         name="resume_match.html",
@@ -747,9 +938,7 @@ async def resume_match(request: Request, resume_id: str, job_id: str) -> HTMLRes
     )
 
 
-@router.post(
-    "/career/resumes/{resume_id}/tailor/copy", name="resume_tailor_copy"
-)
+@router.post("/career/resumes/{resume_id}/tailor/copy", name="resume_tailor_copy")
 async def resume_tailor_copy(
     request: Request, resume_id: str, job_id: str = Form(...)
 ) -> HTMLResponse:
@@ -785,6 +974,9 @@ async def resume_tailor_preview(
     job = repository.job(job_id)
     if resume is None or resume.resume_kind != "master" or job is None:
         return _not_found(request)
+    if not job.jd_text.strip():
+        return HTMLResponse("请先补充 JD，再进行岗位分析或模型定制。", status_code=422)
+
     material = _tailor_material(repository, resume, job)
     config = request.app.state.model_gateway.config
     return TEMPLATES.TemplateResponse(
@@ -825,8 +1017,13 @@ async def resume_tailor_run(
     gateway: ModelGateway = request.app.state.model_gateway
     if resume is None or resume.resume_kind != "master" or job is None:
         return _not_found(request)
+    if not job.jd_text.strip():
+        return HTMLResponse("请先补充 JD，再进行岗位分析或模型定制。", status_code=422)
+
     try:
-        payload = await asyncio.to_thread(gateway.resume_tailor_candidate, outbound_text)
+        payload = await asyncio.to_thread(
+            gateway.resume_tailor_candidate, outbound_text
+        )
         json.loads(outbound_text)
         suggestions = validate_tailoring_suggestions(
             payload["suggestions"],
@@ -859,6 +1056,9 @@ async def resume_tailor_manual(
     job = repository.job(job_id)
     if resume is None or resume.resume_kind != "master" or job is None:
         return _not_found(request)
+    if not job.jd_text.strip():
+        return HTMLResponse("请先补充 JD，再进行岗位分析或模型定制。", status_code=422)
+
     task = request.app.state.model_tasks.create(
         task_type=ModelTaskKind.RESUME_TAILOR.value,
         purpose="为目标职位生成字段级简历修改候选",
@@ -885,6 +1085,9 @@ async def resume_tailor_confirm(
     job = repository.job(job_id)
     if resume is None or resume.resume_kind != "master" or job is None:
         return _not_found(request)
+    if not job.jd_text.strip():
+        return HTMLResponse("请先补充 JD，再进行岗位分析或模型定制。", status_code=422)
+
     form = await request.form()
     selected = {str(value) for value in form.getlist("selected")}
     if not selected:
@@ -945,6 +1148,16 @@ async def resume_pdf(
         show_photo=show_photo,
         photo_data_url=photo_data_url,
         photo_url=photo_data_url,
+        active_template_key=(
+            resume.template_key if variant == "china" else "ats_single"
+        ),
+        display_sections=display_sections(
+            repository.structured_resume(resume),
+            resume.template_key if variant == "china" else "ats_single",
+        ),
+        work_groups=group_work_experience(
+            repository.structured_resume(resume).work_experience
+        ),
     )
     extension = "html" if html else "pdf"
     filename = f"resume-{variant}.{extension}"

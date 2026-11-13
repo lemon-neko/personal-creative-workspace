@@ -159,10 +159,17 @@ class LocalOnlyMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Frame-Options", "DENY")
+        from app.plugins import DAILY_ORIGIN
+
+        frames = (
+            f" frame-src {DAILY_ORIGIN};"
+            if request.url.path == "/" and not request.url.query and getattr(request.app.state, "workflow", None)
+            else ""
+        )
         response.headers.setdefault(
             "Content-Security-Policy",
             "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
             "script-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; "
-            "base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+            f"base-uri 'self'; frame-ancestors 'none'; form-action 'self';{frames}",
         )
         return response
