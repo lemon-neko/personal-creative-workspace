@@ -12,6 +12,10 @@ _CONTAINER_FIELDS = frozenset(field.name for field in fields(AppContainer))
 class WorkspaceState(State):
     """Keep legacy state reads and replacements on the same container fields."""
 
+    @property
+    def daily_verified(self) -> bool:
+        return self.plugin_runtime is not None and self.plugin_runtime.daily_ready
+
     def __getattr__(self, name: str):
         if name in _CONTAINER_FIELDS:
             return getattr(self.container, name)

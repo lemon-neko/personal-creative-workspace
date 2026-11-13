@@ -1,21 +1,20 @@
 """Authenticated HTTP transport to the local Autoloop Hub."""
 
 import json
-import os
 from contextlib import asynccontextmanager
-
 from pathlib import Path
 
 import httpx
 
-HUB_URL = "http://127.0.0.1:8768"
+from app.plugin_paths import HUB_URL as HUB_URL
+from app.process_supervisor import process_environment
+
 EVENT_TYPE = "workbench.approved"
 RULE = "工作台任务"
 
 
 def plugin_environment(home: Path) -> dict[str, str]:
-    return {**{key: os.environ[key] for key in ("PATH", "TMPDIR", "LANG") if key in os.environ},
-            "AGENT_AUTOLOOP_HOME": str(home)}
+    return process_environment() | {"AGENT_AUTOLOOP_HOME": str(home)}
 
 
 class AutoloopClient:
@@ -47,6 +46,13 @@ class AutoloopClient:
         )
         response.raise_for_status()
         return response.json()
+
+    async def healthy(self) -> bool:
+        state = await self.request("/v1/state")
+        return (
+            isinstance(state, dict) and isinstance(state.get("now"), str)
+            and all(isinstance(state.get(key), list) for key in ("lines", "runs", "cards", "recentCards"))
+        )
 
     @asynccontextmanager
     async def facts(self, after):

@@ -42,6 +42,9 @@ REQUIRED_FEATURES = {
 REQUIRED_ARCHITECTURE = {
     "application-bootstrap.md",
     "audit-report.md",
+    "career-domain.md",
+    "agent-runtime.md",
+    "plugin-runtime.md",
     "content-model.md",
     "data-ownership.md",
     "dependency-map.md",

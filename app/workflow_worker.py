@@ -109,7 +109,15 @@ class WorkflowWorker:
                     preview = self.workflow.preview(turn["item_id"], turn["objective"], previous, turn["choice"], self.store.private_answer(turn))
                     if cancelled.is_set() or preview["fingerprint"] != turn["fingerprint"] or not self.workflow.gateway.enabled:
                         raise ValueError("模型确认已失效")
-                    candidate = await asyncio.to_thread(self.model_result, preview, cancelled, start.get("session"), turn_id)
+                    call = asyncio.create_task(
+                        asyncio.to_thread(self.model_result, preview, cancelled, start.get("session"), turn_id),
+                    )
+                    try:
+                        candidate = await asyncio.shield(call)
+                    except asyncio.CancelledError:
+                        cancelled.set()
+                        await asyncio.gather(call, return_exceptions=True)
+                        raise
                     stopped = cancelled.is_set() or self.store.turn(turn_id)["state"] == "cancelled"
                     state = "cancelled" if stopped else "draft" if "draft" in candidate else "decision"
                     if state != "cancelled":
@@ -148,7 +156,13 @@ class WorkflowWorker:
                 await self.dispatch()
                 if current is None:
                     reply = await self.autoloop.request("/v1/work", role="worker", params={"claim": claim, "wait": 1, "capacity": 1})
+                    if not isinstance(reply, dict) or "job" not in reply or (
+                        reply["job"] is not None and not isinstance(reply["job"], dict)
+                    ):
+                        raise ValueError("Autoloop Worker 轮询响应无效")
                     current = reply["job"]
+                    self.workflow.ready = True
+                    self.workflow.error = ""
                 if current:
                     cancelled = asyncio.Event()
 
@@ -174,8 +188,6 @@ class WorkflowWorker:
                         cancelled.set()
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
-                self.workflow.ready = True
-                self.workflow.error = ""
             except (RuntimeError, OSError, ValueError, httpx.HTTPError) as error:
                 self.workflow.ready = False
                 self.workflow.error = "Autoloop 暂不可用，保留已确认的任务并等待重连"

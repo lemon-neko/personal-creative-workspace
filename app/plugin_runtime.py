@@ -1,124 +1,101 @@
-"""Launch and supervise the desktop plugin processes."""
-
-from __future__ import annotations
+"""Own the exclusive desktop plugin lifecycle and operator controls."""
 
 import asyncio
 import fcntl
-import json
-import shutil
-import sys
-from contextlib import asynccontextmanager, suppress
+import os
+import stat
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
-import httpx
-
-from app.install_plugins import require_web_package, verify_packages
-from app.plugins import DAILY_ORIGIN, WORKBENCH_ORIGIN
+from app.autoloop_plugin import Autoloop
+from app.daily_plugin import DailyWeb
+from app.process_logs import ProcessLogs
+from app.process_supervisor import ProcessState, ProcessSupervisor
 from app.workflow import Workflow
-from app.workflow_hub import HUB_URL, plugin_environment
-from app.workflow_worker import WorkflowWorker
 
 
-async def supervise(command, *, env=None):
-    while True:
-        process = None
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *command, env=env, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-            )
-            await process.wait()
-        except OSError:
-            pass
-        finally:
-            if process and process.returncode is None:
-                with suppress(ProcessLookupError):
-                    process.terminate()
+class PluginRuntimeManager:
+    def __init__(self, root: Path, workflow: Workflow | None):
+        self.root = root
+        self.workflow = workflow
+        self.web_logs = ProcessLogs(root / "logs", "super-productivity")
+        self.hub_logs = ProcessLogs(root / "logs", "autoloop-hub")
+        self.daily = DailyWeb(root, self.web_logs)
+        self.web = ProcessSupervisor("super-productivity", self.daily.launch)
+        self.autoloop = Autoloop(root, self.hub_logs, workflow)
+        self.controls = {"daily": self.web, "workflow": self.autoloop.hub}
+        self._control = asyncio.Lock()
+        self._owns_lock = False
+
+    @property
+    def daily_ready(self) -> bool:
+        return self.web.snapshot.state == ProcessState.READY
+
+    async def daily_available(self) -> bool:
+        return self.daily_ready and await self.daily.available() and self.daily_ready
+
+    @property
+    def can_control(self) -> bool:
+        return self._owns_lock
+
+    def snapshots(self):
+        return (
+            ("Super Productivity", "daily", self.web.snapshot, self.web_logs),
+            ("Autoloop Hub", "workflow", self.autoloop.hub.snapshot, self.hub_logs),
+            ("Autoloop Worker", "", self.autoloop.worker.snapshot, None),
+        )
+
+    def _lock(self, resources: AsyncExitStack) -> None:
+        if self.root.is_symlink() or self.root.parent.is_symlink():
+            raise OSError("插件目录无效")
+        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.root.chmod(0o700)
+        fd = os.open(self.root / "worker.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        resources.callback(os.close, fd)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("插件锁文件无效")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.fchmod(fd, 0o600)
+        self._owns_lock = True
+
+    def _unavailable(self, error: str) -> None:
+        for supervisor in self.controls.values():
+            supervisor.unavailable(error)
+        if self.workflow is not None:
+            self.workflow.error = error
+
+    @asynccontextmanager
+    async def running(self, *, enabled: bool):
+        async with AsyncExitStack() as resources:
+            if enabled:
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=4)
-                except TimeoutError:
-                    process.kill()
-                    await process.wait()
-        await asyncio.sleep(2)
+                    self._lock(resources)
+                except BlockingIOError:
+                    self._unavailable("插件已由另一工作台进程管理")
+                except OSError:
+                    self._unavailable("无法获取本机插件运行锁")
+                if self._owns_lock:
+                    resources.push_async_callback(self.shutdown)
+                    await self.web.start()
+                    await self.autoloop.hub.start()
+            yield self
 
+    async def shutdown(self) -> None:
+        async with self._control:
+            self._owns_lock = False
+            try:
+                await self.autoloop.hub.stop()
+            finally:
+                await self.web.stop()
 
-@asynccontextmanager
-async def run_plugin_tasks(*coroutines):
-    tasks = [asyncio.create_task(coroutine) for coroutine in coroutines]
-    try:
-        yield
-    finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-
-@asynccontextmanager
-async def start_daily_web(root: Path):
-    try:
-        await asyncio.to_thread(verify_packages, root, package="web")
-        require_web_package(root / "web")
-    except (KeyError, OSError, TypeError, ValueError):
-        yield False
-        return
-    async with run_plugin_tasks(supervise([sys.executable, "-m", "app.plugin_web", str(root / "web")])):
-        yield True
-
-
-@asynccontextmanager
-async def start_workflow(workflow: Workflow | None):
-    if workflow is None:
-        yield
-        return
-    root = workflow.store.root
-    home = root / "autoloop-data"
-    node = shutil.which("node")
-    try:
-        await asyncio.to_thread(verify_packages, root, package="autoloop")
-        config = json.loads((home / "config.json").read_text())
-        credentials = json.loads((home / "workbench-keys.json").read_text())
-        if config != {"url": HUB_URL, "hub": {"listen": HUB_URL.removeprefix("http://")}, "owner": credentials["owner"]}:
-            raise ValueError("插件须使用专用本机配置")
-        if not all(isinstance(credentials.get(role), str) and credentials[role] for role in ("owner", "source", "worker")):
-            raise ValueError("插件凭据缺失")
-        if not node or not (root / "autoloop/bin/agent-autoloop.ts").is_file():
-            raise ValueError("插件文件缺失")
-    except (KeyError, OSError, TypeError, ValueError):
-        workflow.error = "Autoloop 安装或配置无效，请检查本机插件"
-        yield
-        return
-    workflow.store.recover_interrupted_turns()
-    try:
-        async with workflow.autoloop.connect(HUB_URL, credentials), run_plugin_tasks(
-            supervise([node, str(root / "autoloop/bin/agent-autoloop.ts"), "up"], env=plugin_environment(home)),
-            WorkflowWorker(workflow).run(),
-        ):
-            yield
-    finally:
-        workflow.ready = False
-
-
-@asynccontextmanager
-async def start_plugins(root: Path | None, workflow: Workflow | None):
-    if root is None:
-        yield False
-        return
-    with (root / "worker.lock").open("a") as lock:
-        (root / "worker.lock").chmod(0o600)
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            if workflow is not None:
-                workflow.error = "插件已由另一工作台进程启动"
-            yield False
-            return
-        async with start_daily_web(root) as daily_verified, start_workflow(workflow):
-            yield daily_verified
-
-
-async def daily_available() -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=1, trust_env=False) as http:
-            response = await http.head(DAILY_ORIGIN)
-        return response.status_code == 200 and f"frame-ancestors {WORKBENCH_ORIGIN}" in response.headers.get("content-security-policy", "")
-    except httpx.HTTPError:
-        return False
+    async def control(self, plugin_id: str, action: str) -> None:
+        supervisor = self.controls[plugin_id]
+        if action not in {"start", "stop", "restart"}:
+            raise KeyError(action)
+        async with self._control:
+            if not self._owns_lock:
+                raise RuntimeError("本机插件未启用或运行锁不可用")
+            if action in {"stop", "restart"}:
+                await supervisor.stop()
+            if action in {"start", "restart"}:
+                await supervisor.start()

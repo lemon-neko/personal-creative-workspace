@@ -4,8 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.mobile_daily import DailySnapshot, daily_now, save_daily_snapshot
-from app.plugin_runtime import daily_available
-from app.plugins import DAILY_ORIGIN, WORKBENCH_ORIGIN
+from app.plugin_paths import DAILY_ORIGIN, WORKBENCH_ORIGIN
 from app.web import TEMPLATES
 
 
@@ -21,9 +20,11 @@ async def workspace_home(request: Request):
             request, request.query_params.get("saved"), request.query_params.get("q"),
             request.query_params.get("view", "pending"),
         )
-    if request.app.state.enforce_security and request.url.netloc != "127.0.0.1:8765":
+    if request.app.state.enforce_security and str(request.base_url).rstrip("/") != WORKBENCH_ORIGIN:
         return RedirectResponse(WORKBENCH_ORIGIN, status_code=303)
-    ready = request.app.state.daily_verified and await daily_available()
+    manager = request.app.state.plugin_runtime
+    ready = manager is not None and await manager.daily_available()
+    request.state.daily_frame_ready = ready
     return TEMPLATES.TemplateResponse(
         request=request, name="workbench_daily.html",
         context={

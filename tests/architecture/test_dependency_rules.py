@@ -37,3 +37,15 @@ def test_composition_entries_are_only_imported_by_entrypoints():
     graph = import_graph()
     actual = {(source, target) for source, targets in graph.items() for target in targets & entries}
     assert actual <= allowed
+
+
+def test_agent_runtime_layers_do_not_depend_on_adapters_or_web():
+    graph = import_graph()
+    root = "app.agent_runtime."
+    for source, targets in graph.items():
+        if source.startswith(root + "domain."):
+            assert all(target.startswith(root + "domain.") for target in targets), (source, targets)
+        if source.startswith((root + "application.", root + "runtime.")):
+            assert all(target.startswith((root + "domain.", root + "application.")) for target in targets), (
+                source, targets,
+            )

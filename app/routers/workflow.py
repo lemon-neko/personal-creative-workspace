@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app import workflow_control as control
 from app.database import SHANGHAI
-from app.plugins import WORKBENCH_ORIGIN
+from app.plugin_paths import WORKBENCH_ORIGIN
 from app.web import TEMPLATES
 from app.workflow_store import identifier
 

@@ -22,12 +22,14 @@
 
 ## SQLite 表与迁移所有者
 
+Career 表由六个按领域分工的仓储访问，统一归于同一迁移子系统。仓储和事务映射见 [Career 领域架构](career-domain.md)。
+
 本表通过[隔离启动测试](../../tests/architecture/test_data_ownership.py)核对表名、唯一归属和注册版本。FTS 内部 shadow 表及 SQLite 内部表由 SQLite 管理。Career 内的四个业务组共用迁移标识和事务。
 
 | 数据库 | 子系统 | 版本 | 当前所有者 | 逻辑表 |
 | --- | --- | --- | --- | --- |
 | `workspace.db` | `registry` | — | database | `schema_migrations` |
-| `workspace.db` | `agent_core` | 3 | AgentCoreRepository | `workspace_projects`, `workspace_tasks`, `task_dependencies`, `agent_runs`, `artifacts`, `agent_steps`, `tool_calls`, `focus_action_tasks`, `daily_event_tasks`, `agent_run_decisions` |
+| `workspace.db` | `agent_core` | 3 | Agent Runtime | `workspace_projects`, `workspace_tasks`, `task_dependencies`, `agent_runs`, `artifacts`, `agent_steps`, `tool_calls`, `focus_action_tasks`, `daily_event_tasks`, `agent_run_decisions` |
 | `workspace.db` | `assistant` | 1 | AssistantRepository | `assistant_conversations`, `assistant_turn_summaries`, `assistant_decisions` |
 | `workspace.db` | `bounty_income` | 3 | IncomeRepository 历史兼容迁移 | 无现行表 |
 | `workspace.db` | `career` | 8 | CareerRepository | `profile`, `documents`, `projects`, `resumes`, `resume_assets`, `jobs`, `job_events`, `job_resume_submissions`, `skills`, `job_skill_gaps`, `learning_tasks`, `learning_campaigns`, `quests`, `quest_learning_tasks`, `quest_evidence`, `career_radar_state`, `capability_domains`, `job_capabilities`, `capability_skills`, `learning_references`, `learning_reference_capabilities`, `learning_reference_tasks`, `learning_paths`, `learning_stages`, `learning_stage_references`, `learning_stage_capabilities` |
@@ -43,7 +45,7 @@
 
 ## 现行跨域写入与迁移
 
-- [旧 Agent 交接](../../app/agent_core.py)在同一写事务创建任务、写入 `focus_action_tasks` 或 `daily_event_tasks`，并调用 [Focus 的活动写入函数](../../app/focus.py)更新 `planner_activity`。AgentCore 还查询 Focus 行动、交付物、目标可见性。现有装配先建立 Focus 表；关联表的跨域外键与查询要求交接前两套表都已就绪。权限过滤和原子交接都是后续拆分的验收项。
+- [Agent Runtime](agent-runtime.md) 通过 Focus 适配器在同一写事务创建任务、写入 `focus_action_tasks` 或 `daily_event_tasks` 并更新 `planner_activity`。Focus 仍拥有行动、交付物和目标可见性；应用装配先建立 Focus 表。
 - [助手确认路由](../../app/routers/assistant.py)经 Workspace 写随想或经 Career 创建学习任务，然后记录助手动作；动作记录有 `turn_id/action_id` 唯一性，但目标记录由另一写入创建。并发时第二个请求可能取得同一预留后继续写；目标写入与决策完结之间也有中断窗口。应以并发及中断注入验证幂等，保留人工确认。
 - [移动写入](../../app/mobile.py)通过 MobileCaptureService 写 Vault、记录移动幂等状态，并尽力调用 SearchRepository 更新主库投影；投影失败允许后续对账。Obsidian 可绕过 HTTP 直接修改 Vault；桌面写入中间件无法收到该变化。
 - [迁移框架](../../app/database.py)使用两个注册表按 subsystem 记录连续版本，开启 WAL、外键和 busy timeout。发现已有库需升级时先做 SQLite backup；在 `BEGIN IMMEDIATE` 内执行一个子系统的迁移和版本登记，出错回滚该事务，未知高版本拒绝。多个 Repository 在各自初始化时调用迁移，整个应用启动并非全库单事务。已有库回退依赖升级前快照；回滚单个子系统时仍需考虑快照会恢复整个文件及其他子系统的旧状态。Hub 与浏览器各走上游迁移。

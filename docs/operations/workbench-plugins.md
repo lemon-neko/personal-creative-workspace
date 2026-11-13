@@ -16,6 +16,8 @@ git clone --depth 1 --branch v1.8.1 https://github.com/KKKKhazix/agent-autoloop.
 
 两个插件由桌面服务管理。本机 Web 资源监听 `localhost:8767`，Autoloop 监听 `127.0.0.1:8768`。请用 `http://127.0.0.1:8765/` 打开桌面工作台。插件版本及构建树 SHA-256 记录在应用数据目录的 `working/plugins/packages.json`。桌面启动时分别核对两个包。Web 包通过校验且服务可访问时才嵌入月历；Web 启动失败时可从首页打开旧待办。Autoloop 配置或执行后端损坏时可在 AI 工作流查看状态，日常工作可继续使用。
 
+在桌面「设置 → 运行状态」查看 Web、Hub 和 Worker 的健康检查、重启次数和最近错误。Web 与 Autoloop 各自提供启动、停止和重启。自动恢复预算耗尽时，处理设置页提示后可手动启动。页面只展示经过过滤的日志；底层日志在私有数据目录的 `working/plugins/logs/`。
+
 规则在 `working/plugins/autoloop-data/rules.json`，格式见 [Autoloop 协议](https://raw.githubusercontent.com/KKKKhazix/agent-autoloop/v1.8.1/docs/protocol.md)。编辑后，在插件目录运行以下命令校验。新规则的 `to` 使用 `gateway`，该接单程序只执行经确认的模型调用。
 
 ```sh

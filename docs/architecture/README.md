@@ -13,6 +13,9 @@
 | [模块清单](module-map.md) | 全部 Python 模块的职责、依赖和耦合 |
 | [依赖图](dependency-map.md) | 源码导入、业务调用、启动和外部进程 |
 | [数据所有权](data-ownership.md) | 权威数据、数据库表、迁移与恢复边界 |
+| [Career 领域架构](career-domain.md) | 四个领域的数据归属、应用服务、跨域事务和兼容入口 |
+| [Agent Runtime 领域架构](agent-runtime.md) | 旧任务、运行、产物与人工验收的分层和事务边界 |
+| [插件运行时](plugin-runtime.md) | 静态注册、安装包校验、进程健康、故障隔离和停止顺序 |
 | [目标架构](target-architecture.md) | 模块结构、依赖方向与现有文件映射 |
 | [重构路线图](refactoring-roadmap.md) | 实施顺序、架构规则与验收门槛 |
 
@@ -47,7 +50,7 @@ flowchart LR
 
 | 组件 | 代码入口 | 运行职责 |
 |---|---|---|
-| 桌面服务 | [桌面启动器](../../app/__main__.py)、[应用工厂](../../app/bootstrap/app_factory.py)、[内置插件注册表](../../app/plugins.py) | 按领域装配路由和导航，管理私有数据、浏览器访问校验和用户审批。 |
+| 桌面服务 | [桌面启动器](../../app/__main__.py)、[应用工厂](../../app/bootstrap/app_factory.py)、[桌面路由装配](../../app/bootstrap/routes.py) | 按领域装配路由和导航，管理私有数据、浏览器访问校验和用户审批。 |
 | Super Productivity Web | [独立静态服务](../../app/plugin_web.py)、[Web 构建](../../tools/build_workbench_web.py) | 在独立的浏览器源运行日常工作。任务菜单通过 iframe 消息发起交接，桌面日常工作页通过同一桥接请求手机看板快照。 |
 | AI 工作流 | [工作流路由](../../app/routers/workflow.py)、[Worker](../../app/workflow_worker.py)、[只读投影](../../app/workflow_control.py) | Worker 在桌面进程内领取任务，控制中心通过同源接口获取快照、实时通知和轮次追溯。 |
 | 模型执行 | [ModelGateway](../../app/model_gateway.py)、[DeepSeek Harness 适配器](../../app/deepseek_harness.py) | 模型网关执行任务上限和输出校验。AI 工作流可用私有配置选择 Harness，默认 Harness 模型为 `deepseek-flash`。其他领域各自使用默认网关或人工桥接。 |
@@ -59,7 +62,7 @@ flowchart LR
 
 工作项的预览与审批由[工作流服务](../../app/workflow.py)负责。路由和 Worker 通过[工作流存储](../../app/workflow_store.py)读取事项、提交审批和更新状态。该模块管理工作流表的 SQL、事务和私有产物。控制中心通过[只读投影](../../app/workflow_control.py)组合 Hub 事实与本地引用。
 
-[Autoloop 客户端](../../app/workflow_hub.py)统一处理回环 HTTP、服务端凭据和实时事实流。[Worker](../../app/workflow_worker.py)负责重送审批事件、领取轮次、执行及回执。[插件运行管理](../../app/plugin_runtime.py)由桌面 Lifespan 调用，使用同一个进程锁管理本机子进程，并分别校验和启动 Super Productivity Web 与 Autoloop。Web 仅依赖自己的包和校验值；AI 工作流依赖自己的包、Hub 配置和凭据。工作流启动时恢复未完成轮次。
+[Autoloop 客户端](../../app/workflow_hub.py)统一处理回环 HTTP、服务端凭据和实时事实流。[Worker](../../app/workflow_worker.py)负责重送审批事件、领取轮次、执行及回执。[插件运行管理](../../app/plugin_runtime.py)由桌面 Lifespan 调用，持有本机独占锁，由各自的监督器管理 Web、Hub 与 Worker。Hub 通过认证探针后启动 Worker，并恢复未完成轮次。故障与诊断见[插件运行时](plugin-runtime.md)。
 
 ## 技术栈
 

@@ -7,8 +7,47 @@
 <header class="page-header">
     <p class="eyebrow">LOCAL RUNTIME</p>
     <h1>本机运行状态</h1>
-    <p>这里只读取 launchd 和回环端口状态。安装、重启和卸载必须在终端中显式执行。</p>
+    <p>查看本机服务和插件状态。桌面工作台与手机网关的安装、重启和卸载在终端执行。</p>
 </header>
+
+<section aria-labelledby="plugin-runtime-heading">
+    <h2 id="plugin-runtime-heading">插件运行状态</h2>
+    {% if not can_manage_plugins %}<p>插件未启用或运行锁不可用。</p>{% endif %}
+    <div class="settings-grid">
+    {% for name, plugin_id, snapshot, log_tail in plugin_processes %}
+        <section class="paper-panel">
+            <h3>{{ name }}</h3>
+            <dl class="settings-list">
+                {{ setting_row('运行状态', snapshot.state.value | capitalize) }}
+                {{ setting_row('期望状态', '运行' if snapshot.desired_state == 'running' else '停止') }}
+                {{ setting_row('PID', snapshot.pid or '—', true) }}
+                {{ setting_row('健康检查', '通过' if snapshot.last_health_ok is true else '失败' if snapshot.last_health_ok is false else '尚未检查') }}
+                {% if snapshot.last_health_check_at %}{{ setting_row('最近检查', snapshot.last_health_check_at) }}{% endif %}
+                {{ setting_row('重启次数', snapshot.restart_count) }}
+                {% if snapshot.next_restart_at %}{{ setting_row('下次重试', snapshot.next_restart_at) }}{% endif %}
+                {% if snapshot.last_exit_code is not none %}{{ setting_row('退出码', snapshot.last_exit_code) }}{% endif %}
+                {% if snapshot.last_error %}{{ setting_row('最近错误', snapshot.last_error) }}{% endif %}
+            </dl>
+            {% if plugin_id and can_manage_plugins %}
+            <div class="form-actions">
+                {% for action, label in (('start', '启动'), ('stop', '停止'), ('restart', '重启')) %}
+                <form action="{{ url_for('control_plugin_runtime', plugin_id=plugin_id, action=action) }}" method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                    <button class="secondary-button" type="submit">{{ label }}</button>
+                </form>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if plugin_id %}
+            <details>
+                <summary>最近日志</summary>
+                <pre><code>{{ log_tail or '尚无日志' }}</code></pre>
+            </details>
+            {% endif %}
+        </section>
+    {% endfor %}
+    </div>
+</section>
 
 <div class="settings-grid">
     {% for service in services %}

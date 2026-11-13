@@ -39,7 +39,8 @@ flowchart LR
 | `data_root`、`content_root` | 仓库外私有数据根与 Vault |
 | `model_gateway`、`llm_client`、`model_tasks` | 网关、旧路由的 StyleClient 和人工模型任务；任务共享网关用量 Repository。只有 OpenAI-compatible 客户端作为自定义网关输入，其他 StyleClient 仍仅供旧路由调用。 |
 | `career`、`focus`、`video`、`search` | 求职与学习、阶段及旧待办、视频私有文件、检索投影 |
-| `agent_core`、`assistant`、`income` | 旧 Agent、助手和收入 Repository |
+| `agent_core` | 旧 Agent Runtime 兼容入口，注入 Search 和 ModelGateway 适配器 |
+| `assistant`、`income` | 助手和收入 Repository |
 | `wechat`、`mobile_store`、`obsidian` | 微信草稿服务、桌面用的移动配对仓储、Vault 桥接 |
 | `workflow`、`plugin_directory`、`plugins_enabled` | 可选 Autoloop 工作流、私有安装路径与启用标记 |
 
@@ -58,7 +59,7 @@ flowchart TD
     Recover -->|"失败"| Abort["启动失败"]
     Search -->|"成功或记录可恢复错误"| Scheduler["按配置创建周回顾任务"]
     Scheduler --> Plugins["进入 start_plugins"]
-    Plugins -->|"成功或原有插件降级"| Ready["设置 daily_verified，开始服务"]
+    Plugins -->|"监督任务登记后"| Ready["开始服务，探针独立更新状态"]
     Plugins -->|"上下文进入失败"| Partial["退出已进入的插件资源"]
     Partial --> Reset["daily_verified 设为 False"]
     Ready -->|"Shutdown"| Reset
@@ -66,7 +67,7 @@ flowchart TD
     Drain --> Stop["退出插件上下文，释放进程和 Worker"]
 ```
 
-启动恢复异常仍传播。搜索首次同步和写后同步复用同一个入口。启动时 SQLite 错误也会记录到 `search_sync_error`；后续成功清空提示。写后同步沿用原有异常处理范围。搜索的来源、触发条件和索引算法保持原有行为。周回顾仍使用确定性逻辑。既有插件上下文继续分别校验 Web 与 Hub，并处理进程和 Worker；启动中途异常会收尾已取得的资源和周回顾任务。任务与进程清理使用现有关闭接口。
+启动恢复异常仍传播。搜索首次同步和写后同步复用同一个入口。启动时 SQLite 错误也会记录到 `search_sync_error`；后续成功清空提示。写后同步沿用原有异常处理范围。搜索的来源、触发条件和索引算法保持原有行为。周回顾仍使用确定性逻辑。Lifespan 持有插件运行管理器，先停止 Worker 并关闭客户端，再回收 Hub 和 Web。详细顺序见[插件运行时](plugin-runtime.md)。
 
 ## 文件清单
 
@@ -80,4 +81,4 @@ flowchart TD
 
 ## 后续事项
 
-现有插件监督仍固定重试并丢弃子进程输出；未被现有插件校验处理的异常仍可中止桌面启动。Task 05 应在独立监督器中补齐诊断、退避及故障隔离。搜索的来源枚举、SQLite 连接生命周期和 Repository 构造内迁移分别保留到对应后续工作。路线见[重构路线图](refactoring-roadmap.md)。
+Task 05 已将进程监督、静态注册和包校验拆开。搜索的来源枚举、SQLite 连接生命周期和 Repository 构造内迁移分别保留到对应后续工作。路线见[重构路线图](refactoring-roadmap.md)。

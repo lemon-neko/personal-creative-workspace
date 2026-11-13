@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -12,51 +11,23 @@ import tempfile
 from pathlib import Path
 
 from app.atomic import atomic_write_text, content_lock
-from app.plugins import plugin_root
+from app.plugin_packages import (
+    AUTOLOOP_COMMIT, VERSIONS, read_manifest, require_web_package, tree_hash, verify_packages,
+)
+from app.plugin_paths import HUB_URL, plugin_root
 from app.privacy import default_data_root, prepare_private_root
-from app.workflow_hub import EVENT_TYPE, HUB_URL, RULE, plugin_environment
-
-AUTOLOOP_COMMIT = "e8748fd0c2aad4013e5996c3188535567070f24a"
-VERSIONS = {"super-productivity": "20.0.0", "agent-autoloop": "1.8.1"}
-PACKAGE_VERSIONS = {"web": "super-productivity", "autoloop": "agent-autoloop"}
-
-
-def tree_hash(directory: Path) -> str:
-    digest = hashlib.sha256()
-    for file in sorted(directory.rglob("*")):
-        if file.is_symlink():
-            raise ValueError("插件构建不允许符号链接")
-        if file.is_file():
-            digest.update(str(file.relative_to(directory)).encode() + b"\0")
-            digest.update(hashlib.sha256(file.read_bytes()).digest())
-    return digest.hexdigest()
-
-
-def verify_packages(root: Path, *, package: str | None = None) -> None:
-    manifest = json.loads((root / "packages.json").read_text())
-    versions = manifest["versions"]
-    names = (package,) if package is not None else tuple(PACKAGE_VERSIONS)
-    if package is None and versions != VERSIONS:
-        raise ValueError("本地插件包版本或校验值不符")
-    for name in names:
-        upstream = PACKAGE_VERSIONS[name]
-        if versions[upstream] != VERSIONS[upstream] or tree_hash(root / name) != manifest["sha256"][name]:
-            raise ValueError("本地插件包版本或校验值不符")
-
-
-def require_web_package(web: Path) -> None:
-    if not (web / "index.html").is_file() or not (web / "assets/bundled-plugins/yubai-workbench/plugin.js").is_file():
-        raise ValueError("需要已构建的 Super Productivity Web 插件包")
-
+from app.workflow_hub import EVENT_TYPE, RULE, plugin_environment
 
 def refresh_web(root: Path, web: Path) -> None:
     """Replace the Web bundle and its checksum while retaining plugin data."""
     require_web_package(web)
+    if root.is_symlink() or root.parent.is_symlink() or not root.is_dir():
+        raise ValueError("插件目录无效")
     with content_lock(root), tempfile.TemporaryDirectory(dir=root) as tmp:
-        verify_packages(root)
+        verify_packages(root, package="web")
         manifest_path = root / "packages.json"
         previous_manifest = manifest_path.read_text()
-        manifest = json.loads(previous_manifest)
+        manifest = read_manifest(root)
         stage = Path(tmp)
         pending = stage / "web"
         previous = stage / "previous"
@@ -73,19 +44,22 @@ def refresh_web(root: Path, web: Path) -> None:
             if current.exists():
                 current.rename(pending)
             previous.rename(current)
-            if manifest_path.read_text() != previous_manifest:
+            if not manifest_path.exists() or manifest_path.read_text() != previous_manifest:
                 atomic_write_text(manifest_path, previous_manifest)
             raise
 
 
 def provision(data_root: Path, web: Path, engine_source: Path) -> None:
     root = plugin_root(prepare_private_root(data_root))
+    if root.is_symlink() or root.parent.is_symlink():
+        raise ValueError("插件目录无效")
     root.mkdir(mode=0o700, exist_ok=True)
     with content_lock(root):
         if (root / "packages.json").is_file():
             verify_packages(root)
             return
-        if any((root / part).exists() for part in ("web", "autoloop", "autoloop-data")):
+        if any((root / part).exists() or (root / part).is_symlink()
+               for part in ("web", "autoloop", "autoloop-data", "packages.json")):
             raise RuntimeError("发现未完成的插件安装，请检查旧目录")
         commit = subprocess.check_output(["git", "-C", str(engine_source), "rev-parse", "HEAD"], text=True).strip()
         if commit != AUTOLOOP_COMMIT:
@@ -93,7 +67,8 @@ def provision(data_root: Path, web: Path, engine_source: Path) -> None:
         require_web_package(web)
         with tempfile.TemporaryDirectory(dir=root) as tmp:
             stage = Path(tmp)
-            shutil.copytree(web, stage / "web")
+            shutil.copytree(web, stage / "web", symlinks=True)
+            web_hash = tree_hash(stage / "web")
             engine = stage / "autoloop"
             engine.mkdir()
             archive = stage / "upstream.tar"
@@ -120,10 +95,18 @@ def provision(data_root: Path, web: Path, engine_source: Path) -> None:
             atomic_write_text(home / "config.json", json.dumps({
                 "url": HUB_URL, "hub": {"listen": HUB_URL.removeprefix("http://")}, "owner": keys["owner"],
             }))
-            manifest = {"versions": VERSIONS, "sha256": {name: tree_hash(stage / name) for name in ("web", "autoloop")}}
-            for name in ("web", "autoloop", "autoloop-data"):
-                (stage / name).rename(root / name)
-            atomic_write_text(root / "packages.json", json.dumps(manifest, indent=2))
+            manifest = {"versions": VERSIONS, "sha256": {"web": web_hash, "autoloop": tree_hash(engine)}}
+            atomic_write_text(stage / "packages.json", json.dumps(manifest, indent=2))
+            verify_packages(stage)
+            published = []
+            try:
+                for name in ("web", "autoloop", "autoloop-data", "packages.json"):
+                    (stage / name).rename(root / name)
+                    published.append(name)
+            except BaseException:
+                for name in reversed(published):
+                    (root / name).rename(stage / name)
+                raise
 
 
 def main():
@@ -147,6 +130,8 @@ def main():
         verify_packages(root)
         atomic_write_text(root / "enabled", "1\n")
     else:
+        if root.is_symlink() or root.parent.is_symlink():
+            raise ValueError("插件目录无效")
         (root / "enabled").unlink(missing_ok=True)
 
 

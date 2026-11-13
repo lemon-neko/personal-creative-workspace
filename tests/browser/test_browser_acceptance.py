@@ -669,3 +669,30 @@ def test_career_autosave_queue_failure_retry_and_creation_replay(browser_workspa
         assert len([item for item in repository.jobs() if item.company == "重试不重复公司"]) == 1
         expect(page.locator("#new-application").get_by_label("公司", exact=True)).to_have_value("")
         browser.close()
+
+
+def test_legacy_agent_runtime_review_and_artifact_links(browser_workspace):
+    base = browser_workspace["desktop_url"]
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        page = browser.new_page()
+        page.goto(f"{base}/legacy/tasks")
+        page.get_by_text("新建任务", exact=True).click()
+        page.get_by_label("任务名称").fill("虚构运行验收")
+        page.get_by_label("目标", exact=True).fill("整理测试工作纸")
+        page.get_by_role("button", name="创建任务").click()
+        expect(page).to_have_url(re.compile("/tasks/task-"))
+        page.get_by_role("button", name="生成执行计划").click()
+        expect(page).to_have_url(re.compile("/runs/run-"))
+        run_url = page.url
+        page.get_by_role("button", name="运行本地计划").click()
+        expect(page.get_by_text("等待人工确认", exact=True)).to_be_visible()
+        page.get_by_role("link", name="先查看候选产物").click()
+        expect(page).to_have_url(re.compile("/artifacts/artifact-"))
+        expect(page.get_by_text("不代表正式知识结论。", exact=False)).to_be_visible()
+        page.goto(run_url)
+        page.get_by_role("button", name="接受产物并完成").click()
+        expect(page.get_by_text("已接受", exact=True)).to_be_visible()
+        page.goto(f"{base}/runs")
+        expect(page.get_by_role("link", name=re.compile("虚构运行验收"))).to_be_visible()
+        browser.close()

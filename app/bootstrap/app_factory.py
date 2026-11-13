@@ -11,7 +11,7 @@ from app.bootstrap.container import AppContainer, build_container
 from app.bootstrap.dependencies import WorkspaceState, get_container
 from app.bootstrap.lifespan import refresh_search_index, workspace_lifespan
 from app.llm import StyleClient
-from app.plugins import register_plugins
+from app.bootstrap.routes import register_plugins
 from app.privacy import LocalOnlyMiddleware, require_csrf
 from app.web import APP_DIR, SafeStaticFiles, not_found as render_not_found
 
@@ -45,7 +45,7 @@ def create_workspace_app(
     application.state = WorkspaceState({
         "container": container,
         "enforce_security": config.enforce_security,
-        "daily_verified": False,
+        "plugin_runtime": None,
         "search_sync_error": "",
     })
     application.add_middleware(LocalOnlyMiddleware, enforce=config.enforce_security)
@@ -57,7 +57,7 @@ def create_workspace_app(
             request.method in {"POST", "PUT", "PATCH", "DELETE"}
             and response.status_code < 400
             and request.url.path != "/settings/search/rebuild"
-            and not request.url.path.startswith("/workflow/")
+            and not request.url.path.startswith(("/workflow/", "/settings/runtime/plugins/"))
         ):
             await refresh_search_index(request.app)
         return response

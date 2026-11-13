@@ -1,18 +1,18 @@
-"""Built-in desktop plugins, registered once for routing and navigation."""
+"""Static catalog of trusted desktop plugins."""
 
+import re
 from dataclasses import dataclass
-from pathlib import Path
 
-from fastapi import APIRouter, FastAPI
-
-DAILY_ORIGIN = "http://localhost:8767"
-WORKBENCH_ORIGIN = "http://127.0.0.1:8765"
+from app.plugin_paths import (
+    DAILY_ORIGIN as DAILY_ORIGIN,
+    WORKBENCH_ORIGIN as WORKBENCH_ORIGIN,
+    plugin_root as plugin_root,
+)
 
 
 @dataclass(frozen=True)
-class Plugin:
+class PluginSpec:
     id: str
-    routes: tuple[APIRouter, ...]
     links: tuple[tuple[str, str], ...]
     data_owner: str = "工作台"
     version: str = "1"
@@ -21,34 +21,61 @@ class Plugin:
     primary: bool = False
 
 
-def register_plugins(app: FastAPI) -> None:
-    from app.routers import (
-        agent_core, assistant, career_learning, creation, daily, focus, income,
-        knowledge_models, resumes, system, wechat, workflow, workspace_content,
-    )
-
-    plugins = (
-        Plugin("daily", (daily.router,), (("workspace", "日常工作"),), "Super Productivity", "20.0.0",
+PLUGINS = (
+    PluginSpec("daily", (("workspace", "日常工作"),), "Super Productivity", "20.0.0",
                permissions=("tasks.read_selected", "tasks.read_daily"), primary=True),
-        Plugin("workflow", (workflow.router,), (("tasks", "AI 工作流"),), "Agent Autoloop", "1.8.1",
+    PluginSpec("workflow", (("tasks", "AI 工作流"),), "Agent Autoloop", "1.8.1",
                ("model-gateway",), ("model.preview_confirm", "artifact.local"), True),
-        Plugin("planning", (workspace_content.router, focus.router),
-               (("focus", "主线与分支"), ("ideas", "想法库"), ("reviews", "周回顾"), ("legacy_workspace", "旧待办"))),
-        Plugin("legacy-agent", (agent_core.router,), (("legacy_tasks", "旧任务"), ("runs", "旧执行记录"))),
-        Plugin("knowledge", (knowledge_models.router,), (("knowledge", "知识库"), ("models", "模型与成本"))),
-        Plugin("publishing", (creation.router, wechat.router), (("articles", "创作"),)),
-        Plugin("career", (resumes.router, career_learning.router), (("career", "求职"), ("learning", "学习"))),
-        Plugin("assistant", (assistant.router,), (("assistant", "助手"),)),
-        Plugin("income", (income.router,), (("income", "收入"),)),
-        Plugin("workspace-tools", (system.router,), (("search", "全局检索"), ("settings", "设置"), ("trash", "回收站"))),
-    )
-    app.state.plugins = plugins
-    app.state.primary_nav = tuple(link for plugin in plugins if plugin.primary for link in plugin.links)
-    app.state.plugin_nav = tuple(link for plugin in plugins if not plugin.primary for link in plugin.links)
+    PluginSpec("planning", (("focus", "主线与分支"), ("ideas", "想法库"), ("reviews", "周回顾"), ("legacy_workspace", "旧待办"))),
+    PluginSpec("legacy-agent", (("legacy_tasks", "旧任务"), ("runs", "旧执行记录"))),
+    PluginSpec("knowledge", (("knowledge", "知识库"), ("models", "模型与成本"))),
+    PluginSpec("publishing", (("articles", "创作"),)),
+    PluginSpec("career", (("career", "求职"), ("learning", "学习"))),
+    PluginSpec("assistant", (("assistant", "助手"),)),
+    PluginSpec("income", (("income", "收入"),)),
+    PluginSpec("workspace-tools", (("search", "全局检索"), ("settings", "设置"), ("trash", "回收站"))),
+)
+CAPABILITIES = frozenset({"model-gateway"})
+PRIMARY = (("daily", "workspace"), ("workflow", "tasks"))
+
+
+def get_plugin(plugin_id: str) -> PluginSpec:
+    return next(plugin for plugin in PLUGINS if plugin.id == plugin_id)
+
+
+def validate_registry(plugins: tuple[PluginSpec, ...]) -> None:
+    index = {plugin.id: plugin for plugin in plugins}
+    if len(index) != len(plugins) or index.keys() & CAPABILITIES:
+        raise ValueError("插件 ID 重复或与共享能力冲突")
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(plugin_id: str) -> None:
+        if plugin_id in visiting:
+            raise ValueError("插件存在循环依赖")
+        if plugin_id in visited or plugin_id in CAPABILITIES:
+            return
+        visiting.add(plugin_id)
+        for dependency in index[plugin_id].dependencies:
+            visit(dependency)
+        visiting.remove(plugin_id)
+        visited.add(plugin_id)
+
+    names = set()
+    primary = []
     for plugin in plugins:
-        for router in plugin.routes:
-            app.include_router(router)
-
-
-def plugin_root(data_root: Path) -> Path:
-    return data_root / "working" / "plugins"
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", plugin.id) or not re.fullmatch(r"\d+(?:\.\d+\.\d+)?", plugin.version):
+            raise ValueError("插件 ID 或版本格式无效")
+        deps = set(plugin.dependencies)
+        if deps - (index.keys() | CAPABILITIES) or len(deps) != len(plugin.dependencies):
+            raise ValueError("插件依赖无效")
+        for route, label in plugin.links:
+            if not route or not label.strip() or route in names:
+                raise ValueError("插件导航入口重复或无效")
+            names.add(route)
+            if plugin.primary:
+                primary.append((plugin.id, route))
+    if tuple(primary) != PRIMARY:
+        raise ValueError("插件主导航不符")
+    for plugin in plugins:
+        visit(plugin.id)

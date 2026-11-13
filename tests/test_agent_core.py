@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import app.agent_core as agent_core_module
 from app.agent_core import AgentCoreRepository
+from app.agent_runtime.runtime import local_executor
 from app.main import create_app
 from app.search import SearchResult
 
@@ -143,7 +144,7 @@ def test_failed_review_keeps_history_and_can_start_a_new_run(tmp_path, monkeypat
     task = repository.create_task(title="验收失败样例", objective="检查本地工作纸", task_type="research",
                                   project_id=agent_core_module.DEFAULT_PROJECT_ID)
     run = repository.plan_task(task.id)
-    monkeypatch.setattr(repository, "_artifact_markdown", lambda *args: "无效工作纸")
+    monkeypatch.setattr(local_executor, "_worksheet", lambda *args: "无效工作纸")
     with pytest.raises(RuntimeError, match="Reviewer 未通过"):
         repository.execute_run(run.id, ())
     assert repository.run(run.id).status == "failed"

@@ -24,7 +24,7 @@
 | `app/knowledge_store.py`、`app/obsidian.py` | 正式知识、关系、来源、Vault 扫描和迁移 |
 | `app/library.py`、`app/search.py` | 材料和增量 FTS5 检索 |
 | `app/publishing*.py` | 微信预处理、语义渲染、主题和导出编排 |
-| `app/career.py`、`app/career_radar.py` | 求职、学习、岗位雷达和项目证据 |
+| `app/career/`、`app/career_radar.py` | 四个 Career 领域及兼容入口，见 [Career 领域架构](../architecture/career-domain.md) |
 | `app/assistant.py` | 助手上下文、校验、摘要与确认行动 |
 | `app/agent_core.py`、`app/routers/agent_core.py` | 旧项目、任务、运行、步骤和产物 |
 | `app/plugins.py`、`app/plugin_runtime.py` | 插件装配、安装校验、进程管理和恢复 |

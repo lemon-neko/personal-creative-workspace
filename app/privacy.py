@@ -13,6 +13,9 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 
 
+from app.plugin_paths import DAILY_ORIGIN
+
+
 APP_DATA_FOLDER = "personal-creative-workspace"
 CSRF_COOKIE = "pcw_csrf"
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]", "testserver"}
@@ -161,12 +164,10 @@ class LocalOnlyMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Frame-Options", "DENY")
-        from app.plugins import DAILY_ORIGIN
-
         frames = (
             f" frame-src {DAILY_ORIGIN};"
             if request.url.path == "/" and not request.url.query
-            and getattr(request.app.state, "daily_verified", False)
+            and getattr(request.state, "daily_frame_ready", False)
             else ""
         )
         response.headers.setdefault(

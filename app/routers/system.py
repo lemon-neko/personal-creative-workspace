@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 from datetime import datetime
@@ -10,7 +11,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import yaml
-from fastapi import APIRouter, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from starlette.background import BackgroundTask
 
@@ -407,6 +408,12 @@ async def settings(request: Request) -> HTMLResponse:
     name="runtime_settings",
 )
 async def runtime_settings(request: Request) -> HTMLResponse:
+    runtime = request.app.state.plugin_runtime
+    plugins = []
+    if runtime is not None:
+        for name, plugin_id, snapshot, logs in runtime.snapshots():
+            log_tail = await asyncio.to_thread(logs.tail) if logs is not None else ""
+            plugins.append((name, plugin_id, snapshot, log_tail))
     return TEMPLATES.TemplateResponse(
         request=request,
         name="runtime_settings.html",
@@ -415,9 +422,34 @@ async def runtime_settings(request: Request) -> HTMLResponse:
             "services": service_statuses(data_root=request.app.state.data_root),
             "tailnet": inspect_tailnet(),
             "permissions": inspect_data_permissions(request.app.state.data_root),
+            "plugin_processes": plugins,
+            "can_manage_plugins": runtime is not None and runtime.can_control,
             "mobile_config": request.app.state.mobile_store.config(),
         },
     )
+
+@router.post("/settings/runtime/plugins/{plugin_id}/{action}", name="control_plugin_runtime")
+async def control_plugin_runtime(request: Request, plugin_id: str, action: str):
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+    # Chromium can serialize the origin as null under the workspace's no-referrer policy.
+    # The global CSRF dependency still requires the same-site cookie and form token.
+    source_header = referer if origin in {None, "null"} else origin
+    if request.app.state.enforce_security and source_header:
+        source = urlparse(source_header)
+        if (source.scheme, source.netloc) != (request.url.scheme, request.url.netloc):
+            raise HTTPException(403, "插件操作仅接受同源请求")
+    runtime = request.app.state.plugin_runtime
+    if plugin_id not in {"daily", "workflow"} or action not in {"start", "stop", "restart"}:
+        raise HTTPException(404, "未知插件或操作")
+    if runtime is None:
+        raise HTTPException(409, "本机插件运行管理尚未启动")
+    try:
+        await runtime.control(plugin_id, action)
+    except RuntimeError as error:
+        raise HTTPException(409, str(error)) from error
+    return RedirectResponse(request.url_for("runtime_settings"), status_code=303)
+
 
 @router.get(
     "/settings/obsidian",
