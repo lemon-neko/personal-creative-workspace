@@ -1,0 +1,27 @@
+# Cyclic edges at Task 01 baseline 6a8375e. Remove resolved edges.
+app.content: app.knowledge_store
+app.install_plugins: app.plugins, app.privacy
+app.knowledge_store: app.content, app.workspace
+app.plugin_runtime: app.install_plugins, app.plugins, app.workflow, app.workflow_worker
+app.plugins: app.routers.agent_core, app.routers.assistant, app.routers.career_learning, app.routers.creation, app.routers.daily, app.routers.focus, app.routers.income, app.routers.knowledge_models, app.routers.resumes, app.routers.system, app.routers.wechat, app.routers.workflow, app.routers.workspace_content
+app.privacy: app.plugins
+app.resume_import: app.privacy
+app.routers.agent_core: app.web
+app.routers.assistant: app.web
+app.routers.career_learning: app.web
+app.routers.creation: app.web
+app.routers.daily: app.plugin_runtime, app.plugins, app.routers.workspace_content, app.web
+app.routers.focus: app.web
+app.routers.income: app.web
+app.routers.knowledge_models: app.web
+app.routers.resumes: app.resume_import, app.web
+app.routers.system: app.runtime, app.web
+app.routers.wechat: app.web
+app.routers.workflow: app.plugins, app.routers.agent_core, app.web, app.workflow_store
+app.routers.workspace_content: app.web
+app.runtime: app.privacy
+app.web: app.privacy
+app.workflow: app.workflow_store
+app.workflow_store: app.plugins
+app.workflow_worker: app.workflow, app.workflow_store
+app.workspace: app.content

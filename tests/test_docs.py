@@ -40,8 +40,15 @@ REQUIRED_FEATURES = {
     "agent-runtime.md",
 }
 REQUIRED_ARCHITECTURE = {
+    "application-bootstrap.md",
+    "audit-report.md",
     "content-model.md",
+    "data-ownership.md",
+    "dependency-map.md",
+    "module-map.md",
     "private-vault-folders.md",
+    "refactoring-roadmap.md",
+    "target-architecture.md",
     "storage.md",
 }
 REQUIRED_CHANGE_FIELDS = {
