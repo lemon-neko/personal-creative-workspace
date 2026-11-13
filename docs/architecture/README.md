@@ -1,8 +1,20 @@
 # 羽白工作台系统架构
 
-> 盘点日期 2026-11-12。本文描述当前实现。使用与验证状态见[项目状态](../../PROJECT_STATUS.md)。
+> 架构基线 2026-11-13，基于本地提交 `6a8375e`。使用状态见[项目状态](../../PROJECT_STATUS.md)。
 
 羽白工作台是运行在 Mac 上的本地单用户应用。桌面提供完整管理界面，Android PWA 通过私网查看日常工作看板和随手记录，Obsidian 与工作台编辑同一份私有 Vault。桌面默认入口是「日常工作」和「AI 工作流」。前者由 Super Productivity 管理待办和排期，后者由 Agent Autoloop 调度，工作台负责审批、执行桥接和产物验收。
+
+## 架构审计入口
+
+| 文档 | 内容 |
+| --- | --- |
+| [桌面应用启动与依赖装配](application-bootstrap.md) | 当前 AppFactory、AppContainer、Lifespan 与兼容层 |
+| [Task 01 审计报告](audit-report.md) | 证据、评分、问题优先级、改造收益与验收 |
+| [模块清单](module-map.md) | 全部 Python 模块的职责、依赖和耦合 |
+| [依赖图](dependency-map.md) | 源码导入、业务调用、启动和外部进程 |
+| [数据所有权](data-ownership.md) | 权威数据、数据库表、迁移与恢复边界 |
+| [目标架构](target-architecture.md) | 模块结构、依赖方向与现有文件映射 |
+| [重构路线图](refactoring-roadmap.md) | 实施顺序、架构规则与验收门槛 |
 
 ## 运行拓扑
 
@@ -35,19 +47,19 @@ flowchart LR
 
 | 组件 | 代码入口 | 运行职责 |
 |---|---|---|
-| 桌面服务 | [桌面启动器](../../app/__main__.py)、[应用工厂](../../app/main.py)、[内置插件注册表](../../app/plugins.py) | 按领域装配路由和导航，管理私有数据、浏览器访问校验和用户审批。 |
+| 桌面服务 | [桌面启动器](../../app/__main__.py)、[应用工厂](../../app/bootstrap/app_factory.py)、[内置插件注册表](../../app/plugins.py) | 按领域装配路由和导航，管理私有数据、浏览器访问校验和用户审批。 |
 | Super Productivity Web | [独立静态服务](../../app/plugin_web.py)、[Web 构建](../../tools/build_workbench_web.py) | 在独立的浏览器源运行日常工作。任务菜单通过 iframe 消息发起交接，桌面日常工作页通过同一桥接请求手机看板快照。 |
 | AI 工作流 | [工作流路由](../../app/routers/workflow.py)、[Worker](../../app/workflow_worker.py)、[只读投影](../../app/workflow_control.py) | Worker 在桌面进程内领取任务，控制中心通过同源接口获取快照、实时通知和轮次追溯。 |
-| 模型执行 | [ModelGateway](../../app/model_gateway.py)、[DeepSeek Harness 适配器](../../app/deepseek_harness.py) | 模型网关执行任务上限和输出校验。AI 工作流可用私有配置选择 Harness，本机当前使用 `deepseek-flash`。其他领域各自使用默认网关或人工桥接。 |
+| 模型执行 | [ModelGateway](../../app/model_gateway.py)、[DeepSeek Harness 适配器](../../app/deepseek_harness.py) | 模型网关执行任务上限和输出校验。AI 工作流可用私有配置选择 Harness，默认 Harness 模型为 `deepseek-flash`。其他领域各自使用默认网关或人工桥接。 |
 | 移动网关 | [移动启动器](../../app/mobile_launcher.py)、[移动应用工厂](../../app/mobile_main.py) | 独立进程和会话边界，通过 Tailscale Serve 处理随想写入与冲突合并，为已配对设备提供只读日常看板。 |
 | Obsidian | [Vault 桥接](../../app/obsidian.py) | 扫描并编辑同一份文件，工作台通过文件 Revision 检测冲突，按需更新导航与索引。 |
-| 服务管理 | [运行管理](../../app/runtime.py) | macOS 用户级 LaunchAgent 管理桌面服务和可选的移动网关。应用工厂在调用时初始化数据目录，ASGI 启动时同步检索并启动已启用的服务。 |
+| 服务管理 | [运行管理](../../app/runtime.py) | macOS 用户级 LaunchAgent 管理桌面服务和可选的移动网关。桌面容器在工厂调用时装配，Lifespan 负责启动、恢复与资源关闭。 |
 
 ## 工作流内部边界
 
 工作项的预览与审批由[工作流服务](../../app/workflow.py)负责。路由和 Worker 通过[工作流存储](../../app/workflow_store.py)读取事项、提交审批和更新状态。该模块管理工作流表的 SQL、事务和私有产物。控制中心通过[只读投影](../../app/workflow_control.py)组合 Hub 事实与本地引用。
 
-[Autoloop 客户端](../../app/workflow_hub.py)统一处理回环 HTTP、服务端凭据和实时事实流。[Worker](../../app/workflow_worker.py)负责重送审批事件、领取轮次、执行及回执。[插件运行管理](../../app/plugin_runtime.py)由桌面应用工厂调用，使用同一个进程锁管理本机子进程，并分别校验和启动 Super Productivity Web 与 Autoloop。Web 仅依赖自己的包和校验值；AI 工作流依赖自己的包、Hub 配置和凭据。工作流启动时恢复未完成轮次。
+[Autoloop 客户端](../../app/workflow_hub.py)统一处理回环 HTTP、服务端凭据和实时事实流。[Worker](../../app/workflow_worker.py)负责重送审批事件、领取轮次、执行及回执。[插件运行管理](../../app/plugin_runtime.py)由桌面 Lifespan 调用，使用同一个进程锁管理本机子进程，并分别校验和启动 Super Productivity Web 与 Autoloop。Web 仅依赖自己的包和校验值；AI 工作流依赖自己的包、Hub 配置和凭据。工作流启动时恢复未完成轮次。
 
 ## 技术栈
 

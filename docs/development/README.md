@@ -18,7 +18,7 @@
 
 | 模块 | 责任 |
 |---|---|
-| `app/main.py`、`app/asgi.py` | 可注入隔离数据目录的桌面应用工厂与生产入口 |
+| `app/main.py`、`app/asgi.py`、`app/bootstrap/` | 桌面兼容导出、生产入口与配置、容器、应用工厂、Lifespan |
 | `app/routers/`、`app/web.py` | 桌面 Router、模板、静态资源和错误响应 |
 | `app/content.py`、`app/workspace.py` | 内容解析、Revision、生命周期、回顾和工作台服务 |
 | `app/knowledge_store.py`、`app/obsidian.py` | 正式知识、关系、来源、Vault 扫描和迁移 |
@@ -42,6 +42,7 @@
 
 - 调用 `create_app()` 或 `create_mobile_app()` 会准备所选数据目录、迁移数据库并装配依赖、路由和中间件。
 - 导入应用工厂不得创建数据库、修改默认目录权限或读取真实 Vault。
+- 新桌面处理器用 `Depends(get_container)` 取依赖；旧 `app.state` 属性读写同一个容器字段。细节见[启动与依赖装配](../architecture/application-bootstrap.md)。
 - 生产 ASGI 入口负责创建真实应用；测试必须显式注入临时目录并关闭调度器。
 - `python -m app` 固定启动 `127.0.0.1:8765`；移动启动器固定使用 `127.0.0.1:8766`。
 
@@ -61,6 +62,10 @@
 助手额外要求来源和技能白名单、最小持久化，以及只允许逐项确认创建随想或学习任务。
 
 任务运行时与助手保持分离。任务运行时新增的模型步骤必须继续通过 `ModelGateway`，新增工具必须声明只读/写入能力和确认策略；运行轨迹只保存状态与脱敏摘要。任何正式知识、内容发布、文件修改、代码执行或外部系统写入都必须在对应领域 Service 内再次显式确认。
+
+## 架构检查
+
+执行 `.venv/bin/python -m pytest -q tests/architecture` 检查循环基线、入口依赖、Router SQL 边界、导入隔离和数据库表归属。运行 `.venv/bin/python tools/architecture_audit.py` 查看当前内部导入。规则及后续启用条件见[重构路线图](../architecture/refactoring-roadmap.md)。
 
 ## 扩展检查表
 
