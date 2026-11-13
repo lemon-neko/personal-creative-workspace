@@ -58,6 +58,22 @@ def test_backup_excludes_obsidian_runtime_configuration(tmp_path: Path) -> None:
     assert not any(".obsidian" in value for value in preview.files)
 
 
+def test_backup_excludes_symlinked_files_and_roots(tmp_path: Path) -> None:
+    data_root = prepare_private_root(tmp_path / "private")
+    external = tmp_path / "external"
+    external.mkdir()
+    outside_file = external / "outside.txt"
+    outside_file.write_text("synthetic external content", encoding="utf-8")
+    (data_root / "content" / "external.txt").symlink_to(outside_file)
+    (data_root / "video-projects").rmdir()
+    (data_root / "video-projects").symlink_to(external, target_is_directory=True)
+    (data_root / "workspace.db").symlink_to(outside_file)
+
+    archive = tmp_path / "backup.zip"
+    create_encrypted_backup(data_root, "a-long-password", archive)
+    assert inspect_encrypted_backup(archive, "a-long-password").files == ()
+
+
 def test_backup_rejects_short_password(tmp_path: Path) -> None:
     data_root = prepare_private_root(tmp_path / "private")
     CareerRepository(data_root)

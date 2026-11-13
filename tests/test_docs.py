@@ -130,7 +130,7 @@ def test_documented_core_routes_exist(tmp_path: Path) -> None:
 
 def test_documentation_contains_no_personal_identifiers_or_secret_examples() -> None:
     combined = "\n".join(path.read_text(encoding="utf-8") for path in _documents())
-    assert "/Users/yubai/" not in combined
+    assert not re.search(r"/(?:Users|home)/[A-Za-z0-9._-]+/", combined)
     assert not TAILNET_HOST.search(combined)
     assert not EMAIL.search(combined)
     assert not re.search(r"\bsk-[A-Za-z0-9_-]{12,}\b", combined)

@@ -154,7 +154,7 @@ def test_campaign_requires_order_and_evidence(tmp_path: Path) -> None:
         repository.clear_quest(quests[0].id)
 
 
-def test_career_radar_seeds_static_baseline_and_preserves_private_evidence(
+def test_career_radar_seeds_curriculum_without_jobs_and_preserves_private_evidence(
     tmp_path: Path,
 ) -> None:
     repository = CareerRepository(tmp_path)
@@ -174,8 +174,7 @@ def test_career_radar_seeds_static_baseline_and_preserves_private_evidence(
 
     jobs = repository.jobs()
     references = repository.learning_references()
-    assert len(tuple(job for job in jobs if job.captured_at == "2026-08-21")) == 4
-    assert sum(job.is_primary for job in jobs) == 1
+    assert jobs == ()
     assert len(repository.capability_domains()) == 6
     assert len(references) == 5
     assert [reference.week for reference in references if not reference.is_optional] == [

@@ -18,10 +18,10 @@ python3 -m venv .venv
 
 浏览器访问 <http://127.0.0.1:8765>。启动器固定绑定回环地址，不要使用 `0.0.0.0`、局域网地址、反向代理或公网平台运行完整工作台。
 
-开发和测试应使用临时数据目录：
+开发和测试应使用源码仓库之外的临时数据目录。启动器会拒绝位于源码目录内的数据根。
 
 ```bash
-WORKSPACE_DATA_DIR=/tmp/pcw-sandbox .venv/bin/python -m app
+WORKSPACE_DATA_DIR="$(mktemp -d)" .venv/bin/python -m app
 ```
 
 默认私有数据根为：

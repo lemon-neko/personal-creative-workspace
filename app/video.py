@@ -45,7 +45,6 @@ VIDEO_TYPES = {
 MIN_TARGET_DURATION = 15
 MAX_TARGET_DURATION = 3600
 MAX_SCENES = 40
-OPENCUT_FORK_URL = "https://github.com/lemon-neko/OpenCut"
 OPENCUT_UPSTREAM_URL = "https://github.com/OpenCut-app/OpenCut"
 IMAGE_PATTERN = re.compile(
     r"!\[(?P<alt>[^\]]*)\]\((?P<target>[^)\s]+)(?:\s+[\"'][^\"']*[\"'])?\)",
@@ -127,7 +126,7 @@ def _default_spec() -> dict[str, object]:
 
 @dataclass(frozen=True)
 class OpenCutInstallation:
-    """Detected local state of the user's OpenCut fork."""
+    """Detected local state of the user's OpenCut checkout."""
 
     repository_path: Path
     source_available: bool
@@ -135,7 +134,6 @@ class OpenCutInstallation:
     editor_ready: bool
     web_url: str = "http://127.0.0.1:5173/editor"
     launch_command: str = "proto use && moon run web:dev"
-    fork_url: str = OPENCUT_FORK_URL
     upstream_url: str = OPENCUT_UPSTREAM_URL
 
     @property

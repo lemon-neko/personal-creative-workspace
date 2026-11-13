@@ -158,7 +158,7 @@
             <p class="opencut-explainer">OpenCut 与羽白工作台保持两个独立进程。工作台负责文章和素材交接，OpenCut 负责时间线与导出。</p>
             <dl class="integration-details">
                 <div><dt>本地源码</dt><dd><code>{{ opencut.repository_path }}</code></dd></div>
-                <div><dt>Fork</dt><dd><a href="{{ opencut.fork_url }}" target="_blank" rel="noreferrer">lemon-neko/OpenCut ↗</a></dd></div>
+                <div><dt>上游项目</dt><dd><a href="{{ opencut.upstream_url }}" target="_blank" rel="noreferrer">OpenCut ↗</a></dd></div>
                 <div><dt>Git 状态</dt><dd>{{ '已连接 Git' if opencut.git_checkout else 'API 源码快照' }}</dd></div>
             </dl>
             {% if not opencut.source_available %}

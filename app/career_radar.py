@@ -1,4 +1,4 @@
-"""Dated, hand-curated career and open-source study snapshots.
+"""Dated, hand-curated open-source study material.
 
 This module is intentionally static. Importing or seeding it never visits a job
 site, GitHub, or a model endpoint.
@@ -10,8 +10,6 @@ from __future__ import annotations
 BASELINE_VERSION = "2026-08-28-v2"
 SNAPSHOT_DATE = "2026-08-21"
 
-# The job capability domains below remain the evidence for why this learning
-# path exists.  They are deliberately not used as a second course taxonomy.
 AGENT_ENGINEERING_LAYERS = (
     {
         "order": 1,
@@ -67,7 +65,7 @@ LEARNING_PATH = {
     "id": "agent-application-engineering",
     "title": "Agent 应用开发路线",
     "summary": "从手写最小循环开始，逐步掌握 Runtime、LangGraph 与产品化能力。",
-    "source_title": "2026-08-21 岗位 JD 共性能力基线",
+    "source_title": "Agent 工程通用能力",
 }
 
 LEARNING_STAGES = (
@@ -148,45 +146,6 @@ LEARNING_STAGES = (
     },
 )
 
-JOB_SNAPSHOTS = (
-    {
-        "id": "job-baseline-hikvision-app",
-        "company": "海康威视",
-        "title": "高级应用软件开发·大模型",
-        "source_url": "https://talent.hikvision.com/home/socity/position?postId=B4F6AAF8C5C1FEB7D6C131231EBAB46F",
-        "is_primary": 1,
-        "capability_summary": "面向业务的大模型应用工程：Agent 编排、服务化、RAG、评测与稳定性。",
-        "jd_text": "以大模型应用落地为主，关注 Agent 工程、检索增强、后端服务和生产可靠性。",
-    },
-    {
-        "id": "job-baseline-hikvision-research",
-        "company": "海康威视",
-        "title": "大模型应用算法工程师",
-        "source_url": "https://talent.hikvision.com/home/socity/position?postId=F3572C5AD0A1263CE644BEF27E2AA66F",
-        "is_primary": 0,
-        "capability_summary": "补充算法、检索、评测、数据闭环与效果优化能力。",
-        "jd_text": "作为算法与评测参照，关注 RAG、模型效果评估、Badcase 和持续优化。",
-    },
-    {
-        "id": "job-baseline-jd-ai-app",
-        "company": "京东",
-        "title": "软件开发岗（AI 应用方向）",
-        "source_url": "https://zhaopin.jd.com/web/job-info-detail?requementId=220736",
-        "is_primary": 0,
-        "capability_summary": "补充通用 AI 应用工程、异步服务、数据库、缓存与交付能力。",
-        "jd_text": "作为通用应用工程参照，关注 Python 服务、数据组件、工程质量和交付。",
-    },
-    {
-        "id": "job-baseline-jd-agent-expert",
-        "company": "京东",
-        "title": "国际产研 AI Agent 算法/工程专家",
-        "source_url": "https://zhaopin.jd.com/web/job-info-detail?requementId=219868",
-        "is_primary": 0,
-        "capability_summary": "补充前沿 Agent Runtime、协议、工具安全、沙箱和可观测能力。",
-        "jd_text": "作为前沿 Agent 工程参照，关注 Runtime、MCP/A2A、工具治理与复杂系统稳定性。",
-    },
-)
-
 CAPABILITY_DOMAINS = (
     ("agent-runtime", "Agent 编排与运行时", "P0", "状态、记忆、Harness、失败恢复与可暂停执行。", 1),
     ("rag-retrieval", "RAG 与检索", "P1", "Embedding、混合检索、重排与向量数据库。", 2),
@@ -203,29 +162,6 @@ CAPABILITY_SKILL_NAMES = {
     "tools-security": ("MCP 与工具调用", "Agent 安全与权限"),
     "eval-observability": ("Agent 评测与可观测性",),
     "production-reliability": ("Docker 与运行部署",),
-}
-
-JOB_CAPABILITIES = {
-    "job-baseline-hikvision-app": {
-        "agent-runtime": "主岗位核心：Agent 编排、状态与失败恢复。",
-        "rag-retrieval": "面向业务知识的检索增强。",
-        "backend-services": "可维护的异步应用服务。",
-        "eval-observability": "效果与稳定性必须能够验证。",
-        "production-reliability": "生产交付、监控与降级。",
-    },
-    "job-baseline-hikvision-research": {
-        "rag-retrieval": "重点补充检索、排序和算法效果。",
-        "eval-observability": "重点补充数据评测与 Badcase 闭环。",
-    },
-    "job-baseline-jd-ai-app": {
-        "backend-services": "通用软件工程和 AI 服务化。",
-        "production-reliability": "工程质量、部署和稳定性。",
-    },
-    "job-baseline-jd-agent-expert": {
-        "agent-runtime": "复杂 Agent Runtime 与 Harness。",
-        "tools-security": "工具协议、权限、沙箱与人工审批。",
-        "eval-observability": "Agent Trace、回放与评测。",
-    },
 }
 
 REFERENCE_PROJECTS = (

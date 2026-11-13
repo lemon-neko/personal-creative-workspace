@@ -60,6 +60,8 @@ def prepare_private_root(root: Path) -> Path:
     """Create private runtime directories without relaxing existing permissions."""
 
     root = root.expanduser().resolve()
+    if root.is_relative_to(Path(__file__).resolve().parent.parent):
+        raise ValueError("私有数据目录必须位于源码仓库之外")
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     root.chmod(0o700)
     for relative in (
@@ -163,7 +165,8 @@ class LocalOnlyMiddleware(BaseHTTPMiddleware):
 
         frames = (
             f" frame-src {DAILY_ORIGIN};"
-            if request.url.path == "/" and not request.url.query and getattr(request.app.state, "workflow", None)
+            if request.url.path == "/" and not request.url.query
+            and getattr(request.app.state, "daily_verified", False)
             else ""
         )
         response.headers.setdefault(

@@ -57,6 +57,7 @@
 | 2026-11-12 | refactor | [移动端日常工作与随手记](2026/2026-11-12-mobile-daily-capture.md) | Android PWA、日常工作、离线记录 |
 | 2026-11-12 | refactor | [日常工作与 AI 插件故障隔离](2026/2026-11-12-plugin-startup-isolation.md) | 日常工作、AI 工作流、移动端 |
 | 2026-11-12 | feature | [AI 工作流可观测性 V3](2026/2026-11-12-workflow-observability-v3.md) | AI 工作流、Trace、Agent 遥测 |
+| 2026-11-13 | security | [公开源码准备](2026/2026-11-13-public-source.md) | 数据隔离、备份、桌面插件 |
 
 ## 完成功能批次时
 

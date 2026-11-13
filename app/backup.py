@@ -38,7 +38,7 @@ def _safe_name(name: str) -> bool:
 
 
 def _snapshot_database(source: Path, destination: Path) -> None:
-    if not source.exists():
+    if source.is_symlink() or not source.exists():
         return
     with sqlite3.connect(source) as original, sqlite3.connect(destination) as snapshot:
         original.backup(snapshot)
@@ -59,11 +59,11 @@ def create_encrypted_backup(data_root: Path, password: str, output: Path) -> Bac
             sources.append(("workspace.db", temp / "workspace.db"))
         for root_name in INCLUDED_ROOTS:
             root = data_root / root_name
-            if root.exists():
+            if not root.is_symlink() and root.is_dir():
                 sources.extend(
                     (path.relative_to(data_root).as_posix(), path)
                     for path in sorted(root.rglob("*"))
-                    if path.is_file()
+                    if not path.is_symlink() and path.is_file()
                     and path.name != ".content.lock"
                     and ".obsidian" not in path.relative_to(root).parts
                 )

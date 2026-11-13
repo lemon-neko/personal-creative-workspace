@@ -16,7 +16,7 @@ from app import install_plugins, plugin_runtime
 from app.install_plugins import provision
 from app.llm import LLMConfig, OpenAICompatibleClient
 from app.main import create_app
-from app.plugins import WORKBENCH_ORIGIN, plugin_root
+from app.plugins import DAILY_ORIGIN, WORKBENCH_ORIGIN, plugin_root
 from app.routers import daily
 from app.workflow import Workflow
 from app.workflow_worker import answer_body
@@ -137,7 +137,9 @@ def test_plugin_startup_keeps_the_other_plugin_available(tmp_path, monkeypatch, 
     monkeypatch.setattr(daily, "daily_available", web_ready)
     app = create_app(data_root=tmp_path, enable_scheduler=False)
     with TestClient(app, base_url=WORKBENCH_ORIGIN) as client:
-        assert ('class="daily-frame"' in client.get("/").text) is (broken != "web")
+        daily_page = client.get("/")
+        assert ('class="daily-frame"' in daily_page.text) is (broken != "web")
+        assert (f"frame-src {DAILY_ORIGIN};" in daily_page.headers["content-security-policy"]) is (broken != "web")
         assert client.get("/legacy/planner").status_code == 200
         tasks = client.get("/tasks")
         if broken == "harness":

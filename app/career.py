@@ -1681,14 +1681,12 @@ class CareerRepository:
         return self.learning_reference(reference_id)  # type: ignore[return-value]
 
     def seed_career_radar(self) -> None:
-        """Install the dated manual baseline without resetting mutable progress."""
+        """Install the built-in curriculum without resetting mutable progress."""
 
         from app.career_radar import (
             BASELINE_VERSION,
             CAPABILITY_DOMAINS,
             CAPABILITY_SKILL_NAMES,
-            JOB_CAPABILITIES,
-            JOB_SNAPSHOTS,
             LEARNING_PATH,
             LEARNING_STAGES,
             REFERENCE_PROJECTS,
@@ -1720,31 +1718,6 @@ class CareerRepository:
                     (capability_id, title, priority, summary, sort_order),
                 )
 
-            for snapshot in JOB_SNAPSHOTS:
-                connection.execute(
-                    """INSERT INTO jobs(
-                    id,company,title,location,source_url,jd_text,status,notes,
-                    created_at,updated_at,captured_at,is_primary,capability_summary)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
-                    company=excluded.company,title=excluded.title,
-                    source_url=excluded.source_url,jd_text=excluded.jd_text,
-                    captured_at=excluded.captured_at,is_primary=excluded.is_primary,
-                    capability_summary=excluded.capability_summary""",
-                    (
-                        snapshot["id"], snapshot["company"], snapshot["title"], "",
-                        snapshot["source_url"], snapshot["jd_text"], "saved", "",
-                        stamp, stamp, SNAPSHOT_DATE, snapshot["is_primary"],
-                        snapshot["capability_summary"],
-                    ),
-                )
-                for capability_id, requirement in JOB_CAPABILITIES[snapshot["id"]].items():
-                    connection.execute(
-                        """INSERT INTO job_capabilities(job_id,capability_id,requirement_summary,importance)
-                        VALUES(?,?,?,?) ON CONFLICT(job_id,capability_id) DO UPDATE SET
-                        requirement_summary=excluded.requirement_summary,importance=excluded.importance""",
-                        (snapshot["id"], capability_id, requirement, 5 if snapshot["is_primary"] else 3),
-                    )
-
             skill_ids: dict[str, str] = {}
             existing = {
                 row["name"].casefold(): row["id"]
@@ -1758,7 +1731,7 @@ class CareerRepository:
                         connection.execute(
                             """INSERT OR IGNORE INTO skills(id,name,category,current_level,target_level,notes)
                             VALUES(?,?,?,?,?,?)""",
-                            (skill_id, name, "岗位雷达", 0, 3, "由 2026-08-21 岗位基线关联。"),
+                            (skill_id, name, "岗位雷达", 0, 3, "由通用学习路线关联。"),
                         )
                     skill_ids[name] = skill_id
             for capability_id, names in CAPABILITY_SKILL_NAMES.items():

@@ -8,14 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVATE_PATTERNS = (
-    "content/items/",
-    "content/trash/",
-    "content/knowledge/",
-    "content/sources/",
-    "content/outputs/",
-    "content/archive/",
-    "content/assets/",
-    "content/legacy-items-",
+    "content/",
     "private_data/",
     "documents/",
     "video-projects/",
@@ -61,7 +54,8 @@ def violations(files: tuple[str, ...]) -> tuple[str, ...]:
         path = Path(name)
         if any(name.startswith(prefix) for prefix in PRIVATE_PATTERNS):
             found.append(f"私有数据被 Git 跟踪：{name}")
-        if path.name == ".env" or path.suffix.lower() in SENSITIVE_SUFFIXES:
+        is_env = path.name == ".env" or (path.name.startswith(".env.") and path.name != ".env.example")
+        if is_env or path.suffix.lower() in SENSITIVE_SUFFIXES:
             found.append(f"敏感或私有文件被 Git 跟踪：{name}")
         if path.name in DEPLOYMENT_FILES:
             found.append(f"本地专用项目不应包含公网部署配置：{name}")

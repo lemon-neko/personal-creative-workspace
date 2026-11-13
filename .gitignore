@@ -72,18 +72,10 @@ coverage.xml
 tmp/
 temp/
 *.tmp
-content/.working/
 
 # Private workspace data (never commit personal content)
-content/items/*.md
-content/trash/*.md
-content/knowledge/
-content/sources/
-content/outputs/
-content/archive/
-content/assets/
+/content/
 app/static/images/
-content/workspace.yaml
 private_data/
 # Explicit compatibility entries plus generic database protection.
 workspace.db
@@ -100,7 +92,6 @@ mobile.secret
 documents/
 video-projects/
 working/
-content/legacy-items-*/
 backups/
 rollback-*/
 .env
